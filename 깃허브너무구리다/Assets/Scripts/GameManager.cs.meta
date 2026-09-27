@@ -1,0 +1,25 @@
+fileFormatVersion: 2
+guid: e4a3bc363e84d674398d09a51e4330a7
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - bgmSource: {instanceID: 0}
+  - sfxSource: {instanceID: 0}
+  - mvPlayer: {instanceID: 0}
+  - notePrefab: {instanceID: 0}
+  - scoreText: {instanceID: 0}
+  - comboTitleText: {instanceID: 0}
+  - comboNumberText: {instanceID: 0}
+  - accuracyText: {instanceID: 0}
+  - judgmentImage: {instanceID: 0}
+  - sprExcellent: {instanceID: 0}
+  - sprGreat: {instanceID: 0}
+  - sprGood: {instanceID: 0}
+  - sprBad: {instanceID: 0}
+  - sprMiss: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
