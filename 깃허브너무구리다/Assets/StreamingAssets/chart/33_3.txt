@@ -1,0 +1,4 @@
+﻿BPM, 170.00
+OFFSET, -1.658
+KeyMode: 4
+SPEED, 2.60

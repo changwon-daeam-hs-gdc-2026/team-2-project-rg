@@ -4,6 +4,7 @@ using UnityEngine;
 public class NoteObject : MonoBehaviour
 {
     public NoteData myData;
+    private GameManager owner; // 이 노트를 만든 GameManager (재시작/다른 판의 매니저와 섞이지 않게)
     private SpriteRenderer spriteRenderer;
     private GameObject myLongBody;
     private SpriteRenderer bodyRenderer;
@@ -50,10 +51,11 @@ public class NoteObject : MonoBehaviour
     public void Initialize(NoteData data)
     {
         myData = data;
+        owner = GameManager.Instance;
         isMissed = false;
         spriteRenderer.color = Color.white;
         spriteRenderer.enabled = true;
-        spriteRenderer.sortingOrder = 5; 
+        spriteRenderer.sortingOrder = NoteLayer.HeadOrder(myData.Layer); 
         spriteRenderer.flipY = false;
 
         if (myData.IsFreeKey)
@@ -103,11 +105,16 @@ public class NoteObject : MonoBehaviour
                 myLongBody.SetActive(true);
                 bodyRenderer.color = Color.white;
                 bodyRenderer.enabled = true;
+                bodyRenderer.sortingOrder = NoteLayer.BodyOrder(myData.Layer);
 
                 string midSpriteName = $"{prefix}_mid";
                 if (redNoteSprites.TryGetValue(midSpriteName, out Sprite midSprite)) {
-                    bodyRenderer.sprite = midSprite;
+                    // 9-slice 몸통: 양 끝 영역은 고정, 가운데만 늘어남 (길이가 길어져도 끝이 투명하게 번지지 않음)
+                    bodyRenderer.drawMode = SpriteDrawMode.Simple;
+                    bodyRenderer.sprite = LongBodyHelper.GetSlicedSprite(midSprite);
+                    bodyRenderer.drawMode = SpriteDrawMode.Sliced;
                 } else {
+                    bodyRenderer.drawMode = SpriteDrawMode.Simple;
                     Texture2D tex = new Texture2D(1, 1); tex.SetPixel(0, 0, Color.red); tex.Apply();
                     bodyRenderer.sprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
                     bodyRenderer.color = new Color(1f, 0.2f, 0.2f, 0.5f);
@@ -160,6 +167,8 @@ public class NoteObject : MonoBehaviour
                 myLongBody.SetActive(true);
                 bodyRenderer.color = Color.white;
                 bodyRenderer.enabled = true;
+                bodyRenderer.sortingOrder = NoteLayer.BodyOrder(myData.Layer);
+                bodyRenderer.drawMode = SpriteDrawMode.Simple; // 풀링 재사용 시 이전 RED 몸통의 Sliced 상태 해제
                 bodyRenderer.sprite = isBlue ? blueLongBody : greenLongBody;
             }
             else
@@ -168,8 +177,9 @@ public class NoteObject : MonoBehaviour
             }
         }
 
-        myTargetDist = GameManager.Instance.GetScrollDistance(myData.HitTime);
-        if (myData.NextLongNote != null) myNextTargetDist = GameManager.Instance.GetScrollDistance(myData.NextLongNote.HitTime);
+        // 층별 스크롤 속도: 노트가 속한 층의 변속 기준으로 위치를 계산한다 (롱노트 머리/꼬리는 항상 같은 층)
+        myTargetDist = GameManager.Instance.GetScrollDistance(myData.HitTime, myData.Layer);
+        if (myData.NextLongNote != null) myNextTargetDist = GameManager.Instance.GetScrollDistance(myData.NextLongNote.HitTime, myData.Layer);
 
         myTailTime = ((myData.Type == 2 || myData.Type == 12) && myData.NextLongNote != null) ? myData.NextLongNote.HitTime : myData.HitTime;
 
@@ -178,10 +188,10 @@ public class NoteObject : MonoBehaviour
 
     private void UpdateTransform()
     {
-        double currentDist = GameManager.Instance.currentScrollDist;
+        double currentDist = GameManager.Instance.GetCurrentScrollDist(myData.Layer);
         double currentTime = GameManager.Instance.currentPlayTime;
 
-        bool isHidden = GameManager.Instance.IsNoteHiddenByFutureReverseScroll(currentTime, myData.HitTime);
+        bool isHidden = GameManager.Instance.IsNoteHiddenByFutureReverseScroll(currentTime, myData.HitTime, myData.Layer);
 
         if (myData.IsFreeKey)
         {
@@ -299,17 +309,33 @@ public class NoteObject : MonoBehaviour
                         float distance = endYPos - yPos;
                         if (distance > 0 && bodyRenderer != null && bodyRenderer.sprite != null)
                         {
-                            float parentScaleY = transform.localScale.y; 
-                            float spriteHeight = bodyRenderer.sprite.bounds.size.y;
-                            
-                            myLongBody.transform.position = new Vector3(centerX, (yPos + endYPos) / 2f, 0f);
-                            float finalScaleY = (distance / (spriteHeight * parentScaleY));
-
                             float laneWidthGame = 0.8f;
                             float targetW = (myData.Width - 1) * laneWidthGame + (laneWidthGame * 0.95f);
-                            float bodyScaleX = targetW / (bodyRenderer.sprite.bounds.size.x * transform.localScale.x);
 
-                            myLongBody.transform.localScale = new Vector3(bodyScaleX, finalScaleY, 1f);
+                            if (bodyRenderer.drawMode == SpriteDrawMode.Sliced)
+                            {
+                                // RED 몸통: 머리 중심 ~ 꼬리 중심 구간에 메쉬 크기를 정확히 맞춘다 (9-slice)
+                                LongBodyHelper.Fit(bodyRenderer, centerX, yPos, endYPos, targetW, 0f);
+                            }
+                            else
+                            {
+                            // [버그 수정] 몸통을 "머리 중심 ~ 꼬리 중심" 구간에 정확히 맞춘다.
+                            //  - 스프라이트 피벗이 중앙이 아니어도(bounds.center != 0) 구간 밖으로 밀려 나가지 않도록 보정
+                            //  - 부모(노트) 스케일에 의존하지 않고 '월드 기준 목표 크기'에서 로컬 스케일을 역산
+                            Bounds sb = bodyRenderer.sprite.bounds;
+                            float parentSX = Mathf.Max(0.0001f, Mathf.Abs(transform.lossyScale.x));
+                            float parentSY = Mathf.Max(0.0001f, Mathf.Abs(transform.lossyScale.y));
+
+                            float worldScaleX = targetW / Mathf.Max(0.0001f, sb.size.x);
+                            float worldScaleY = distance / Mathf.Max(0.0001f, sb.size.y);
+
+                            float midY = (yPos + endYPos) / 2f;
+                            myLongBody.transform.position = new Vector3(
+                                centerX - sb.center.x * worldScaleX,
+                                midY - sb.center.y * worldScaleY,
+                                0f);
+                            myLongBody.transform.localScale = new Vector3(worldScaleX / parentSX, worldScaleY / parentSY, 1f);
+                            }
                         }
                         else
                         {
@@ -323,6 +349,13 @@ public class NoteObject : MonoBehaviour
 
     void LateUpdate()
     {
+        // 이전 판(다른 GameManager)에서 남은 노트는 즉시 제거한다. (재시도/여러 판 플레이 시 유령 노트 방지)
+        if (owner == null || GameManager.Instance != owner)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
         if (myData == null) return;
 
         if (myData.IsHit && !isMissed)

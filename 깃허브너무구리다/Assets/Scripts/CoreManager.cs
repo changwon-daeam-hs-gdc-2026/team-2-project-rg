@@ -7,22 +7,26 @@ public class CoreManager : MonoBehaviour
 {
     public static CoreManager Instance;
 
-    public SongData CurrentSongData; 
-    public bool IsMvOn = false;      
+    public SongData CurrentSongData;
+    public bool IsMvOn = false;
     public int CurrentLevelId = 2; // 1: EASY, 2: HARD, 3: INSANE (기본값 HARD)
-    public SettingsData CurrentSettings = new SettingsData(); 
-    
+    public SettingsData CurrentSettings = new SettingsData();
+
     public bool IsAutoPlay = false;
 
-    private string currentActiveScene = ""; 
+    // 가장 최근에 끝난 한 판의 결과 (게임 씬 → 결과 씬으로 전달)
+    public ResultData LastResult;
+
+    private string currentActiveScene = "";
+    private bool isTransitioning = false; // 전환 중 중복 호출(연타) 방지
 
     void Awake()
     {
         if (Instance == null)
         {
             Instance = this;
-            DontDestroyOnLoad(gameObject); 
-            LoadSettings(); 
+            DontDestroyOnLoad(gameObject);
+            LoadSettings();
         }
         else
         {
@@ -43,11 +47,11 @@ public class CoreManager : MonoBehaviour
 
     void Start()
     {
-        string startSceneName = "1_SongSelect"; 
-        
+        string startSceneName = "1_SongSelect";
+
         if (CurrentSettings.Mode == 0) startSceneName = "3_Editor";
         else if (CurrentSettings.Mode == 1) startSceneName = "1_SongSelect";
-        else if (CurrentSettings.Mode == 2) startSceneName = "2_Game"; 
+        else if (CurrentSettings.Mode == 2) startSceneName = "2_Game";
 
         currentActiveScene = startSceneName;
         SceneManager.LoadSceneAsync(startSceneName, LoadSceneMode.Additive);
@@ -75,22 +79,43 @@ public class CoreManager : MonoBehaviour
         StartCoroutine(TransitionScene("3_Editor"));
     }
 
+    // 게임이 끝나면 한 판의 결과를 들고 결과 씬(4_Result)으로 넘어간다.
+    public void LoadResultScene(ResultData result)
+    {
+        LastResult = result;
+        StartCoroutine(TransitionScene("4_Result"));
+    }
+
     private IEnumerator TransitionScene(string loadSceneName)
     {
-        Scene sceneToUnload = SceneManager.GetSceneByName(currentActiveScene);
-        
-        AsyncOperation loadOp = SceneManager.LoadSceneAsync(loadSceneName, LoadSceneMode.Additive);
-        while (!loadOp.isDone) yield return null;
+        if (isTransitioning) yield break;
+        isTransitioning = true;
 
-        if (sceneToUnload.IsValid() && sceneToUnload.isLoaded)
+        try
         {
-            AsyncOperation unloadOp = SceneManager.UnloadSceneAsync(sceneToUnload);
-            if (unloadOp != null)
+            // 로드하기 '전에' 지울 씬을 잡아 둔다. (같은 이름의 씬이 둘 생겨도 옛 씬을 정확히 가리키도록)
+            Scene sceneToUnload = SceneManager.GetSceneByName(currentActiveScene);
+
+            AsyncOperation loadOp = SceneManager.LoadSceneAsync(loadSceneName, LoadSceneMode.Additive);
+            while (!loadOp.isDone) yield return null;
+
+            if (sceneToUnload.IsValid() && sceneToUnload.isLoaded)
             {
-                while (!unloadOp.isDone) yield return null;
+                AsyncOperation unloadOp = SceneManager.UnloadSceneAsync(sceneToUnload);
+                if (unloadOp != null)
+                {
+                    while (!unloadOp.isDone) yield return null;
+                }
             }
+
+            currentActiveScene = loadSceneName;
+
+            // 여러 판을 돌릴 때 이전 판에서 만든 텍스처/스프라이트가 메모리에 쌓이지 않도록 정리
+            yield return Resources.UnloadUnusedAssets();
         }
-        
-        currentActiveScene = loadSceneName;
+        finally
+        {
+            isTransitioning = false;
+        }
     }
 }

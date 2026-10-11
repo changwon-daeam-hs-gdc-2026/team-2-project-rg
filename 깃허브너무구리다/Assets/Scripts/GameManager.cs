@@ -4,11 +4,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.Video;
 using UnityEngine.InputSystem;
 using TMPro;
 
-public enum GameState { Loading, Playing, Paused, Rewinding } 
+public enum GameState { Loading, Playing, Paused, Rewinding, Finished } 
 
 class RawEvent {
     public string Type = ""; public long Measure = 1; public long Num, Den; public string Value = "";
@@ -53,10 +54,52 @@ public class GameManager : MonoBehaviour
     public GameState currentState = GameState.Loading; 
     public double currentPlayTime = -3.0; 
     public double gameStartTime = 0;
+
+    [Header("시작 대기 시간")]
+    [Tooltip("게임 시작 후 곡이 나오기 전 기본 대기(초). 곡 오프셋이 이보다 길면 오프셋 시각부터 바로 시작한다.")]
+    public double maxOffsetWaitTime = 3.0;
+    private double playStartTime = -3.0; // 실제 시작 시각 (min(-maxOffsetWaitTime, 오디오 시작 시각))
     
     private double dspStartTime = 0; 
     private bool isFullMusicStarted = false;
-    public double currentScrollDist = 0.0;
+
+    [Header("결과창 전환")]
+    [Tooltip("MV · 채보 · 노래가 모두 끝난 뒤 암전되기까지 기다리는 시간(초)")]
+    public float resultDelaySeconds = 3.0f;
+    [Tooltip("결과창으로 넘어갈 때 암막이 덮이는 시간(초)")]
+    public float resultFadeDuration = 1.0f;
+    [Tooltip("결과창으로 넘어가기 직전 화면을 어둡게 덮는 암막 (CanvasGroup). 비워 두면 blackOverlayGroup 을 대신 사용")]
+    public CanvasGroup resultTransitionOverlay;
+    [Tooltip("true: MISS 도 전체 판정 오차 평균의 분모(전체 노트 수)에 포함 / false: 타이밍이 있는 판정만 평균")]
+    public bool missCountsInErrorAverage = true;
+    public const int MaxScore = 1000000;
+
+    [Header("Pause UI 연출")]
+    [Tooltip("일시정지 후 Pause UI가 나타나기까지의 지연(초)")]
+    public float pauseUIShowDelay = 0.35f;
+    [Tooltip("Pause UI 페이드 인 시간(초)")]
+    public float pauseUIFadeDuration = 0.25f;
+
+    // 한 판 통계 (결과창용)
+    private int cntExcellent, cntGreat, cntGood, cntBad, cntMiss;
+    private double errorSumMs = 0;      // FAST = 음수, SLOW = 양수 (표시되는 정수 ms 기준)
+    private int timedCount = 0;         // 타이밍이 기록된 판정 수 (롱노트 중간 틱 제외)
+    private int chartJudgeCount = 0;    // 채보 전체의 판정 대상 수 (점수 계산용)
+    private double chartLastTime = 0;   // 마지막 노트 시각
+    private int chartEndCursor = 0;
+
+    // 종료 조건 / 전환 상태
+    private bool mvActive = false;
+    private bool mvFinished = true;
+    private bool mvEventsHooked = false;
+    private float finishHoldTimer = 0f;
+    private bool finishRoutineStarted = false;
+    private bool isLeaving = false;     // 씬을 떠나는 중이면 Update 정지
+
+    private CanvasGroup pauseCanvasGroup;
+    private Coroutine pauseShowRoutine;
+    public double currentScrollDist = 0.0; // 2층(Top) 기준 스크롤 거리 (프리키/마디선 등 기존 호환용)
+    private double[] currentScrollDistByLayer = new double[3]; // 인덱스: 1 = 1층, 2 = 2층
 
     [Header("컴포넌트 연결")]
     public AudioSource bgmSource;      
@@ -149,16 +192,17 @@ public class GameManager : MonoBehaviour
     private int totalNotes = 0, processedNotes = 0, currentCombo = 0, maxCombo = 0;
     private double currentAccSum = 0;
 
-    private NoteData[] activeLongNote = new NoteData[4]; 
-    private double[] nextLongNoteTickTime = new double[4]; 
-    private double[] lnReleaseTime = new double[4]; 
+    private NoteData[] activeLongNote = new NoteData[8]; // 슬롯: 0~3 = 2층(Top), 4~7 = 1층(Bottom) 
+    private double[] nextLongNoteTickTime = new double[8]; 
+    private double[] lnReleaseTime = new double[8]; 
 
     private List<NoteData> notes = new List<NoteData>();
-    private List<SpeedChange> speedChanges = new List<SpeedChange>();
+    // 층별 변속 (인덱스 1 = 1층, 2 = 2층). BPM 변화는 층과 무관하게 bpmChanges 하나를 공유한다.
+    private List<SpeedChange>[] speedChangesByLayer = new List<SpeedChange>[] { null, new List<SpeedChange>(), new List<SpeedChange>() };
     private List<BpmChange> bpmChanges = new List<BpmChange>();
     private List<UIEventData> uiEvents = new List<UIEventData>();
     private List<LinearEventData> linearEvents = new List<LinearEventData>();
-    private List<GameScrollEvent> scrollEvents = new List<GameScrollEvent>();
+    private List<GameScrollEvent>[] scrollEventsByLayer = new List<GameScrollEvent>[] { null, new List<GameScrollEvent>(), new List<GameScrollEvent>() };
 
     public Dictionary<int, FreeKeyLineObj> activeLines = new Dictionary<int, FreeKeyLineObj>();
 
@@ -183,7 +227,9 @@ public class GameManager : MonoBehaviour
     private float comboAnimTimer = 0f;
 
     private Queue<NoteObject> notePool = new Queue<NoteObject>();
-    private int spawnIndex = 0; 
+    // 층마다 스크롤 속도가 다르므로 생성(스폰) 순서도 층별로 관리한다.
+    private List<NoteData>[] notesByLayer = new List<NoteData>[] { null, new List<NoteData>(), new List<NoteData>() };
+    private int[] layerSpawnIndex = new int[3];
     private const double SPAWN_LOOKAHEAD = 3.5; 
 
     private Queue<GameObject> measureLinePool = new Queue<GameObject>();
@@ -246,20 +292,31 @@ public class GameManager : MonoBehaviour
             initialComboTitlePos = comboTitleImage.rectTransform.anchoredPosition;
         }
 
-        if (pauseUIContainer != null) pauseUIContainer.SetActive(false);
+        if (pauseUIContainer != null) {
+            pauseCanvasGroup = pauseUIContainer.GetComponent<CanvasGroup>();
+            if (pauseCanvasGroup == null) pauseCanvasGroup = pauseUIContainer.AddComponent<CanvasGroup>();
+            pauseCanvasGroup.alpha = 0f;
+            pauseUIContainer.SetActive(false);
+        }
         if (blackOverlayGroup != null) {
             blackOverlayGroup.alpha = 0f;
             blackOverlayGroup.gameObject.SetActive(false);
         }
         
         if(btnResume != null) btnResume.onClick.AddListener(ResumeGame);
+
+        if (resultTransitionOverlay != null) {
+            resultTransitionOverlay.alpha = 0f;
+            resultTransitionOverlay.blocksRaycasts = false;
+            resultTransitionOverlay.gameObject.SetActive(false);
+        }
         if(btnRetry != null) btnRetry.onClick.AddListener(RetryGame);
         if(btnBackToMenu != null) btnBackToMenu.onClick.AddListener(BackToMenu);
     }
 
     void Start() 
     { 
-        mainCam = Camera.main;
+        mainCam = FindSceneCamera();
         currentSong = CoreManager.Instance.CurrentSongData;
         hitSoundClip = Resources.Load<AudioClip>("Audio/etc/hitsound"); 
 
@@ -322,9 +379,9 @@ public class GameManager : MonoBehaviour
 
         notePool.Clear();
         noteObjectDict.Clear();
-        spawnIndex = 0;
+        layerSpawnIndex[1] = 0; layerSpawnIndex[2] = 0;
         for (int i = 0; i < 200; i++) {
-            GameObject obj = Instantiate(notePrefab);
+            GameObject obj = InstantiateInMyScene(notePrefab);
             obj.SetActive(false); 
             notePool.Enqueue(obj.GetComponent<NoteObject>());
         }
@@ -412,6 +469,10 @@ public class GameManager : MonoBehaviour
             mvPlayer.url = finalMvPath;
             mvPlayer.renderMode = VideoRenderMode.MaterialOverride;
             mvPlayer.targetMaterialRenderer = bgRenderer;
+            mvPlayer.isLooping = false;
+            mvActive = true;
+            mvFinished = false;
+            HookMvEvents();
         } else if (mvPlayer != null) {
             mvPlayer.url = ""; 
         }
@@ -431,8 +492,11 @@ public class GameManager : MonoBehaviour
 
     public NoteObject GetNoteFromPool()
     {
-        if (notePool.Count > 0) return notePool.Dequeue();
-        GameObject obj = Instantiate(notePrefab);
+        while (notePool.Count > 0) {
+            NoteObject pooled = notePool.Dequeue();
+            if (pooled != null) return pooled; // 파괴된 오브젝트가 섞여 있으면 건너뜀
+        }
+        GameObject obj = InstantiateInMyScene(notePrefab);
         obj.SetActive(false); 
         return obj.GetComponent<NoteObject>();
     }
@@ -560,7 +624,11 @@ public class GameManager : MonoBehaviour
         if (laneGroup != null) laneGroup.alpha = 1f;
 
         isFullMusicStarted = false;
-        currentPlayTime = -3.0; 
+        // 오디오가 시작되는 시각(triggerTime)이 기본 대기 시간보다 더 이전이면(예: -12.889s),
+        // 그 시각부터 게임을 시작해서 곡 앞부분이 잘리지 않게 한다.
+        double audioTriggerAtStart = songStartOffset - CoreManager.Instance.CurrentSettings.AudioOffset;
+        playStartTime = Math.Min(-maxOffsetWaitTime, audioTriggerAtStart);
+        currentPlayTime = playStartTime;
         gameStartTime = (double)Time.time;
         currentState = GameState.Playing; 
     }
@@ -569,8 +637,10 @@ public class GameManager : MonoBehaviour
 
     public void LoadChart(int songId, int levelId) 
     {
-        notes.Clear(); speedChanges.Clear(); bpmChanges.Clear(); 
-        uiEvents.Clear(); linearEvents.Clear(); scrollEvents.Clear();
+        ResetStats();
+        notes.Clear(); bpmChanges.Clear(); 
+        uiEvents.Clear(); linearEvents.Clear();
+        for (int L = 1; L <= 2; L++) { speedChangesByLayer[L].Clear(); scrollEventsByLayer[L].Clear(); notesByLayer[L].Clear(); }
         foreach (var line in activeLines.Values) Destroy(line.go);
         activeLines.Clear();
 
@@ -601,6 +671,10 @@ public class GameManager : MonoBehaviour
             if (type == "OFFSET" || type == "SONGSTARTOFFSET") { 
                 if (data.Length >= 2) songStartOffset = double.Parse(data[1].Trim(), System.Globalization.CultureInfo.InvariantCulture); 
                 continue; 
+            }
+            else if (type == "DEATHAREA") {
+                // DEATHAREA, 시작초, 끝초 : 에디터 전용 표시(노트 배치 금지 구간). 시간 보정은 BPM 이벤트로 이미 반영됨.
+                continue;
             }
             else if (type == "AUDIOOFFSET") {
                 if (data.Length >= 2) chartAudioOffset = double.Parse(data[1].Trim(), System.Globalization.CultureInfo.InvariantCulture);
@@ -701,19 +775,27 @@ public class GameManager : MonoBehaviour
             return lastBpm.Time + (beats - lastBpm.Beats) * (60.0 / lastBpm.Bpm);
         }
 
-        speedChanges.Add(new SpeedChange { Time = -999999.0, Multiplier = initialSpeed });
-        double currentSpeed = initialSpeed;
+        double[] currentSpeedByLayer = new double[] { 0.0, initialSpeed, initialSpeed };
+        for (int L = 1; L <= 2; L++) speedChangesByLayer[L].Add(new SpeedChange { Time = -999999.0, Multiplier = initialSpeed });
 
         foreach (var e in rawEvents.Where(e => e.Type != "BPM")) {
             double absoluteBeats = ((e.Measure - 1) * 4.0) + ((double)e.Num / Math.Max(1, e.Den)) * 4.0;
             double exactTime = GetExactTime(absoluteBeats);
 
             if (e.Type == "SPEED") {
-                currentSpeed = double.Parse(e.Value, System.Globalization.CultureInfo.InvariantCulture);
-                speedChanges.Add(new SpeedChange { Time = exactTime, Multiplier = currentSpeed });
+                // 형식1(구형): SPEED, 마디, 분자, 분모, 속도           → 1층/2층 모두
+                // 형식2(신형): SPEED, 마디, 분자, 분모, 층, 속도       → 해당 층만
+                ParseSpeedEventValue(e.Value, out int spdLayer, out double spdValue);
+                for (int L = 1; L <= 2; L++) {
+                    if (spdLayer != 0 && spdLayer != L) continue;
+                    currentSpeedByLayer[L] = spdValue;
+                    speedChangesByLayer[L].Add(new SpeedChange { Time = exactTime, Multiplier = spdValue });
+                    // 층을 명시한 변속이 채보 시작 지점(0초)이면 그 층의 초기 속도로도 사용 (카운트다운 구간 포함)
+                    if (spdLayer != 0 && exactTime <= 1e-9) speedChangesByLayer[L][0].Multiplier = spdValue;
+                }
             }
-            else if (e.Type == "STOP") { speedChanges.Add(new SpeedChange { Time = exactTime, Multiplier = 0.0 }); }
-            else if (e.Type == "START") { speedChanges.Add(new SpeedChange { Time = exactTime, Multiplier = currentSpeed }); }
+            else if (e.Type == "STOP") { for (int L = 1; L <= 2; L++) speedChangesByLayer[L].Add(new SpeedChange { Time = exactTime, Multiplier = 0.0 }); }
+            else if (e.Type == "START") { for (int L = 1; L <= 2; L++) speedChangesByLayer[L].Add(new SpeedChange { Time = exactTime, Multiplier = currentSpeedByLayer[L] }); }
             else if (e.Type == "FREEKEY") {
                 NoteData fNote = JsonUtility.FromJson<NoteData>(e.Value);
                 fNote.HitTime = exactTime; fNote.IsHit = false; notes.Add(fNote);
@@ -721,68 +803,79 @@ public class GameManager : MonoBehaviour
             else if (e.Type == "NOTE") {
                 string[] lanesData = e.Value.Split(',');
                 
-                if (lanesData.Length == 1 && !lanesData[0].Contains("_")) {
+                // 구형 압축 포맷 (예: 1000) - 층 개념이 없으므로 전부 2층(Top)
+                if (lanesData.Length == 1 && !lanesData[0].Contains("_") && !lanesData[0].Contains("(")) {
                     string val = lanesData[0].Trim();
                     for (int lane = 0; lane < val.Length && lane < 4; lane++) {
                         if (val[lane] != '0') {
                             int noteType = int.Parse(val[lane].ToString());
                             if (noteType == 6 || noteType == 5) continue;
-                            var newNote = new NoteData { HitTime = exactTime, Lane = lane, Type = noteType, IsHit = false, isTimeLogged = false };
+                            var newNote = new NoteData { HitTime = exactTime, Lane = lane, Type = noteType, IsHit = false, isTimeLogged = false, Layer = NoteLayer.Top };
                             notes.Add(newNote); notesByLane[lane].Add(newNote); 
                         }
                     }
                 } else {
+                    // 레인 칸 형식: "2층노트" 또는 "2층노트(1층노트)"  예) 11_3(12)
                     for (int lane = 0; lane < lanesData.Length && lane < 4; lane++) {
-                        string val = lanesData[lane].Trim();
-                        if (val == "0") continue;
-                        
-                        if (val.Contains("_")) {
-                            string[] parts = val.Split('_');
-                            int type = int.Parse(parts[0]); int width = int.Parse(parts[1]);
-                            var newNote = new NoteData { HitTime = exactTime, Lane = lane, Type = type, IsHit = false, isTimeLogged = false, IsRedNote = true, Width = width };
-                            notes.Add(newNote);
-                            
-                            for(int w = 0; w < width; w++) {
-                                if (lane + w < 4) notesByLane[lane + w].Add(newNote);
-                            }
-                        } else {
-                            int type = int.Parse(val);
-                            var newNote = new NoteData { HitTime = exactTime, Lane = lane, Type = type, IsHit = false, isTimeLogged = false };
-                            notes.Add(newNote); notesByLane[lane].Add(newNote);
-                        }
+                        NoteCellParser.SplitCell(lanesData[lane], out string topToken, out string bottomToken);
+                        AddNoteFromToken(topToken, lane, exactTime, NoteLayer.Top);
+                        AddNoteFromToken(bottomToken, lane, exactTime, NoteLayer.Bottom);
                     }
                 }
             }
         }
 
-        speedChanges = speedChanges.OrderBy(s => s.Time).ToList();
+        for (int L = 1; L <= 2; L++) speedChangesByLayer[L] = speedChangesByLayer[L].OrderBy(s => s.Time).ToList();
         notes = notes.OrderBy(n => n.HitTime).ToList();
-        for (int i = 0; i < 4; i++) notesByLane[i] = notesByLane[i].OrderBy(n => n.HitTime).ToList();
+        for (int i = 0; i < 4; i++) notesByLane[i] = notesByLane[i].OrderBy(n => n.HitTime).ThenByDescending(n => n.Layer).ToList();
 
-        var allTimes = speedChanges.Select(s => s.Time).Distinct().ToList();
-        if (!allTimes.Contains(0.0)) allTimes.Add(0.0);
-        if (!allTimes.Contains(-999999.0)) allTimes.Add(-999999.0);
-        allTimes.Sort();
-        
-        double currentPos = 0.0; double curSpeedTemp = initialSpeed; double lastTime = allTimes[0];
+        // 층별 스폰 리스트 (프리키 노트는 기본 Layer = 2)
+        foreach (var n in notes) notesByLayer[Mathf.Clamp(n.Layer, 1, 2)].Add(n);
 
-        foreach (var t in allTimes) {
-            double dt = t - lastTime;
-            if (dt > 0) currentPos += dt * curSpeedTemp; 
-            var s = speedChanges.LastOrDefault(x => x.Time <= t + 1e-6);
-            if (s != null) curSpeedTemp = s.Multiplier;
-            scrollEvents.Add(new GameScrollEvent { Time = t, Multiplier = currentPos }); 
-            lastTime = t;
+        // 층별 누적 스크롤 거리 테이블
+        for (int L = 1; L <= 2; L++)
+        {
+            var layerSpeeds = speedChangesByLayer[L];
+            var allTimes = layerSpeeds.Select(s => s.Time).Distinct().ToList();
+            if (!allTimes.Contains(0.0)) allTimes.Add(0.0);
+            if (!allTimes.Contains(-999999.0)) allTimes.Add(-999999.0);
+            allTimes.Sort();
+
+            double currentPos = 0.0; double curSpeedTemp = layerSpeeds[0].Multiplier; double lastTime = allTimes[0];
+
+            foreach (var tm in allTimes) {
+                double dt = tm - lastTime;
+                if (dt > 0) currentPos += dt * curSpeedTemp; 
+                var s = layerSpeeds.LastOrDefault(x => x.Time <= tm + 1e-6);
+                if (s != null) curSpeedTemp = s.Multiplier;
+                scrollEventsByLayer[L].Add(new GameScrollEvent { Time = tm, Multiplier = currentPos }); 
+                lastTime = tm;
+            }
         }
 
+        // 롱노트 연결: (레인, 층) 단위로 분리해서 연결한다.
+        //  → 2층의 시작 판정과 1층의 끝 판정은 절대 서로 연결되지 않는다.
+        //  → 빨간 노트는 기준 레인(Lane)에서만 연결해 에디터의 몸통 연결 규칙과 일치시킨다.
         for (int lane = 0; lane < 4; lane++) {
-            NoteData lastLinkNode = null;
+            NoteData[] lastLinkNode = new NoteData[3]; // 인덱스 = 층(1, 2)
             foreach (var note in notesByLane[lane]) {
-                if (note.Type == 2 || note.Type == 12) lastLinkNode = note;
-                else if ((note.Type == 3 || note.Type == 13) && lastLinkNode != null) {
-                    lastLinkNode.NextLongNote = note; lastLinkNode = null;
+                if (note.IsRedNote && note.Lane != lane) continue;
+                int ly = Mathf.Clamp(note.Layer, 1, 2);
+
+                if (note.Type == 2 || note.Type == 12) lastLinkNode[ly] = note;
+                else if ((note.Type == 3 || note.Type == 13) && lastLinkNode[ly] != null) {
+                    if (lastLinkNode[ly].IsRedNote == note.IsRedNote) lastLinkNode[ly].NextLongNote = note;
+                    lastLinkNode[ly] = null;
                 }
             }
+        }
+
+        // 점수 계산용: 완벽하게 쳤을 때 ProcessHit 이 불리는 횟수 (롱노트 중간 틱 제외)
+        chartJudgeCount = 0; chartLastTime = 0; chartEndCursor = 0;
+        foreach (var n in notes) {
+            if (n.HitTime > chartLastTime) chartLastTime = n.HitTime;
+            if (n.IsFreeKey || n.Type == 1 || n.Type == 11) chartJudgeCount++;
+            else if (n.Type == 2 || n.Type == 12) chartJudgeCount += (n.NextLongNote != null) ? 2 : 1;
         }
 
         double maxBeat = 0;
@@ -797,8 +890,58 @@ public class GameManager : MonoBehaviour
         measureSpawnIndex = 0;
     }
 
-    public double GetScrollDistance(double targetTime) 
+    // 토큰("11_3", "2" ...) 하나를 노트로 만들어 등록한다.
+    private void AddNoteFromToken(string token, int lane, double hitTime, int layer)
     {
+        if (lane < 0 || lane >= 4) return;
+        if (!NoteCellParser.TryParseToken(token, out int type, out int width, out bool isRed)) return;
+
+        var newNote = new NoteData { HitTime = hitTime, Lane = lane, Type = type, IsHit = false, isTimeLogged = false, Layer = layer };
+        if (isRed) { newNote.IsRedNote = true; newNote.Width = width; }
+        notes.Add(newNote);
+
+        if (isRed) {
+            for (int w = 0; w < width; w++) {
+                if (lane + w < 4) notesByLane[lane + w].Add(newNote);
+            }
+        } else {
+            notesByLane[lane].Add(newNote);
+        }
+    }
+
+    private static void ParseSpeedEventValue(string value, out int layer, out double speed)
+    {
+        layer = 0;
+        string[] p = value.Split(',');
+        if (p.Length >= 2)
+        {
+            layer = int.Parse(p[0].Trim());
+            if (layer != 1 && layer != 2) layer = 0; // 잘못된 층 번호는 전체 적용
+            speed = double.Parse(p[1].Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            speed = double.Parse(p[0].Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
+    public double GetCurrentScrollDist(int layer)
+    {
+        return currentScrollDistByLayer[Mathf.Clamp(layer, 1, 2)];
+    }
+
+    private void UpdateCurrentScrollDist()
+    {
+        currentScrollDistByLayer[1] = GetScrollDistance(currentPlayTime, NoteLayer.Bottom);
+        currentScrollDistByLayer[2] = GetScrollDistance(currentPlayTime, NoteLayer.Top);
+        currentScrollDist = currentScrollDistByLayer[2];
+    }
+
+    public double GetScrollDistance(double targetTime, int layer = NoteLayer.Top) 
+    {
+        layer = Mathf.Clamp(layer, 1, 2);
+        var scrollEvents = scrollEventsByLayer[layer];
+        var speedChanges = speedChangesByLayer[layer];
         double speedMultiplier = CoreManager.Instance.CurrentSettings.SettingSpeed / 4.0;
         
         if (scrollEvents.Count == 0) return targetTime * baseScrollSpeed * speedMultiplier;
@@ -810,9 +953,10 @@ public class GameManager : MonoBehaviour
         return (ev.Multiplier + dt * spd) * baseScrollSpeed * speedMultiplier;
     }
 
-    public bool IsNoteHiddenByFutureReverseScroll(double currentTime, double noteTime)
+    public bool IsNoteHiddenByFutureReverseScroll(double currentTime, double noteTime, int layer = NoteLayer.Top)
     {
         if (noteTime <= currentTime) return false;
+        var speedChanges = speedChangesByLayer[Mathf.Clamp(layer, 1, 2)];
         
         for (int i = 0; i < speedChanges.Count; i++)
         {
@@ -846,7 +990,8 @@ public class GameManager : MonoBehaviour
         if (bgmSource != null && bgmSource.isPlaying) bgmSource.Pause();
         if (mvPlayer != null && mvPlayer.isPlaying) mvPlayer.Pause();
         
-        pauseUIContainer.SetActive(true);
+        if (pauseShowRoutine != null) StopCoroutine(pauseShowRoutine);
+        pauseShowRoutine = StartCoroutine(ShowPauseUIRoutine());
     }
     
     public void ResumeGame()
@@ -857,7 +1002,7 @@ public class GameManager : MonoBehaviour
 
     private IEnumerator RewindAndResumeRoutine()
     {
-        pauseUIContainer.SetActive(false);
+        HidePauseUIImmediate();
         currentState = GameState.Rewinding;
 
         var activeNotes = noteObjectDict.Values.ToList();
@@ -867,10 +1012,8 @@ public class GameManager : MonoBehaviour
         }
         noteObjectDict.Clear();
 
-        for(int i = 0; i < 4; i++) {
-            activeLongNote[i] = null;
-            StopHoldEffect(i);
-        }
+        for(int i = 0; i < 8; i++) activeLongNote[i] = null;
+        for(int i = 0; i < 4; i++) StopHoldEffect(i);
 
         foreach (var ml in activeMeasureLines) {
             ml.go.SetActive(false);
@@ -878,7 +1021,7 @@ public class GameManager : MonoBehaviour
         }
         activeMeasureLines.Clear();
 
-        double targetRewindTime = Math.Max(-3.0, currentPlayTime - 1.0);
+        double targetRewindTime = Math.Max(playStartTime, currentPlayTime - 1.0);
         double startRewindTime = currentPlayTime;
         float duration = 0.5f; 
         float elapsed = 0f;
@@ -890,7 +1033,7 @@ public class GameManager : MonoBehaviour
             float ease = 1f - Mathf.Pow(1f - t, 3f); 
 
             currentPlayTime = Mathf.Lerp((float)startRewindTime, (float)targetRewindTime, ease);
-            currentScrollDist = GetScrollDistance(currentPlayTime);
+            UpdateCurrentScrollDist();
             
             EvaluateLineStates();
             yield return null;
@@ -898,9 +1041,11 @@ public class GameManager : MonoBehaviour
 
         currentPlayTime = targetRewindTime;
         
-        spawnIndex = 0;
-        while(spawnIndex < notes.Count && notes[spawnIndex].HitTime < currentPlayTime) {
-            spawnIndex++;
+        for (int L = 1; L <= 2; L++) {
+            layerSpawnIndex[L] = 0;
+            while (layerSpawnIndex[L] < notesByLayer[L].Count && notesByLayer[L][layerSpawnIndex[L]].HitTime < currentPlayTime) {
+                layerSpawnIndex[L]++;
+            }
         }
         for(int i = 0; i < 4; i++) {
             laneStartIndex[i] = 0;
@@ -955,11 +1100,14 @@ public class GameManager : MonoBehaviour
 
     public void RetryGame()
     {
-        CoreManager.Instance.LoadGameScene(currentSong, CoreManager.Instance.IsMvOn, CoreManager.Instance.CurrentLevelId);
+        if (isLeaving) return;
+        StartCoroutine(RetryRoutine());
     }
 
     public void BackToMenu()
     {
+        if (isLeaving) return;
+        isLeaving = true;
         StartCoroutine(BackToMenuRoutine());
     }
 
@@ -988,6 +1136,7 @@ public class GameManager : MonoBehaviour
 
     void Update() 
     {
+        if (isLeaving) return;
         deltaTime += (Time.unscaledDeltaTime - deltaTime) * 0.1f;
         
         var kb = Keyboard.current;
@@ -1057,26 +1206,31 @@ public class GameManager : MonoBehaviour
         ProcessUIAndLinearEvents();
         EvaluateLineStates();
 
-        currentScrollDist = GetScrollDistance(currentPlayTime);
+        UpdateCurrentScrollDist();
         double maxVisibleDist = 2000.0;
 
-        while (spawnIndex < notes.Count)
+        // 층별로 각자의 스크롤 속도 기준으로 스폰 판단
+        for (int L = 1; L <= 2; L++)
         {
-            NoteData targetData = notes[spawnIndex];
-            double targetDist = GetScrollDistance(targetData.HitTime);
-            double distDiff = targetDist - currentScrollDist;
+            var layerNotes = notesByLayer[L];
+            while (layerSpawnIndex[L] < layerNotes.Count)
+            {
+                NoteData targetData = layerNotes[layerSpawnIndex[L]];
+                double targetDist = GetScrollDistance(targetData.HitTime, L);
+                double distDiff = targetDist - currentScrollDistByLayer[L];
 
-            if (targetData.HitTime <= currentPlayTime + SPAWN_LOOKAHEAD || distDiff <= maxVisibleDist)
-            {
-                NoteObject noteObj = GetNoteFromPool();
-                noteObj.Initialize(targetData);     
-                noteObj.gameObject.SetActive(true); 
-                noteObjectDict[targetData] = noteObj;
-                spawnIndex++; 
-            }
-            else
-            {
-                break;
+                if (targetData.HitTime <= currentPlayTime + SPAWN_LOOKAHEAD || distDiff <= maxVisibleDist)
+                {
+                    NoteObject noteObj = GetNoteFromPool();
+                    noteObj.Initialize(targetData);     
+                    noteObj.gameObject.SetActive(true); 
+                    noteObjectDict[targetData] = noteObj;
+                    layerSpawnIndex[L]++; 
+                }
+                else
+                {
+                    break;
+                }
             }
         }
 
@@ -1126,6 +1280,8 @@ public class GameManager : MonoBehaviour
             if (CoreManager.Instance.IsAutoPlay) HandleAutoPlay(currentPlayTime);
             else HandleInputs(currentPlayTime);
         }
+
+        UpdateFinishCondition();
 
         if (comboAnimTimer > 0 && currentCombo > 0)
         {
@@ -1230,6 +1386,7 @@ public class GameManager : MonoBehaviour
             if (e.Action == "add") {
                 if (!activeLines.ContainsKey(e.LineNumber)) {
                     GameObject go = new GameObject($"Linear_{e.LineNumber}");
+                    SceneManager.MoveGameObjectToScene(go, gameObject.scene);
                     SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
                     sr.sprite = freeKeyLinearSprite;
                     sr.sortingOrder = 3;
@@ -1303,6 +1460,60 @@ public class GameManager : MonoBehaviour
         if (!isExposure && freeKeyUIContainer != null) freeKeyUIContainer.SetActive(false);
     }
 
+    // ===== 층별 롱노트 슬롯 헬퍼 =====
+    private int SlotBase(NoteData n) { return n.Layer == NoteLayer.Bottom ? 4 : 0; }
+    private int CoveredLaneCount(NoteData n) { return n.IsRedNote ? n.Width : 1; }
+
+    private bool IsLaneHeldByLongNote(int lane)
+    {
+        return activeLongNote[lane] != null || activeLongNote[lane + 4] != null;
+    }
+
+    private void RegisterActiveLongNote(NoteData n, double tickInterval)
+    {
+        int b = SlotBase(n);
+        int cnt = CoveredLaneCount(n);
+        for (int k = 0; k < cnt; k++) {
+            int l = n.Lane + k;
+            if (l >= 4) continue;
+            activeLongNote[b + l] = n;
+            nextLongNoteTickTime[b + l] = n.HitTime + tickInterval;
+            StartHoldEffect(l);
+        }
+    }
+
+    private void ClearActiveLongNote(NoteData n)
+    {
+        int b = SlotBase(n);
+        int cnt = CoveredLaneCount(n);
+        for (int k = 0; k < cnt; k++) {
+            int l = n.Lane + k;
+            if (l >= 4) continue;
+            if (activeLongNote[b + l] == n) activeLongNote[b + l] = null;
+            if (!IsLaneHeldByLongNote(l)) StopHoldEffect(l);
+        }
+    }
+
+    private bool IsLongNoteHeld(NoteData ln)
+    {
+        int cnt = CoveredLaneCount(ln);
+        for (int k = 0; k < cnt; k++) {
+            int l = ln.Lane + k;
+            if (l < 4 && prevKeyState[l]) return true;
+        }
+        return false;
+    }
+
+    private void SetLongNoteReleaseTime(NoteData ln, double time)
+    {
+        int b = SlotBase(ln);
+        int cnt = CoveredLaneCount(ln);
+        for (int k = 0; k < cnt; k++) {
+            int l = ln.Lane + k;
+            if (l < 4) lnReleaseTime[b + l] = time;
+        }
+    }
+
     private void HandleAutoPlay(double T_sys)
     {
         for (int i = 0; i < 4; i++)
@@ -1324,7 +1535,7 @@ public class GameManager : MonoBehaviour
                         double randomDiff = (UnityEngine.Random.Range(-30f, 30f)) / 1000.0;
                         ApplyJudgment(randomDiff);
                     } else {
-                        ProcessHit("EXCELLENT");
+                        ProcessHit("EXCELLENT", 0.0, true);
                     }
                     
                     if (n.IsRedNote) {
@@ -1345,56 +1556,31 @@ public class GameManager : MonoBehaviour
                         double currentBpm = GetBpmAtTime(n.HitTime);
                         double ticksPerBeat = (currentBpm <= 200.0) ? 3.0 : ((currentBpm <= 300.0) ? 2.0 : 1.0);
                         double tickInterval = (60.0 / currentBpm) / ticksPerBeat;
-                        
-                        if (n.IsRedNote) {
-                            for (int w = 0; w < n.Width; w++) {
-                                int l = n.Lane + w;
-                                if (l < 4) {
-                                    activeLongNote[l] = n;
-                                    StartHoldEffect(l);
-                                    nextLongNoteTickTime[l] = n.HitTime + tickInterval;
-                                }
-                            }
-                        } else {
-                            activeLongNote[i] = n;
-                            StartHoldEffect(i);
-                            nextLongNoteTickTime[i] = n.HitTime + tickInterval;
-                        }
+                        RegisterActiveLongNote(n, tickInterval);
                     }
                     laneStartIndex[i]++;
                 }
                 else break;
             }
+        }
 
-            if (activeLongNote[i] != null)
-            {
-                if (!activeLongNote[i].IsRedNote || activeLongNote[i].Lane == i) {
-                    ProcessLongNoteTick(i, T_sys);
-                }
-                
-                if (T_sys >= GetLongNoteEndTime(activeLongNote[i]))
-                {
-                    NoteData ln = activeLongNote[i];
-                    FinishLongNote(i, ln);
-                    
-                    if (ln.IsRedNote) {
-                        for (int w = 0; w < ln.Width; w++) {
-                            int l = ln.Lane + w;
-                            if (l < 4) {
-                                activeLongNote[l] = null;
-                                StopHoldEffect(l);
-                            }
-                        }
-                    }
-                }
-            }
+        // 진행 중인 롱노트(1층/2층 슬롯 8개) 처리
+        for (int s = 0; s < 8; s++)
+        {
+            NoteData ln = activeLongNote[s];
+            if (ln == null) continue;
+            int lane = s % 4;
+
+            if (!ln.IsRedNote || ln.Lane == lane) ProcessLongNoteTick(s, T_sys);
+
+            if (T_sys >= GetLongNoteEndTime(ln)) FinishLongNote(ln);
         }
 
         var activeFreeNotes = notes.Where(n => n.IsFreeKey && !n.IsHit && n.HitTime <= T_sys).ToList();
         foreach (var n in activeFreeNotes)
         {
             n.IsHit = true;
-            ProcessHit("EXCELLENT");
+            ProcessHit("EXCELLENT", 0.0, true);
             if (sfxSource != null && hitSoundClip != null) sfxSource.PlayOneShot(hitSoundClip);
             HideNoteObject(n);
         }
@@ -1408,7 +1594,7 @@ public class GameManager : MonoBehaviour
 
         yield return new WaitForSeconds(0.05f);
 
-        if (activeLongNote[lane] == null) {
+        if (!IsLaneHeldByLongNote(lane)) {
             if (beamRenderers != null && beamRenderers[lane] != null && offSprites != null) beamRenderers[lane].sprite = offSprites[lane];
             if (whiteLights != null && whiteLights[lane] != null) whiteLights[lane].SetActive(false);
         }
@@ -1435,49 +1621,16 @@ public class GameManager : MonoBehaviour
                 if (whiteLights != null && whiteLights[i] != null) whiteLights[i].SetActive(false);
                 StopHoldEffect(i);
                 
-                if (activeLongNote[i] != null)
+                // 이 레인의 2층/1층 롱노트를 각각 검사
+                for (int layerSlot = 0; layerSlot < 2; layerSlot++)
                 {
-                    bool stillHeld = false;
-                    
-                    if (activeLongNote[i].IsRedNote) {
-                        for (int w = 0; w < activeLongNote[i].Width; w++) {
-                            int checkLane = activeLongNote[i].Lane + w;
-                            if (checkLane < 4 && prevKeyState[checkLane]) {
-                                stillHeld = true;
-                                break;
-                            }
-                        }
-                    }
+                    NoteData ln = activeLongNote[i + layerSlot * 4];
+                    if (ln == null) continue;
+                    if (IsLongNoteHeld(ln)) continue; // 와이드 빨간 노트: 다른 레인 키가 아직 눌려 있음
 
-                    if (!stillHeld) {
-                        double endTime = GetLongNoteEndTime(activeLongNote[i]);
-                        if (endTime - T_sys <= 0.15) 
-                        {
-                            NoteData ln = activeLongNote[i];
-                            FinishLongNote(i, ln);
-                            
-                            if (ln.IsRedNote) {
-                                for (int w = 0; w < ln.Width; w++) {
-                                    int l = ln.Lane + w;
-                                    if (l < 4) {
-                                        activeLongNote[l] = null;
-                                        StopHoldEffect(l);
-                                    }
-                                }
-                            }
-                        }
-                        else 
-                        {
-                            if (activeLongNote[i].IsRedNote) {
-                                for (int w = 0; w < activeLongNote[i].Width; w++) {
-                                    int l = activeLongNote[i].Lane + w;
-                                    if (l < 4) lnReleaseTime[l] = T_sys;
-                                }
-                            } else {
-                                lnReleaseTime[i] = T_sys;
-                            }
-                        }
-                    }
+                    double endTime = GetLongNoteEndTime(ln);
+                    if (endTime - T_sys <= 0.15) FinishLongNote(ln, SignedMs(Math.Max(0.0, endTime - (T_sys - CoreManager.Instance.CurrentSettings.JudgeOffset))));
+                    else SetLongNoteReleaseTime(ln, T_sys);
                 }
             }
 
@@ -1489,78 +1642,31 @@ public class GameManager : MonoBehaviour
                 
                 EvaluateHit(i, T_sys);
                 
-                if (activeLongNote[i] != null)
-                {
-                    StartHoldEffect(i);
-                }
+                if (IsLaneHeldByLongNote(i)) StartHoldEffect(i);
             }
         }
         
-        for (int i = 0; i < 4; i++)
+        for (int s = 0; s < 8; s++)
         {
-            if (activeLongNote[i] != null)
+            NoteData ln = activeLongNote[s];
+            if (ln == null) continue;
+
+            int lane = s % 4;
+            double endTime = GetLongNoteEndTime(ln);
+            bool isHeld = IsLongNoteHeld(ln);
+
+            if (isHeld) 
             {
-                NoteData currentLN = activeLongNote[i];
-                double endTime = GetLongNoteEndTime(currentLN);
-                bool isHeld = prevKeyState[i]; 
-                
-                if (currentLN.IsRedNote) {
-                    isHeld = false;
-                    for (int w = 0; w < currentLN.Width; w++) {
-                        int checkLane = currentLN.Lane + w;
-                        if (checkLane < 4 && prevKeyState[checkLane]) {
-                            isHeld = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if (isHeld) 
-                {
-                    if (!currentLN.IsRedNote || currentLN.Lane == i) {
-                        ProcessLongNoteTick(i, T_sys);
-                    }
-                    
-                    if (currentLN.IsRedNote) {
-                        for (int w = 0; w < currentLN.Width; w++) {
-                            int l = currentLN.Lane + w;
-                            if (l < 4) lnReleaseTime[l] = 0;
-                        }
-                    } else {
-                        lnReleaseTime[i] = 0;
-                    }
-                }
-                else 
-                {
-                    if (T_sys - lnReleaseTime[i] > 0.2) 
-                    {
-                        FailLongNote(i);
-                        if (currentLN.IsRedNote) {
-                            for (int w = 0; w < currentLN.Width; w++) {
-                                int l = currentLN.Lane + w;
-                                if (l < 4 && activeLongNote[l] == currentLN) {
-                                    activeLongNote[l] = null;
-                                    StopHoldEffect(l);
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                if (activeLongNote[i] != null && T_sys >= endTime)
-                {
-                    FinishLongNote(i, currentLN);
-                    if (currentLN.IsRedNote) {
-                        for (int w = 0; w < currentLN.Width; w++) {
-                            int l = currentLN.Lane + w;
-                            if (l < 4 && activeLongNote[l] == currentLN) {
-                                activeLongNote[l] = null;
-                                StopHoldEffect(l);
-                            }
-                        }
-                    }
-                }
+                if (!ln.IsRedNote || ln.Lane == lane) ProcessLongNoteTick(s, T_sys);
+                SetLongNoteReleaseTime(ln, 0);
             }
+            else if (T_sys - lnReleaseTime[s] > 0.2) 
+            {
+                FailLongNote(ln);
+                continue;
+            }
+
+            if (activeLongNote[s] == ln && T_sys >= endTime) FinishLongNote(ln);
         }
 
         int currentKeysPressedCount = 0;
@@ -1589,24 +1695,20 @@ public class GameManager : MonoBehaviour
             EvaluateFreeKey(T_sys, isValidFreeKey, isSpaceKey, isAnyKeyCurrentlyHeld);
     }
 
-    private void FinishLongNote(int lane, NoteData head)
+    private void FinishLongNote(NoteData head, double tailErrorMs = 0.0)
     {
         NoteData tailNote = head.NextLongNote;
         if (tailNote != null && !tailNote.IsHit) {
             tailNote.IsHit = true; 
-            ProcessHit("EXCELLENT"); 
+            ProcessHit("EXCELLENT", tailErrorMs, true); 
             
-            if (head.IsRedNote) {
-                for (int w = 0; w < head.Width; w++) {
-                    if (head.Lane + w < 4) SpawnHitEffect(head.Lane + w);
-                }
-            } else {
-                SpawnHitEffect(lane);
+            int cnt = CoveredLaneCount(head);
+            for (int w = 0; w < cnt; w++) {
+                if (head.Lane + w < 4) SpawnHitEffect(head.Lane + w);
             }
             HideNoteObject(tailNote);
         }
-        StopHoldEffect(lane); 
-        activeLongNote[lane] = null; 
+        ClearActiveLongNote(head);
     }
 
     private void EvaluateFreeKey(double hitTimestamp, bool pressedThisFrame, bool spacePressed, bool isHeld)
@@ -1724,31 +1826,18 @@ public class GameManager : MonoBehaviour
             double ticksPerBeat = (currentBpm <= 200.0) ? 3.0 : ((currentBpm <= 300.0) ? 2.0 : 1.0);
             double tickInterval = (60.0 / currentBpm) / ticksPerBeat;
 
-            if (targetNote.IsRedNote) {
-                for (int w = 0; w < targetNote.Width; w++) {
-                    int l = targetNote.Lane + w;
-                    if (l < 4) {
-                        activeLongNote[l] = targetNote;
-                        StartHoldEffect(l);
-                        nextLongNoteTickTime[l] = targetNote.HitTime + tickInterval;
-                    }
-                }
-            } else {
-                activeLongNote[lane] = targetNote;
-                StartHoldEffect(lane); 
-                nextLongNoteTickTime[lane] = targetNote.HitTime + tickInterval;
-            }
+            RegisterActiveLongNote(targetNote, tickInterval);
         }
     }
 
-    private void ProcessLongNoteTick(int lane, double T_sys)
+    private void ProcessLongNoteTick(int slot, double T_sys)
     {
-        var head = activeLongNote[lane];
+        var head = activeLongNote[slot];
         if (head == null) return;
 
         double endTime = GetLongNoteEndTime(head);
         
-        while (T_sys >= nextLongNoteTickTime[lane] && nextLongNoteTickTime[lane] < endTime - 0.05)
+        while (T_sys >= nextLongNoteTickTime[slot] && nextLongNoteTickTime[slot] < endTime - 0.05)
         {
             currentCombo++;
             if (currentCombo > maxCombo) maxCombo = currentCombo;
@@ -1756,11 +1845,11 @@ public class GameManager : MonoBehaviour
             
             UpdateUI();
 
-            double currentBpm = GetBpmAtTime(nextLongNoteTickTime[lane]);
+            double currentBpm = GetBpmAtTime(nextLongNoteTickTime[slot]);
             double ticksPerBeat = (currentBpm <= 200.0) ? 3.0 : ((currentBpm <= 300.0) ? 2.0 : 1.0);
             double tickInterval = (60.0 / currentBpm) / ticksPerBeat;
             
-            nextLongNoteTickTime[lane] += tickInterval;
+            nextLongNoteTickTime[slot] += tickInterval;
         }
     }
 
@@ -1780,12 +1869,11 @@ public class GameManager : MonoBehaviour
         if (noteObjectDict.TryGetValue(data, out NoteObject obj) && obj != null) obj.HideNote();
     }
 
-    private void FailLongNote(int lane)
+    private void FailLongNote(NoteData ln)
     {
         ProcessHit("MISS"); 
-        StopHoldEffect(lane); 
-        DimEntireLongNoteChain(activeLongNote[lane]);
-        activeLongNote[lane] = null;
+        DimEntireLongNoteChain(ln);
+        ClearActiveLongNote(ln);
     }
 
     public void MissLongNoteHead(NoteData headNote)
@@ -1801,10 +1889,11 @@ public class GameManager : MonoBehaviour
         double absDiff = Math.Abs(diff);
         int msDiff = (int)(absDiff * 1000.0);
 
-        if (absDiff <= W_EXCELLENT) ProcessHit("EXCELLENT");
-        else if (absDiff <= W_GREAT) ProcessHit("GREAT");
-        else if (absDiff <= W_GOOD) ProcessHit("GOOD");
-        else ProcessHit("BAD");
+        double signedMs = SignedMs(diff);
+        if (absDiff <= W_EXCELLENT) ProcessHit("EXCELLENT", signedMs, true);
+        else if (absDiff <= W_GREAT) ProcessHit("GREAT", signedMs, true);
+        else if (absDiff <= W_GOOD) ProcessHit("GOOD", signedMs, true);
+        else ProcessHit("BAD", signedMs, true);
 
         if (msDiff >= CoreManager.Instance.CurrentSettings.judgeoverrange && absDiff <= W_BAD)
         {
@@ -1823,7 +1912,7 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    public void ProcessHit(string judge)
+    public void ProcessHit(string judge, double signedErrorMs = 0.0, bool hasTiming = false)
     {
         processedNotes++;
         float accMultiplier = 0f;
@@ -1839,8 +1928,256 @@ public class GameManager : MonoBehaviour
 
         currentAccSum += accMultiplier;
 
+        switch (judge) {
+            case "EXCELLENT": cntExcellent++; break;
+            case "GREAT": cntGreat++; break;
+            case "GOOD": cntGood++; break;
+            case "BAD": cntBad++; break;
+            case "MISS": cntMiss++; break;
+        }
+        if (hasTiming && judge != "MISS") { errorSumMs += signedErrorMs; timedCount++; }
+
         UpdateUI();
         ShowJudgmentImage(judge);
+    }
+
+    // =====================================================================
+    //  유틸 / 정리
+    // =====================================================================
+    // 초 단위 오차(양수 = FAST) → 부호 있는 정수 ms (FAST = -, SLOW = +). 화면의 FAST/SLOW 숫자와 같은 기준(소수점 버림)
+    private static double SignedMs(double diffSeconds)
+    {
+        return 0.0 - Math.Truncate(diffSeconds * 1000.0);
+    }
+
+    private Camera FindSceneCamera()
+    {
+        foreach (var root in gameObject.scene.GetRootGameObjects()) {
+            Camera cam = root.GetComponentInChildren<Camera>(true);
+            if (cam != null && cam.enabled) return cam;
+        }
+        return Camera.main;
+    }
+
+    // Instantiate 는 '활성 씬'(보통 Core 씬)에 오브젝트를 만들기 때문에, 게임 씬이 언로드돼도 노트가 남는다.
+    // → 항상 이 GameManager 가 속한 씬으로 옮겨서, 씬이 사라질 때 같이 지워지게 한다.
+    private GameObject InstantiateInMyScene(GameObject prefab)
+    {
+        GameObject go = Instantiate(prefab);
+        if (go.scene != gameObject.scene) SceneManager.MoveGameObjectToScene(go, gameObject.scene);
+        return go;
+    }
+
+    void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
+
+        if (mvPlayer != null && mvEventsHooked) {
+            mvPlayer.loopPointReached -= OnMvLoopPointReached;
+            mvPlayer.errorReceived -= OnMvError;
+        }
+        mvEventsHooked = false;
+
+        foreach (var obj in noteObjectDict.Values) if (obj != null) Destroy(obj.gameObject);
+        noteObjectDict.Clear();
+        while (notePool.Count > 0) {
+            NoteObject o = notePool.Dequeue();
+            if (o != null) Destroy(o.gameObject);
+        }
+        foreach (var line in activeLines.Values) if (line != null && line.go != null) Destroy(line.go);
+        activeLines.Clear();
+    }
+
+    private void ResetStats()
+    {
+        processedNotes = 0; currentCombo = 0; maxCombo = 0; currentAccSum = 0;
+        cntExcellent = cntGreat = cntGood = cntBad = cntMiss = 0;
+        errorSumMs = 0; timedCount = 0;
+        chartJudgeCount = 0; chartLastTime = 0; chartEndCursor = 0;
+        finishHoldTimer = 0f; finishRoutineStarted = false;
+    }
+
+    // =====================================================================
+    //  Pause UI (약간 늦게, 부드럽게 등장)
+    // =====================================================================
+    private IEnumerator ShowPauseUIRoutine()
+    {
+        float t = 0f;
+        while (t < pauseUIShowDelay) { t += Time.unscaledDeltaTime; yield return null; }
+
+        if (pauseCanvasGroup != null) { pauseCanvasGroup.alpha = 0f; pauseCanvasGroup.interactable = false; pauseCanvasGroup.blocksRaycasts = false; }
+        pauseUIContainer.SetActive(true);
+
+        t = 0f;
+        float dur = Mathf.Max(0.01f, pauseUIFadeDuration);
+        while (t < dur) {
+            t += Time.unscaledDeltaTime;
+            if (pauseCanvasGroup != null) pauseCanvasGroup.alpha = Mathf.Clamp01(t / dur);
+            yield return null;
+        }
+        if (pauseCanvasGroup != null) { pauseCanvasGroup.alpha = 1f; pauseCanvasGroup.interactable = true; pauseCanvasGroup.blocksRaycasts = true; }
+        pauseShowRoutine = null;
+    }
+
+    private void HidePauseUIImmediate()
+    {
+        if (pauseShowRoutine != null) { StopCoroutine(pauseShowRoutine); pauseShowRoutine = null; }
+        if (pauseCanvasGroup != null) pauseCanvasGroup.alpha = 0f;
+        if (pauseUIContainer != null) pauseUIContainer.SetActive(false);
+    }
+
+    private IEnumerator RetryRoutine()
+    {
+        isLeaving = true;
+        HidePauseUIImmediate();
+        for (int i = 0; i < 4; i++) StopHoldEffect(i);
+        if (bgmSource != null) bgmSource.Stop();
+        if (mvPlayer != null) mvPlayer.Stop();
+
+        yield return FadeBlackOverlay(0.4f);
+
+        CoreManager.Instance.LoadGameScene(currentSong, CoreManager.Instance.IsMvOn, CoreManager.Instance.CurrentLevelId);
+    }
+
+    private IEnumerator FadeBlackOverlay(float duration, CanvasGroup overlay = null)
+    {
+        CanvasGroup g = overlay != null ? overlay : blackOverlayGroup;
+        if (g == null) yield break;
+        g.gameObject.SetActive(true);
+        g.transform.SetAsLastSibling();
+        g.blocksRaycasts = true;
+
+        float elapsed = 0f;
+        float start = g.alpha;
+        float dur = Mathf.Max(0.01f, duration);
+        while (elapsed < dur) {
+            elapsed += Time.unscaledDeltaTime;
+            g.alpha = Mathf.Lerp(start, 1f, elapsed / dur);
+            yield return null;
+        }
+        g.alpha = 1f;
+    }
+
+    // =====================================================================
+    //  결과창 진입: MV 종료 + 채보 종료 + 노래 종료 → resultDelaySeconds 후 암전 → 결과 씬
+    // =====================================================================
+    private void HookMvEvents()
+    {
+        if (mvPlayer == null || mvEventsHooked) return;
+        mvPlayer.loopPointReached += OnMvLoopPointReached;
+        mvPlayer.errorReceived += OnMvError;
+        mvEventsHooked = true;
+    }
+
+    private void OnMvLoopPointReached(VideoPlayer vp) { mvFinished = true; }
+    private void OnMvError(VideoPlayer vp, string message)
+    {
+        Debug.LogWarning("[MV] 재생 오류로 MV를 종료 처리합니다: " + message);
+        mvFinished = true;
+    }
+
+    private static bool IsJudgableNote(NoteData n)
+    {
+        return n.IsFreeKey || n.Type == 1 || n.Type == 2 || n.Type == 3 || n.Type == 11 || n.Type == 12 || n.Type == 13;
+    }
+
+    private bool IsChartFinished()
+    {
+        if (notes.Count == 0) return true;
+        if (currentPlayTime < chartLastTime + W_BAD + 0.1) return false;
+        if (currentPlayTime >= chartLastTime + W_BAD + 3.0) return true; // 안전장치: 처리되지 않는 노트가 있어도 무한 대기 방지
+
+        for (int s = 0; s < activeLongNote.Length; s++) if (activeLongNote[s] != null) return false;
+
+        while (chartEndCursor < notes.Count) {
+            NoteData n = notes[chartEndCursor];
+            if (n.IsHit || !IsJudgableNote(n)) chartEndCursor++;
+            else return false;
+        }
+        return true;
+    }
+
+    private bool IsSongFinished()
+    {
+        if (bgmSource == null || bgmSource.clip == null) return currentPlayTime >= chartLastTime + 3.0;
+        if (!isFullMusicStarted) return false;
+
+        double triggerTime = songStartOffset - CoreManager.Instance.CurrentSettings.AudioOffset;
+        return !bgmSource.isPlaying && currentPlayTime >= triggerTime + bgmSource.clip.length - 0.25;
+    }
+
+    private bool IsMvFinished()
+    {
+        if (!mvActive || mvFinished) return true;
+
+        // 안전장치: 종료 이벤트가 오지 않아도 영상 길이를 넘으면 종료로 본다
+        if (isFullMusicStarted && mvPlayer != null && mvPlayer.length > 0.0) {
+            double triggerTime = songStartOffset - CoreManager.Instance.CurrentSettings.AudioOffset;
+            if (currentPlayTime - triggerTime >= mvPlayer.length + 1.0) return true;
+        }
+        return false;
+    }
+
+    private void UpdateFinishCondition()
+    {
+        if (currentState != GameState.Playing || finishRoutineStarted) return;
+
+        if (IsChartFinished() && IsSongFinished() && IsMvFinished()) {
+            finishHoldTimer += Time.unscaledDeltaTime;
+            if (finishHoldTimer >= resultDelaySeconds) {
+                finishRoutineStarted = true;
+                StartCoroutine(FinishToResultRoutine());
+            }
+        } else {
+            finishHoldTimer = 0f;
+        }
+    }
+
+    private ResultData BuildResultData()
+    {
+        int levelId = CoreManager.Instance.CurrentLevelId;
+
+        double acc = processedNotes == 0 ? 100.0 : (currentAccSum / processedNotes) * 100.0;
+
+        int score = 0;
+        if (chartJudgeCount > 0) score = Mathf.Clamp((int)Math.Round(MaxScore * currentAccSum / chartJudgeCount), 0, MaxScore);
+
+        // 전체 판정 오차 = (모든 판정의 부호 있는 ms 합) / 전체 노트 수. 롱노트 중간 틱은 포함하지 않는다.
+        int denom = missCountsInErrorAverage ? (timedCount + cntMiss) : timedCount;
+        double avgError = denom > 0 ? errorSumMs / denom : 0.0;
+
+        return new ResultData {
+            SongId = currentSong.Id,
+            SongName = currentSong.Name,
+            SubName = currentSong.SubName,
+            Composer = currentSong.Composer,
+            LevelId = levelId,
+            DifficultyName = DifficultyHelper.GetName(levelId),
+            DifficultyValue = DifficultyHelper.GetValue(currentSong, levelId),
+            Score = score,
+            Accuracy = acc,
+            Excellent = cntExcellent, Great = cntGreat, Good = cntGood, Bad = cntBad, Miss = cntMiss,
+            MaxCombo = maxCombo,
+            AverageErrorMs = avgError,
+            ErrorSampleCount = denom,
+            IsAutoPlay = CoreManager.Instance.IsAutoPlay
+        };
+    }
+
+    private IEnumerator FinishToResultRoutine()
+    {
+        currentState = GameState.Finished;
+        isLeaving = true;
+        for (int i = 0; i < 4; i++) StopHoldEffect(i);
+
+        ResultData result = BuildResultData();
+
+        yield return FadeBlackOverlay(resultFadeDuration, resultTransitionOverlay);
+
+        if (bgmSource != null) bgmSource.Stop();
+        if (mvPlayer != null) mvPlayer.Stop();
+
+        CoreManager.Instance.LoadResultScene(result);
     }
 
     private void UpdateUI()
