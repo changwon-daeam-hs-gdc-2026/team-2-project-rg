@@ -288,7 +288,10 @@ MonoBehaviour:
   CurrentSongData:
     Id: 0
     Name: 
-    Difficulty: 
+    SubName: 
+    Difficulty_EASY: 
+    Difficulty_HARD: 
+    Difficulty_INSANE: 
     Composer: 
     illustration: 
     Vocal: 
@@ -297,6 +300,34 @@ MonoBehaviour:
     HasMV: 0
     ExistSongbar: 0
   IsMvOn: 0
+  CurrentLevelId: 2
+  CurrentSettings:
+    AudioOffset: 0
+    JudgeOffset: 0
+    Mode: 2
+    EditorSongid: 1
+    SettingSpeed: 1
+    judgeoverrange: 10
+  IsAutoPlay: 0
+  LastResult:
+    SongId: 0
+    SongName: 
+    SubName: 
+    Composer: 
+    LevelId: 0
+    DifficultyName: 
+    DifficultyValue: 
+    Score: 0
+    Accuracy: 0
+    Excellent: 0
+    Great: 0
+    Good: 0
+    Bad: 0
+    Miss: 0
+    MaxCombo: 0
+    AverageErrorMs: 0
+    ErrorSampleCount: 0
+    IsAutoPlay: 0
 --- !u!4 &2119298766
 Transform:
   m_ObjectHideFlags: 0

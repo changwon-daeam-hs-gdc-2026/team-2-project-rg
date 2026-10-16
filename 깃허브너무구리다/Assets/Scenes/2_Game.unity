@@ -613,8 +613,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: 000.00%
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 8d68e57d16724da41986b4d54fc17fd8, type: 2}
-  m_sharedMaterial: {fileID: 2953776307126180261, guid: 8d68e57d16724da41986b4d54fc17fd8, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -3547,8 +3547,7 @@ MonoBehaviour:
   resultFadeDuration: 1
   resultTransitionOverlay: {fileID: 1887623627}
   missCountsInErrorAverage: 1
-  pauseUIShowDelay: 0.35
-  pauseUIFadeDuration: 0.25
+  pauseUIFadeInDuration: 0.08
   currentScrollDist: 0
   bgmSource: {fileID: 1659374356}
   sfxSource: {fileID: 893695736}

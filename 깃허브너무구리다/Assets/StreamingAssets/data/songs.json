@@ -5,12 +5,13 @@
     "SubName": "",
     "Difficulty_EASY": "00",
     "Difficulty_HARD": "00",
-    "Difficulty_INSANE": "1",
-    "Composer": "Game",
-    "illustration": "Unknown",
-    "Vocal": "inst Ver.",
+    "Difficulty_INSANE": "0",
+    "Composer": "",
+    "illustration": "",
+    "Vocal": "",
     "BPM": 120,
     "NoteCount": 99999,
+    "BarColor": "#000000",
     "HasMV": 0,
     "ExistSongbar": 1
   },
@@ -25,6 +26,7 @@
     "Vocal": "",
     "BPM": 60,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -39,8 +41,9 @@
     "Vocal": "初音ミク",
     "BPM": 132,
     "NoteCount": 1927,
+    "BarColor": "#299e9f",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 4,
@@ -48,14 +51,15 @@
     "SubName": " -厭世アリス-",
     "Difficulty_EASY": "3",
     "Difficulty_HARD": "7",
-    "Difficulty_INSANE": "11+",
+    "Difficulty_INSANE": "11",
     "Composer": "LeaF",
     "illustration": "想起 / セシル◇タイト",
     "Vocal": "inst Ver.",
     "BPM": 174,
     "NoteCount": 99999,
+    "BarColor": "#e9989e",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 5,
@@ -68,26 +72,28 @@
     "Vocal": "Tsukihi Araragi(Vo. Yuka Iguchi)",
     "BPM": 117,
     "NoteCount": 99999,
+    "BarColor": "#7d6d83",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 6,
     "Name": "R",
     "Difficulty_EASY": "4",
     "Difficulty_HARD": "9",
-    "Difficulty_INSANE": "11+",
+    "Difficulty_INSANE": "11",
     "Composer": "Plum",
     "illustration": "-",
     "Vocal": "inst Ver.",
     "BPM": 211,
     "NoteCount": 99999,
+    "BarColor": "#000000",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 7,
-    "Name": "漆黒の堕天使《Gram》†Versus† 聖刻の熾天使 eden",
+    "Name": "eden",
     "Difficulty_EASY": "5",
     "Difficulty_HARD": "10",
     "Difficulty_INSANE": "15",
@@ -96,8 +102,9 @@
     "Vocal": "",
     "BPM": 211,
     "NoteCount": 99999,
+    "BarColor": "#b4c2dc",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 8,
@@ -110,8 +117,9 @@
     "Vocal": "Tenko Shibuki",
     "BPM": 145,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 9,
@@ -124,6 +132,7 @@
     "Vocal": "inst Ver.",
     "BPM": 190,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -133,27 +142,29 @@
     "Difficulty_EASY": "3",
     "Difficulty_HARD": "6",
     "Difficulty_INSANE": "10",
-    "Composer": "BUMP OF CHICKEN + Motoo Fujiwara ",
+    "Composer": "BUMP OF CHICKEN  Motoo Fujiwara ",
     "illustration": "宮原ひとみ",
     "Vocal": "Vo. Kaguya(cv.Yuko Natsuyoshi) · Yachiyo Runami(cv.Saori Hayami)",
     "BPM": 122,
     "NoteCount": 99999,
+    "BarColor": "#b4c2dc",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 11,
     "Name": "Aragami",
     "Difficulty_EASY": "6",
-    "Difficulty_HARD": "11+",
+    "Difficulty_HARD": "11",
     "Difficulty_INSANE": "13",
     "Composer": "xi",
     "illustration": "-",
     "Vocal": "inst Ver.",
     "BPM": 164,
     "NoteCount": 2772,
+    "BarColor": "#d4d3ce",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 12,
@@ -166,8 +177,9 @@
     "Vocal": "初音ミク",
     "BPM": 145,
     "NoteCount": 99999,
+    "BarColor": "#ff0090",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 13,
@@ -180,6 +192,7 @@
     "Vocal": "初音ミク",
     "BPM": 145,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -190,12 +203,13 @@
     "Difficulty_HARD": "7",
     "Difficulty_INSANE": "13",
     "Composer": "Ponchi feat.haxchi",
-    "illustration": "LESYEF + 藍瀬 まなみ",
+    "illustration": "LESYEF  藍瀬 まなみ",
     "Vocal": "haxchi",
     "BPM": 210,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 15,
@@ -208,6 +222,7 @@
     "Vocal": "初音ミク",
     "BPM": 173,
     "NoteCount": 99999,
+    "BarColor": "#ff004d",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -223,6 +238,7 @@
     "Vocal": "inst Ver.",
     "BPM": 200,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -237,6 +253,7 @@
     "Vocal": "inst Ver.",
     "BPM": 125,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 1,
     "ExistSongbar": 0
   },
@@ -245,14 +262,15 @@
     "Name": "Kaishin no Ichigeki! (Hayakou Bootleg)",
     "Difficulty_EASY": "00",
     "Difficulty_HARD": "00",
-    "Difficulty_INSANE": "15+",
+    "Difficulty_INSANE": "光",
     "Composer": "?",
     "illustration": "-",
     "Vocal": "Nakiri Ayame",
     "BPM": 176,
     "NoteCount": 99999,
+    "BarColor": "#be9ba2",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 19,
@@ -265,8 +283,9 @@
     "Vocal": "inst Ver.",
     "BPM": 182,
     "NoteCount": 99999,
+    "BarColor": "#f4bfb3",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 20,
@@ -279,6 +298,7 @@
     "Vocal": "-",
     "BPM": 176,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -293,8 +313,9 @@
     "Vocal": "ChouCho",
     "BPM": 176,
     "NoteCount": 99999,
+    "BarColor": "#847fb4",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 22,
@@ -307,8 +328,9 @@
     "Vocal": "KAFU",
     "BPM": 86,
     "NoteCount": 99999,
+    "BarColor": "#fcf9f6",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 23,
@@ -321,6 +343,7 @@
     "Vocal": "LyuU",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -335,20 +358,22 @@
     "Vocal": "Nakiri Ayame",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#ffffff",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 25,
     "Name": "Explorers",
     "Difficulty_EASY": "00",
     "Difficulty_HARD": "00",
-    "Difficulty_INSANE": "14+",
+    "Difficulty_INSANE": "14",
     "Composer": "Hinkink",
     "illustration": "-",
     "Vocal": "inst Ver.",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -356,16 +381,17 @@
     "Id": 26,
     "Name": "小さな恋のうた",
     "SubName": " (takehirotei remix) (2022 Remaster)",
-    "Difficulty_EASY": "13",
-    "Difficulty_HARD": "13+",
-    "Difficulty_INSANE": "15+",
+    "Difficulty_EASY": "12",
+    "Difficulty_HARD": "14",
+    "Difficulty_INSANE": "開",
     "Composer": "takehirotei(Original Song by. MONGOL800)",
     "illustration": "mimi_mimimi",
     "Vocal": "Shirakami Fubuki",
     "BPM": 220,
     "NoteCount": 110029013105,
+    "BarColor": "#b0b8f4",
     "HasMV": 0,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 27,
@@ -378,6 +404,7 @@
     "Vocal": "Usada Pekora",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 0,
     "ExistSongbar": 0
   },
@@ -392,6 +419,7 @@
     "Vocal": "inst Ver.",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#ff3131",
     "HasMV": 1,
     "ExistSongbar": 0
   },
@@ -406,36 +434,39 @@
     "Vocal": "Tenko Shibuki",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#dac8f4",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 32,
     "Name": "グローエンブレイス",
     "Difficulty_EASY": "00",
     "Difficulty_HARD": "00",
-    "Difficulty_INSANE": "13+",
+    "Difficulty_INSANE": "13",
     "Composer": "藤永龍太郎 (Elements Garden)",
     "illustration": "吹田亜沙美 (ARIA entertainment) (MV & illust)",
     "Vocal": "白上フブキ",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#7dc8fd",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 35,
     "Name": "腐れ外道とチョコレゐト",
     "Difficulty_EASY": "00",
     "Difficulty_HARD": "00",
-    "Difficulty_INSANE": "14+",
+    "Difficulty_INSANE": "14",
     "Composer": "-",
     "illustration": "-",
     "Vocal": "-",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#665760",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 36,
@@ -449,8 +480,9 @@
     "Vocal": "Usada Pekora",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#f57ab9",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 37,
@@ -463,8 +495,9 @@
     "Vocal": "初音ミク & 重音テト",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#b2d1ce",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 38,
@@ -477,21 +510,83 @@
     "Vocal": "静香(CV. 長谷川育美)",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#c66782",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
   },
   {
     "Id": 39,
     "Name": "Fly Again",
     "Difficulty_EASY": "2",
     "Difficulty_HARD": "5",
-    "Difficulty_INSANE": "10+",
+    "Difficulty_INSANE": "10",
     "Composer": "Fujiyori",
     "illustration": "-",
     "Vocal": "inst Ver.",
     "BPM": 1,
     "NoteCount": 99999,
+    "BarColor": "#18214a",
     "HasMV": 1,
-    "ExistSongbar": 1
+    "ExistSongbar": 0
+  },
+  {
+    "Id": 40,
+    "Name": "QUATTUORUX",
+    "Difficulty_EASY": "8",
+    "Difficulty_HARD": "12",
+    "Difficulty_INSANE": "15",
+    "Composer": "打打だいず Vs. Tanchiky Vs. からめる",
+    "illustration": "-",
+    "Vocal": "からめる",
+    "BPM": 1,
+    "NoteCount": 99999,
+    "BarColor": "#8d53bc",
+    "HasMV": 1,
+    "ExistSongbar": 0
+  },
+  {
+    "Id": 41,
+    "Name": "花たちに希望を",
+    "Difficulty_EASY": "3",
+    "Difficulty_HARD": "8",
+    "Difficulty_INSANE": "13",
+    "Composer": "Sound piercer",
+    "illustration": "Sound piercer",
+    "Vocal": "DAZBEE",
+    "BPM": 1,
+    "NoteCount": 99999,
+    "BarColor": "#7a7977",
+    "HasMV": 1,
+    "ExistSongbar": 0
+  },
+  {
+    "Id": 42,
+    "Name": "殿ッ！？ご乱心！？",
+    "Difficulty_EASY": "5",
+    "Difficulty_HARD": "10",
+    "Difficulty_INSANE": "14",
+    "Composer": "Shu feat. 天羽しろっぷ",
+    "illustration": "-",
+    "Vocal": "天羽しろっぷ",
+    "BPM": 1,
+    "NoteCount": 99999,
+    "BarColor": "#bfa7a6",
+    "HasMV": 1,
+    "ExistSongbar": 0
+  },
+  {
+    "Id": 43,
+    "Name": "Aleph-0",
+    "Difficulty_EASY": "2",
+    "Difficulty_HARD": "5",
+    "Difficulty_INSANE": "13",
+    "Composer": "LeaF",
+    "illustration": "Optie",
+    "Vocal": "inst Ver.",
+    "BPM": 1,
+    "NoteCount": 99999,
+    "BarColor": "#03092e",
+    "HasMV": 1,
+    "ExistSongbar": 0
   }
 ]

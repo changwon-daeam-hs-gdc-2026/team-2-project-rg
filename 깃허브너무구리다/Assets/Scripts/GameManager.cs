@@ -75,10 +75,8 @@ public class GameManager : MonoBehaviour
     public const int MaxScore = 1000000;
 
     [Header("Pause UI 연출")]
-    [Tooltip("일시정지 후 Pause UI가 나타나기까지의 지연(초)")]
-    public float pauseUIShowDelay = 0.35f;
-    [Tooltip("Pause UI 페이드 인 시간(초)")]
-    public float pauseUIFadeDuration = 0.25f;
+    [Tooltip("Pause UI 가 투명 → 불투명으로 나타나는 시간(초). ESC 를 누르는 즉시 시작한다")]
+    public float pauseUIFadeInDuration = 0.08f;
 
     // 한 판 통계 (결과창용)
     private int cntExcellent, cntGreat, cntGood, cntBad, cntMiss;
@@ -2002,20 +2000,22 @@ public class GameManager : MonoBehaviour
     // =====================================================================
     private IEnumerator ShowPauseUIRoutine()
     {
-        float t = 0f;
-        while (t < pauseUIShowDelay) { t += Time.unscaledDeltaTime; yield return null; }
+        if (pauseUIContainer == null) { pauseShowRoutine = null; yield break; }
 
-        if (pauseCanvasGroup != null) { pauseCanvasGroup.alpha = 0f; pauseCanvasGroup.interactable = false; pauseCanvasGroup.blocksRaycasts = false; }
+        // 지연 없이 ESC 를 누른 그 프레임에 바로 켠다. 버튼도 처음부터 누를 수 있다.
         pauseUIContainer.SetActive(true);
+        pauseUIContainer.transform.SetAsLastSibling(); // 같은 부모 안의 다른 UI 에 가려지지 않게
+        if (pauseCanvasGroup != null) { pauseCanvasGroup.interactable = true; pauseCanvasGroup.blocksRaycasts = true; }
 
-        t = 0f;
-        float dur = Mathf.Max(0.01f, pauseUIFadeDuration);
+        float dur = Mathf.Max(0.01f, pauseUIFadeInDuration);
+        float t = 0f;
+        if (pauseCanvasGroup != null) pauseCanvasGroup.alpha = 0.35f; // 첫 프레임부터 바로 보이게 시작값을 둔다
         while (t < dur) {
             t += Time.unscaledDeltaTime;
-            if (pauseCanvasGroup != null) pauseCanvasGroup.alpha = Mathf.Clamp01(t / dur);
+            if (pauseCanvasGroup != null) pauseCanvasGroup.alpha = Mathf.Lerp(0.35f, 1f, Mathf.Clamp01(t / dur));
             yield return null;
         }
-        if (pauseCanvasGroup != null) { pauseCanvasGroup.alpha = 1f; pauseCanvasGroup.interactable = true; pauseCanvasGroup.blocksRaycasts = true; }
+        if (pauseCanvasGroup != null) pauseCanvasGroup.alpha = 1f;
         pauseShowRoutine = null;
     }
 
