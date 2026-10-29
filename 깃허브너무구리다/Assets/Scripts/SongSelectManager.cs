@@ -14,7 +14,7 @@ using UnityEngine.UI;
 //  - 좌측: 자켓 / 곡명 / 작곡가 / 곡 길이 / 난이도 이미지 3개(ON·OFF) + 난이도 숫자 3개
 //  - 우측: 악곡 정렬표 (뷰포트 밖으로 나간 줄은 RectMask2D 로 잘림)
 //  - ← → : 곡 이동 (길게 누르면 연속 이동)   ↑ ↓ : 난이도 변경
-//  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속
+//  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속   ESC : 설정창
 // ============================================================
 public class SongSelectManager : MonoBehaviour
 {
@@ -95,8 +95,12 @@ public class SongSelectManager : MonoBehaviour
     public float keyRepeatInterval = 0.07f;
 
     [Header("곡 길이")]
-    [Tooltip("songs.json 에 Length 가 없으면 Audio/Full/{id} 를 잠깐 읽어 길이를 구한다")]
-    public bool loadLengthFromAudio = true;
+    [Tooltip("songs.json 에 Length 가 없을 때만 Audio/Full/{id} 를 통째로 읽어 길이를 구한다 (무거움, 기본 꺼짐).\n" +
+             "Length 는 에디터에서 채보를 저장하면 자동으로 기록된다.")]
+    public bool loadLengthFromAudioFallback = false;
+
+    [Header("곡 정보 화면 폰트 (비워 두면 기본 폰트)")]
+    public SongIntroFonts introFonts = new SongIntroFonts();
 
     [Header("추가 설정 UI")]
     public TextMeshProUGUI speedText;
@@ -156,7 +160,62 @@ public class SongSelectManager : MonoBehaviour
     private int indicatorDiff = 0; // 헤더 표시가 현재 가리키는 난이도 (0 = 아직 없음)
     private RenderTexture jacketBlurRT;
 
+    // ----- 좌측 하단 플레이 설정 패널 (난이도 선택 · 배속 · MV · AUTO PLAY, 마우스로도 조작) -----
+    [Header("좌측 하단 플레이 설정 패널")]
+    [Tooltip("자켓 아래에 난이도 선택바 · 배속 조정 · MV / AUTO PLAY 켜고 끄기를 표시")]
+    public bool showDetailPanel = true;
+    [Tooltip("패널 글꼴 (비우면 정렬표 글꼴 → 기본 글꼴)")]
+    public TMP_FontAsset detailFont;
+    private SongDetailPanel detailPanel;
+
+    private void CreateDetailPanel()
+    {
+        if (!showDetailPanel || selectedJacketImg == null) return;
+        // 좌측 정보 묶음 안에 넣어 곡이 바뀔 때 함께 움직이게. 묶음이 잘라내기(Mask)를 쓰면 캔버스 바로 아래에
+        Transform parent = leftInfoGroup != null ? leftInfoGroup.transform : null;
+        if (parent == null || parent.GetComponent<Mask>() != null || parent.GetComponent<RectMask2D>() != null)
+            parent = selectedJacketImg.canvas != null ? selectedJacketImg.canvas.transform : selectedJacketImg.transform.parent;
+        detailPanel = SongDetailPanel.Create(parent, detailFont != null ? detailFont : rowFont,
+            selectedJacketImg.rectTransform,
+            selectedSongTitleText != null ? selectedSongTitleText.rectTransform : null,
+            selectedComposerText != null ? selectedComposerText.rectTransform : null,
+            songLengthText != null ? songLengthText.rectTransform : null,
+            jacketBlurImage != null ? jacketBlurImage.rectTransform : null);
+
+        // 클릭 동작 = 키보드 조작과 같은 기능
+        detailPanel.OnSelectDifficulty = SelectDifficulty;
+        detailPanel.OnSpeedDelta = d =>
+        {
+            var st = SettingsStore.Current;
+            st.SettingSpeed = Math.Round(Math.Min(12.0, Math.Max(1.0, st.SettingSpeed + d)), 1);
+            SettingsStore.MarkDirty();
+        };
+        detailPanel.OnToggleMv = () => { if (CurrentSong.HasMV == 1) isMvOn = !isMvOn; };
+        detailPanel.OnToggleAuto = () =>
+        {
+            if (CoreManager.Instance != null) CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
+        };
+    }
+
+    // 난이도를 바로 고르기 (패널 클릭)
+    private void SelectDifficulty(int level)
+    {
+        SongData song = CurrentSong;
+        if (level == currentDifficulty || !SongRowUI.IsDifficultyAvailable(GetDifficultyValue(song, level))) return;
+        int dir = level > currentDifficulty ? 1 : -1;
+        currentDifficulty = level;
+        UpdateDifficultyUI(song, dir);
+        ApplyRowDifficultyColors();
+        MoveHeaderIndicator(false);
+    }
+
+    void LateUpdate()
+    {
+        if (detailPanel != null && songList.Count > 0) detailPanel.Show(CurrentSong, currentDifficulty, isMvOn, CurrentSong.HasMV == 1);
+    }
+
     private SongData CurrentSong { get { return songList[DataIndex(currentVirtualIndex)]; } }
+    private float PreviewTargetVolume { get { return SettingsWindow.IsCalibrating ? 0f : previewVolume * SettingsStore.MusicVolume; } }
     private float ViewportHeight { get { return clipPadding * 2f + visibleRowCount * rowHeight + Mathf.Max(0, visibleRowCount - 1) * rowGap; } }
 
     // =====================================================================
@@ -170,6 +229,9 @@ public class SongSelectManager : MonoBehaviour
         ColorUtility.TryParseHtmlString("#545454", out colorDisabled);
 
         visibleRowCount = Mathf.Max(1, visibleRowCount);
+        // 곡 정보 화면(SongIntroOverlay): 곡명 기본 폰트는 곡 선택창과 같게, 개별 폰트는 인스펙터에서
+        if (selectedSongTitleText != null) SongIntroOverlay.PreferredTitleFont = selectedSongTitleText.font;
+        SongIntroOverlay.Fonts = introFonts;
         selectedSlot = Mathf.Clamp(selectedSlot, 0, visibleRowCount - 1);
 
         LoadSongList();
@@ -190,6 +252,7 @@ public class SongSelectManager : MonoBehaviour
         RestoreLastSelection();
         SetupViewport();
         BuildRows();
+        CreateDetailPanel();
 
         visualSongIndex = currentVirtualIndex;
         isCurrentlyLocked = CurrentSong.ExistSongbar == 2;
@@ -202,6 +265,32 @@ public class SongSelectManager : MonoBehaviour
 
         RefreshSelectedSong(0, true);
         UpdateRows();
+        StartCoroutine(PrewarmRoutine());
+    }
+
+    // 처음 조작할 때 멈칫하지 않도록, 곡 선택창이 뜬 직후 무거운 첫 작업들을 미리 해 둔다
+    private IEnumerator PrewarmRoutine()
+    {
+        yield return null;
+        yield return null;
+        SettingsWindow.Prewarm(); // 설정창 UI 미리 생성
+
+        // 글꼴: 자주 쓰는 영문·숫자·기호를 미리 글꼴 아틀라스에 올려 둔다 (첫 표시 때 글자 굽기 지연 방지)
+        const string common = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;!?%+-/()[]&'\"#*_<>=~";
+        var fonts = new HashSet<TMP_FontAsset>();
+        foreach (var t in GetComponentsInChildren<TextMeshProUGUI>(true)) if (t.font != null) fonts.Add(t.font);
+        foreach (var t in FindObjectsOfType<TextMeshProUGUI>(true)) if (t.font != null) fonts.Add(t.font);
+        if (rowFont != null) fonts.Add(rowFont);
+        SettingsUIKit.EnsureFont();
+        if (SettingsUIKit.Font != null) fonts.Add(SettingsUIKit.Font);
+        foreach (var f in fonts)
+        {
+            if (f.atlasPopulationMode != AtlasPopulationMode.Dynamic) continue;
+            string all = common;
+            foreach (var s in songList) all += (s.Name ?? "") + (s.SubName ?? "") + (s.Composer ?? ""); // 곡명·작곡가 글자도 미리
+            f.TryAddCharacters(all);
+            yield return null;
+        }
     }
 
     private void LoadSongList()
@@ -209,7 +298,7 @@ public class SongSelectManager : MonoBehaviour
         string path = Path.Combine(Application.streamingAssetsPath, "data", "songs.json");
         if (!File.Exists(path)) { Debug.LogWarning("[SongSelect] songs.json 이 없습니다: " + path); return; }
 
-        string json = File.ReadAllText(path, System.Text.Encoding.UTF8);
+        string json = SongJson.Normalize(File.ReadAllText(path, System.Text.Encoding.UTF8)); // "BPM": 132 → "132"
         SongData[] arr = JsonHelper.FromJson<SongData>(json);
         if (arr != null) songList.AddRange(arr.Where(s => s.ExistSongbar == 1 || s.ExistSongbar == 2));
 
@@ -337,29 +426,45 @@ public class SongSelectManager : MonoBehaviour
 
         float dt = Time.unscaledDeltaTime;
 
-        int move = ReadHorizontalRepeat(kb, dt);
-        if (move != 0) MoveSelection(move);
-
-        if (kb.upArrowKey.wasPressedThisFrame) ChangeDifficulty(1);
-        if (kb.downArrowKey.wasPressedThisFrame) ChangeDifficulty(-1);
-
-        if (kb.aKey.wasPressedThisFrame && CoreManager.Instance != null)
+        // 설정창이 열려 있으면(또는 이번 프레임에 닫혔으면) 곡 선택 조작은 막고 화면 연출만 계속한다
+        bool inputBlocked = SettingsWindow.BlocksGameInput;
+        if (!inputBlocked && kb.escapeKey.wasPressedThisFrame)
         {
-            CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
-            Debug.Log(CoreManager.Instance.IsAutoPlay ? "AUTO PLAY 개시" : "AUTO PLAY 종료");
+            SettingsWindow.Open();
+            inputBlocked = true;
         }
 
-        if (CoreManager.Instance != null)
+        if (!inputBlocked)
         {
-            var st = CoreManager.Instance.CurrentSettings;
-            if (kb.f1Key.wasPressedThisFrame) st.SettingSpeed = Math.Round(Math.Max(1.0, st.SettingSpeed - 0.1), 1);
-            if (kb.f2Key.wasPressedThisFrame) st.SettingSpeed = Math.Round(Math.Min(12.0, st.SettingSpeed + 0.1), 1);
+            int move = ReadHorizontalRepeat(kb, dt);
+            if (move != 0) MoveSelection(move);
+
+            if (kb.upArrowKey.wasPressedThisFrame) ChangeDifficulty(1);
+            if (kb.downArrowKey.wasPressedThisFrame) ChangeDifficulty(-1);
+
+            if (kb.aKey.wasPressedThisFrame && CoreManager.Instance != null)
+            {
+                CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
+                Debug.Log(CoreManager.Instance.IsAutoPlay ? "AUTO PLAY 개시" : "AUTO PLAY 종료");
+            }
+
+            var st = SettingsStore.Current;
+            if (kb.f1Key.wasPressedThisFrame) { st.SettingSpeed = Math.Round(Math.Max(1.0, st.SettingSpeed - 0.1), 1); SettingsStore.MarkDirty(); }
+            if (kb.f2Key.wasPressedThisFrame) { st.SettingSpeed = Math.Round(Math.Min(12.0, st.SettingSpeed + 0.1), 1); SettingsStore.MarkDirty(); }
+        }
+        else
+        {
+            repeatDir = 0;
         }
 
         SongData song = CurrentSong;
         bool hasMv = song.HasMV == 1;
-        if (hasMv && kb.fKey.wasPressedThisFrame) isMvOn = !isMvOn;
+        if (!inputBlocked && hasMv && kb.fKey.wasPressedThisFrame) isMvOn = !isMvOn;
         else if (!hasMv) isMvOn = false;
+
+        // 미리듣기 볼륨: 설정의 MUSIC VOLUME 을 따라가고, 오프셋 측정 중에는 끈다
+        if (previewAudioSource != null && previewRoutine == null && previewAudioSource.isPlaying)
+            previewAudioSource.volume = Mathf.MoveTowards(previewAudioSource.volume, PreviewTargetVolume, dt * 3f);
 
         // 부드러운 스크롤 (프레임레이트와 무관한 지수 감쇠)
         float k = 1f - Mathf.Exp(-scrollLerpSpeed * dt);
@@ -370,11 +475,11 @@ public class SongSelectManager : MonoBehaviour
         foreach (var r in rows) r.Tick(dt);
 
         UpdateMvIcon(hasMv);
-        if (speedText != null && CoreManager.Instance != null)
-            speedText.text = CoreManager.Instance.CurrentSettings.SettingSpeed.ToString("0.0", CultureInfo.InvariantCulture);
+        if (speedText != null)
+            speedText.text = SettingsStore.Current.SettingSpeed.ToString("0.0", CultureInfo.InvariantCulture);
         if (mvStatusText != null) mvStatusText.text = hasMv ? (isMvOn ? "ON" : "OFF") : "None";
 
-        if (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame)
+        if (!inputBlocked && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame))
             TryEnter(kb.gKey.isPressed);
     }
 
@@ -672,7 +777,7 @@ public class SongSelectManager : MonoBehaviour
         float t = 0f, dur = Mathf.Max(0.01f, diffChangeDuration);
         while (t < dur)
         {
-            t += Time.unscaledDeltaTime;
+            t += UiTime.Delta;
             float e = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / dur), 3f);
             rt.anchoredPosition = Vector2.Lerp(from, diffBasePos, e);
             cg.alpha = Mathf.Lerp(0f, 1f, e);
@@ -736,7 +841,7 @@ public class SongSelectManager : MonoBehaviour
         float t = 0f, dur = Mathf.Max(0.01f, indicatorMoveDuration);
         while (t < dur)
         {
-            t += Time.unscaledDeltaTime;
+            t += UiTime.Delta;
             float e = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / dur), 3f);
             headerIndicator.position = new Vector3(Mathf.Lerp(start.x, targetX, e), start.y, start.z);
             if (indicatorFill != null) indicatorFill.FillAmount = e;
@@ -774,7 +879,7 @@ public class SongSelectManager : MonoBehaviour
         Vector2 from = leftInfoBasePos + new Vector2(-leftInfoSlideDistance, 0f);
         while (t < dur)
         {
-            t += Time.unscaledDeltaTime;
+            t += UiTime.Delta;
             float e = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / dur), 3f);
             leftInfoGroup.alpha = Mathf.Lerp(0.2f, 1f, e);
             rt.anchoredPosition = Vector2.Lerp(from, leftInfoBasePos, e);
@@ -795,7 +900,7 @@ public class SongSelectManager : MonoBehaviour
         if (lengthCache.TryGetValue(song.Id, out float sec)) { songLengthText.text = FormatSeconds(sec); return; }
 
         songLengthText.text = "-:--";
-        if (loadLengthFromAudio) lengthRoutine = StartCoroutine(LoadLengthRoutine(song.Id));
+        if (loadLengthFromAudioFallback) lengthRoutine = StartCoroutine(LoadLengthRoutine(song.Id));
     }
 
     private IEnumerator LoadLengthRoutine(int songId)
@@ -881,7 +986,7 @@ public class SongSelectManager : MonoBehaviour
         float dur = Mathf.Max(0.01f, bgSlideDuration);
         while (t < dur)
         {
-            t += Time.unscaledDeltaTime;
+            t += UiTime.Delta;
             float ease = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / dur), 3f);
             rt.anchoredPosition = Vector2.Lerp(bgOriginalPos + new Vector2(0f, offset), bgOriginalPos, ease);
             oldRt.anchoredPosition = Vector2.Lerp(bgOriginalPos, bgOriginalPos + new Vector2(0f, -offset), ease);
@@ -929,7 +1034,7 @@ public class SongSelectManager : MonoBehaviour
         float t = 0f, dur = 0.3f;
         while (t < dur)
         {
-            t += Time.unscaledDeltaTime;
+            t += UiTime.Delta;
             float e = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / dur), 3f);
             cg.alpha = Mathf.Lerp(start, target, e);
             yield return null;
@@ -974,11 +1079,11 @@ public class SongSelectManager : MonoBehaviour
         float t = 0f, dur = Mathf.Max(0.01f, previewFadeIn);
         while (t < dur)
         {
-            t += Time.unscaledDeltaTime;
-            previewAudioSource.volume = previewVolume * Mathf.Clamp01(t / dur);
+            t += UiTime.Delta;
+            previewAudioSource.volume = PreviewTargetVolume * Mathf.Clamp01(t / dur);
             yield return null;
         }
-        previewAudioSource.volume = previewVolume;
+        previewAudioSource.volume = PreviewTargetVolume;
         previewRoutine = null;
     }
 

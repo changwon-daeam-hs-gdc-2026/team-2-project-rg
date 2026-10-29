@@ -33,6 +33,13 @@ public class ResultManager : MonoBehaviour
     [Header("선택 요소")]
     public GameObject autoPlayBadge;          // 오토플레이로 플레이했을 때만 켜지는 표시 (없어도 됨)
 
+    [Header("FULL COMBO / ALL PERFECT 표시 (선택, 없어도 됨)")]
+    public GameObject fullComboBadge;         // FULL COMBO 일 때만 켜짐 (ALL PERFECT 일 때는 꺼짐)
+    public GameObject allPerfectBadge;        // ALL PERFECT 일 때만 켜짐
+    public TextMeshProUGUI clearTypeText;     // "ALL PERFECT" / "FULL COMBO" / "FAILED" / "" (색도 자동)
+    public GameObject failedBadge;            // FAILED 일 때만 켜짐 (선택)
+    public TextMeshProUGUI totalNotesText;    // 예: "1234 / 1234" (MAX COMBO / 전체 노트 수)
+
     [Header("암막 (화면 전환)")]
     public CanvasGroup blackOverlay;          // 화면 전체를 덮는 검정 이미지에 CanvasGroup
     public float fadeInDuration = 0.8f;
@@ -120,6 +127,17 @@ public class ResultManager : MonoBehaviour
         }
 
         if (autoPlayBadge != null) autoPlayBadge.SetActive(r.IsAutoPlay);
+
+        if (allPerfectBadge != null) allPerfectBadge.SetActive(r.IsAllPerfect);
+        if (fullComboBadge != null) fullComboBadge.SetActive(r.IsFullCombo && !r.IsAllPerfect);
+        if (failedBadge != null) failedBadge.SetActive(r.IsFailed);
+        if (clearTypeText != null)
+        {
+            clearTypeText.text = r.IsFailed ? "FAILED" : (r.IsAllPerfect ? "ALL PERFECT" : (r.IsFullCombo ? "FULL COMBO" : ""));
+            clearTypeText.color = r.IsFailed ? new Color(0.86f, 0.38f, 0.40f)
+                                : r.IsAllPerfect ? new Color(1f, 0.80f, 0.35f) : new Color(0.36f, 0.88f, 0.90f);
+        }
+        if (totalNotesText != null) totalNotesText.text = r.MaxCombo + " / " + r.TotalNotes;
 
         if (scoreText != null) scoreText.text = 0.ToString(scoreFormat, CultureInfo.InvariantCulture);
         if (accuracyText != null) accuracyText.text = "0.00%";

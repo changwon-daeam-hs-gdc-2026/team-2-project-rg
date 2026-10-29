@@ -438,7 +438,7 @@ MonoBehaviour:
   m_charWidthMaxAdj: 0
   m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
-  m_overflowMode: 1
+  m_overflowMode: 3
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 0
@@ -489,7 +489,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &198538797
 RectTransform:
   m_ObjectHideFlags: 0
@@ -709,7 +709,15 @@ MonoBehaviour:
   defaultSongColor: {r: 1, g: 1, b: 1, a: 1}
   keyRepeatDelay: 0.35
   keyRepeatInterval: 0.07
-  loadLengthFromAudio: 1
+  loadLengthFromAudioFallback: 0
+  introFonts:
+    difficulty: {fileID: 11400000, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
+    title: {fileID: 11400000, guid: 8cb3b49c0bbd8fa4898740848360a934, type: 2}
+    subName: {fileID: 11400000, guid: 8cb3b49c0bbd8fa4898740848360a934, type: 2}
+    label: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+    value: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+    options: {fileID: 11400000, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
+    status: {fileID: 11400000, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
   speedText: {fileID: 345743938}
   mvStatusText: {fileID: 71743974}
   mvIconImg: {fileID: 0}
@@ -719,6 +727,8 @@ MonoBehaviour:
   previewVolume: 1
   previewDelay: 0.15
   previewFadeIn: 0.4
+  showDetailPanel: 1
+  detailFont: {fileID: 11400000, guid: 374c5492305579b499304268efdfe845, type: 2}
 --- !u!4 &260078938
 Transform:
   m_ObjectHideFlags: 0
@@ -1364,8 +1374,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: 3:39
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 72b9a83ff9ad91e46955b2484edfc7ad, type: 2}
-  m_sharedMaterial: {fileID: 6229028473921582894, guid: 72b9a83ff9ad91e46955b2484edfc7ad, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
+  m_sharedMaterial: {fileID: 3528953259351424421, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -1710,8 +1720,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: Song Title
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
-  m_sharedMaterial: {fileID: 1003669740773311999, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 374c5492305579b499304268efdfe845, type: 2}
+  m_sharedMaterial: {fileID: 7160388768557154013, guid: 374c5492305579b499304268efdfe845, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -1735,8 +1745,8 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 27
-  m_fontSizeBase: 27
+  m_fontSize: 30
+  m_fontSizeBase: 30
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
@@ -2795,8 +2805,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: Composer
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
-  m_sharedMaterial: {fileID: 1003669740773311999, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 374c5492305579b499304268efdfe845, type: 2}
+  m_sharedMaterial: {fileID: 7160388768557154013, guid: 374c5492305579b499304268efdfe845, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -2820,8 +2830,8 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 15
-  m_fontSizeBase: 15
+  m_fontSize: 17
+  m_fontSizeBase: 17
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
@@ -2932,8 +2942,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: 13
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 72b9a83ff9ad91e46955b2484edfc7ad, type: 2}
-  m_sharedMaterial: {fileID: 6229028473921582894, guid: 72b9a83ff9ad91e46955b2484edfc7ad, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 0a8c7609c1af5ae45a7a4abed63ef745, type: 2}
+  m_sharedMaterial: {fileID: -5108911272823492550, guid: 0a8c7609c1af5ae45a7a4abed63ef745, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []
@@ -3027,7 +3037,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &1996303269
 RectTransform:
   m_ObjectHideFlags: 0

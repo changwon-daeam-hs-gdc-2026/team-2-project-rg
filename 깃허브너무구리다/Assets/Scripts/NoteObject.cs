@@ -28,6 +28,11 @@ public class NoteObject : MonoBehaviour
 
     private static Dictionary<string, Sprite> redNoteSprites = null;
 
+    // 곡 종료 / FAILED 때 함께 투명해지기 위한 원래 색
+    private Color headBaseColor = Color.white;
+    private Color bodyBaseColor = Color.white;
+    private float appliedEndAlpha = 1f;
+
     void Awake()
     {
         spriteRenderer = GetComponent<SpriteRenderer>();
@@ -57,6 +62,7 @@ public class NoteObject : MonoBehaviour
         spriteRenderer.enabled = true;
         spriteRenderer.sortingOrder = NoteLayer.HeadOrder(myData.Layer); 
         spriteRenderer.flipY = false;
+        spriteRenderer.drawMode = SpriteDrawMode.Simple; // 풀링 재사용 시 SIMPLE 스킨의 Sliced 상태 해제
 
         if (myData.IsFreeKey)
         {
@@ -176,6 +182,32 @@ public class NoteObject : MonoBehaviour
                 if (myLongBody != null) myLongBody.SetActive(false); 
             }
         }
+
+        // 설정 > GAME UI 가 SIMPLE 이면 단색 둥근 노트로 바꾼다 (프리키 노트 / 마디선은 기본 그대로)
+        if (SimpleGameSkin.Active != null && !myData.IsFreeKey && myData.Type != 4) ApplySimpleStyle();
+
+
+        // 판정선 아래로는 그리지 않음 (GameManager 의 NoteClipMask). 프리키 노트는 자유롭게 움직이므로 제외
+        SpriteMaskInteraction clip = myData.IsFreeKey ? SpriteMaskInteraction.None : SpriteMaskInteraction.VisibleInsideMask;
+        spriteRenderer.maskInteraction = clip;
+        if (bodyRenderer != null) bodyRenderer.maskInteraction = clip;
+
+        // SIMPLE-DIVERSE: 레인 노트는 원근 재질(판정선 아래 자르기 포함), 그 밖에는 원래 재질 (풀링 재사용 대비 매번 지정)
+        if (baseMaterial == null) baseMaterial = spriteRenderer.sharedMaterial;
+        if (bodyRenderer != null && baseBodyMaterial == null) baseBodyMaterial = bodyRenderer.sharedMaterial;
+        DiversePlayfield pf = SimpleGameSkin.Active != null ? SimpleGameSkin.Active.Playfield : null;
+        if (pf != null && !myData.IsFreeKey)
+        {
+            pf.Apply(spriteRenderer, true);
+            if (bodyRenderer != null) pf.Apply(bodyRenderer, true);
+        }
+        else
+        {
+            if (spriteRenderer.sharedMaterial != baseMaterial) spriteRenderer.sharedMaterial = baseMaterial;
+            if (bodyRenderer != null && baseBodyMaterial != null && bodyRenderer.sharedMaterial != baseBodyMaterial) bodyRenderer.sharedMaterial = baseBodyMaterial;
+        }
+
+        RememberBaseColors();
 
         // 층별 스크롤 속도: 노트가 속한 층의 변속 기준으로 위치를 계산한다 (롱노트 머리/꼬리는 항상 같은 층)
         myTargetDist = GameManager.Instance.GetScrollDistance(myData.HitTime, myData.Layer);
@@ -312,7 +344,15 @@ public class NoteObject : MonoBehaviour
                             float laneWidthGame = 0.8f;
                             float targetW = (myData.Width - 1) * laneWidthGame + (laneWidthGame * 0.95f);
 
-                            if (bodyRenderer.drawMode == SpriteDrawMode.Sliced)
+                            if (bodyRenderer.drawMode == SpriteDrawMode.Tiled)
+                            {
+                                // SIMPLE RED 몸통: 줄무늬 타일이 늘어나지 않고 반복되도록 크기(size)로 맞춘다
+                                Vector3 ps = transform.lossyScale;
+                                myLongBody.transform.position = new Vector3(centerX, (yPos + endYPos) * 0.5f, 0f);
+                                myLongBody.transform.localScale = new Vector3(1f / Mathf.Max(0.0001f, Mathf.Abs(ps.x)), 1f / Mathf.Max(0.0001f, Mathf.Abs(ps.y)), 1f);
+                                bodyRenderer.size = new Vector2(targetW, distance);
+                            }
+                            else if (bodyRenderer.drawMode == SpriteDrawMode.Sliced)
                             {
                                 // RED 몸통: 머리 중심 ~ 꼬리 중심 구간에 메쉬 크기를 정확히 맞춘다 (9-slice)
                                 LongBodyHelper.Fit(bodyRenderer, centerX, yPos, endYPos, targetW, 0f);
@@ -372,6 +412,7 @@ public class NoteObject : MonoBehaviour
         }
 
         UpdateTransform();
+        ApplyEndAlpha();
 
         double currentTime = GameManager.Instance.currentPlayTime;
 
@@ -395,6 +436,76 @@ public class NoteObject : MonoBehaviour
         if (currentTime - myTailTime > 1.5) GameManager.Instance.ReturnNoteToPool(this);
     }
 
+    // SIMPLE 스킨 노트: 둥근 사각형(9-slice), 레인 색 / 빨간 노트, 꼬리는 얇게, 몸통은 반투명 단색
+    private Material baseMaterial, baseBodyMaterial;
+
+    private void ApplySimpleStyle()
+    {
+        SimpleGameSkin skin = SimpleGameSkin.Active;
+        float laneWidthGame = 0.8f;
+        float w = (myData.IsRedNote ? (myData.Width - 1) * laneWidthGame : 0f) + laneWidthGame * 0.95f;
+        bool isTail = myData.Type == 3 || myData.Type == 13;
+        Color c = SimpleGameSkin.NoteColor(myData);
+
+        spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+        float h = myData.IsRedNote
+            ? (isTail ? SimpleGameSkin.RedTailHeight : SimpleGameSkin.RedNoteHeight)  // 빨간 노트는 조금 더 두껍게
+            : (isTail ? SimpleGameSkin.TailHeight : SimpleGameSkin.NoteHeight);
+        if (myData.IsRedNote && skin.RedNoteSprite != null)
+        {
+            // 고급 RED 노트: 색이 스프라이트에 들어 있으므로 흰색으로, 바깥 빛 여백만큼 크게 그림
+            float pad = SimpleGameSkin.RedGlowPad * 2f;
+            spriteRenderer.sprite = skin.RedNoteSprite;
+            spriteRenderer.size = new Vector2(w + pad, h + pad);
+            spriteRenderer.color = isTail ? new Color(1f, 1f, 1f, 0.9f) : Color.white;
+        }
+        else
+        {
+            spriteRenderer.sprite = skin.NoteSprite;
+            spriteRenderer.size = new Vector2(w, h);
+            spriteRenderer.color = isTail ? new Color(c.r, c.g, c.b, 0.9f) : c;
+        }
+        spriteRenderer.flipY = false;
+        transform.localScale = new Vector3(1f, skin.NoteScaleY, 1f); // DIVERSE 는 세로로 조금 두껍게 (몸통은 부모 배율을 되돌려 계산)
+        transform.rotation = Quaternion.identity;
+
+        if (myLongBody != null && myLongBody.activeSelf && bodyRenderer != null)
+        {
+            bodyRenderer.drawMode = SpriteDrawMode.Simple;
+            if (myData.IsRedNote && skin.RedBodySprite != null)
+            {
+                // RED 롱노트 몸통: 빛나는 양옆 테두리 + 사선 줄무늬 (색·투명도가 스프라이트에 들어 있음)
+                //  Tiled: 가운데 줄무늬 타일이 길이·폭에 맞춰 반복됨 (늘어나서 일그러지지 않음)
+                bodyRenderer.sprite = skin.RedBodySprite;
+                bodyRenderer.drawMode = SpriteDrawMode.Tiled;
+                bodyRenderer.tileMode = SpriteTileMode.Continuous;
+                bodyRenderer.color = Color.white;
+            }
+            else
+            {
+                bodyRenderer.sprite = skin.PixelSprite;
+                bodyRenderer.color = new Color(c.r, c.g, c.b, SimpleGameSkin.BodyAlpha);
+            }
+        }
+    }
+
+    private void RememberBaseColors()
+    {
+        headBaseColor = spriteRenderer.color;
+        if (bodyRenderer != null) bodyBaseColor = bodyRenderer.color;
+        appliedEndAlpha = 1f;
+    }
+
+    // GameManager.EndUiAlpha (곡 종료 0.75초 페이드 / FAILED) 를 따라 투명해짐
+    private void ApplyEndAlpha()
+    {
+        float a = GameManager.Instance.EndUiAlpha;
+        if (Mathf.Approximately(a, appliedEndAlpha)) return;
+        appliedEndAlpha = a;
+        spriteRenderer.color = new Color(headBaseColor.r, headBaseColor.g, headBaseColor.b, headBaseColor.a * a);
+        if (bodyRenderer != null) bodyRenderer.color = new Color(bodyBaseColor.r, bodyBaseColor.g, bodyBaseColor.b, bodyBaseColor.a * a);
+    }
+
     public void HideNote() {
         if (spriteRenderer) spriteRenderer.enabled = false;
         if (bodyRenderer) bodyRenderer.enabled = false;
@@ -405,6 +516,9 @@ public class NoteObject : MonoBehaviour
         myData.IsHit = true; 
         Color darkGray = new Color(0.3f, 0.3f, 0.3f, 1f); 
         if (spriteRenderer) spriteRenderer.color = darkGray;
-        if (bodyRenderer) bodyRenderer.color = darkGray;
+        // SIMPLE 스킨의 몸통은 반투명이라 놓쳤을 때도 투명도를 유지
+        if (bodyRenderer) bodyRenderer.color = (SimpleGameSkin.Active != null && !myData.IsFreeKey)
+            ? new Color(0.3f, 0.3f, 0.3f, SimpleGameSkin.BodyAlpha) : darkGray;
+        RememberBaseColors();
     }
 }

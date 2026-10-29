@@ -37,7 +37,9 @@ public class EditorFreeKeyZone { public double StartBeat; public double EndBeat 
 // DeathArea : BPM 오차 보정용 구간(차트 시간 초 단위). 격자/노트 배치 금지.
 public class EditorDeathArea { public double Start; public double End; }
 public class EditorBpm { public long Measure, Num, Den; public double Bpm; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
-public class EditorSpeed { public long Measure, Num, Den; public double Multiplier; public int Layer = NoteLayer.Top; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
+public class EditorSpeed { public long Measure, Num, Den; public double Multiplier; public int Layer = NoteLayer.Top;
+    public bool ShowChange; // 게임에서 SPEED UP / DOWN 표시 (에디터에서 SPEED 표시를 우클릭해서 켜고 끔)
+    public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 public class EditorStopEvent { public long Measure, Num, Den; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 public class EditorStartEvent { public long Measure, Num, Den; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 
@@ -63,6 +65,7 @@ public class UIDrawEvent
     public string shortText; 
     public Color color;
     public bool isWide;
+    public List<EditorSpeed> speeds; // SPEED 표시면 해당 변속들 (우클릭으로 SPEED UP/DOWN 표시 켜고 끄기)
 }
 
 [Serializable]
@@ -650,9 +653,10 @@ public class ChartEditorManager : MonoBehaviour
                             .OrderBy(t => t.AbsoluteBeat)
                             .FirstOrDefault();
                         if (tail != null) {
+                            double headTime = GetTimeFromBeat(n.AbsoluteBeat);
                             activeLNs.Add(new EditorActiveLN {
                                 tail = tail,
-                                nextTickTime = GetTimeFromBeat(n.AbsoluteBeat) + 0.05
+                                nextTickTime = headTime + LongNoteTickRule.Interval(GetEditorBpmAtTime(headTime))
                             });
                         }
                     }
@@ -665,14 +669,11 @@ public class ChartEditorManager : MonoBehaviour
                 var ln = activeLNs[i];
                 double tailTime = GetTimeFromBeat(ln.tail.AbsoluteBeat);
 
-                var currentBpm = bpmChanges.LastOrDefault(b => b.AbsoluteBeat <= GetBeatFromTime(ln.nextTickTime))?.Bpm ?? 120.0;
-                double ticksPerBeat = (currentBpm < 300) ? 4.0 : 2.0; 
-                double tickInterval = (60.0 / currentBpm) / ticksPerBeat;
-
-                while (curTimeForTick >= ln.nextTickTime && ln.nextTickTime < tailTime - 0.05)
+                // 게임과 같은 틱 규칙 (LongNoteTickRule)
+                while (curTimeForTick >= ln.nextTickTime && ln.nextTickTime < tailTime - LongNoteTickRule.EndMargin)
                 {
                     IncreaseCombo();
-                    ln.nextTickTime += tickInterval;
+                    ln.nextTickTime += LongNoteTickRule.Interval(GetEditorBpmAtTime(ln.nextTickTime));
                 }
 
                 if (curTimeForTick >= tailTime) {
@@ -839,8 +840,9 @@ public class ChartEditorManager : MonoBehaviour
                     {
                         if (!speedApplyBothLayers && L != editLayer) continue;
                         int layerCopy = L;
+                        bool keepShow = speedChanges.Any(s => s.Layer == layerCopy && s.Measure == targetMeasure && s.Num == targetNum && s.Den == targetDen && s.ShowChange);
                         speedChanges.RemoveAll(s => s.Layer == layerCopy && s.Measure == targetMeasure && s.Num == targetNum && s.Den == targetDen);
-                        speedChanges.Add(new EditorSpeed { Measure = targetMeasure, Num = targetNum, Den = targetDen, Multiplier = val, Layer = L });
+                        speedChanges.Add(new EditorSpeed { Measure = targetMeasure, Num = targetNum, Den = targetDen, Multiplier = val, Layer = L, ShowChange = keepShow });
                     }
                     speedChanges = speedChanges.OrderBy(s => s.AbsoluteBeat).ThenBy(s => s.Layer).ToList();
                 }
@@ -1063,6 +1065,10 @@ public class ChartEditorManager : MonoBehaviour
         }
 
         Vector3 mousePos = mouse != null ? new Vector3(mouse.position.ReadValue().x, mouse.position.ReadValue().y, 10f) : Vector3.zero;
+
+        // 아무 키도 누르지 않은 채 SPEED 표시 위를 우클릭: 게임에서 SPEED UP / DOWN 을 표시할지 켜고 끔
+        //  다른 키(F + 우클릭 = 변속 삭제 등)를 누르고 있을 때는 원래 기능이 동작하도록 건너뜀
+        if (isRightDown && (kb == null || !kb.anyKey.isPressed) && TryToggleSpeedShowAt(new Vector2(mousePos.x, mousePos.y))) return;
         Vector3 worldPos = mainCam.ScreenToWorldPoint(mousePos);
         
         float totalWidth = currentKeyCount * laneWidth;
@@ -1736,11 +1742,13 @@ public class ChartEditorManager : MonoBehaviour
             else if (type == "BPM" && data.Length >= 5) { bpmChanges.Add(new EditorBpm { Measure = long.Parse(data[1]), Num = long.Parse(data[2]), Den = long.Parse(data[3]), Bpm = double.Parse(data[4], CultureInfo.InvariantCulture) }); }
             else if (type == "SPEED" && data.Length >= 6) {
                 // 신형: SPEED, 마디, 분자, 분모, 층, 속도
+                // 7번째 칸이 SHOW 면 게임에서 SPEED UP / DOWN 표시. 층 0 = 두 층 모두
                 int spdLayer = int.Parse(data[4].Trim());
                 double spdVal = double.Parse(data[5].Trim(), CultureInfo.InvariantCulture);
+                bool spdShow = data.Length >= 7 && data[6].Trim().ToUpperInvariant() == "SHOW";
                 for (int L = NoteLayer.Bottom; L <= NoteLayer.Top; L++) {
                     if (spdLayer == 1 || spdLayer == 2) { if (L != spdLayer) continue; }
-                    speedChanges.Add(new EditorSpeed { Measure = long.Parse(data[1]), Num = long.Parse(data[2]), Den = long.Parse(data[3]), Multiplier = spdVal, Layer = L });
+                    speedChanges.Add(new EditorSpeed { Measure = long.Parse(data[1]), Num = long.Parse(data[2]), Den = long.Parse(data[3]), Multiplier = spdVal, Layer = L, ShowChange = spdShow });
                 }
             }
             else if (type == "SPEED" && data.Length >= 5) {
@@ -1911,14 +1919,18 @@ public class ChartEditorManager : MonoBehaviour
                 continue;
             }
 
+            // SPEED UP / DOWN 표시가 켜진 변속은 끝에 ", SHOW" (층 0 = 두 층 모두)
             if (l1 != null && l2 != null && Math.Abs(l1.Multiplier - l2.Multiplier) < 1e-9)
             {
-                output.Add($"SPEED, {l2.Measure}, {l2.Num}, {l2.Den}, {l2.Multiplier.ToString("0.00", CultureInfo.InvariantCulture)}");
+                if (l1.ShowChange || l2.ShowChange)
+                    output.Add($"SPEED, {l2.Measure}, {l2.Num}, {l2.Den}, 0, {l2.Multiplier.ToString("0.00", CultureInfo.InvariantCulture)}, SHOW");
+                else
+                    output.Add($"SPEED, {l2.Measure}, {l2.Num}, {l2.Den}, {l2.Multiplier.ToString("0.00", CultureInfo.InvariantCulture)}");
             }
             else
             {
-                if (l1 != null) output.Add($"SPEED, {l1.Measure}, {l1.Num}, {l1.Den}, {NoteLayer.Bottom}, {l1.Multiplier.ToString("0.00", CultureInfo.InvariantCulture)}");
-                if (l2 != null) output.Add($"SPEED, {l2.Measure}, {l2.Num}, {l2.Den}, {NoteLayer.Top}, {l2.Multiplier.ToString("0.00", CultureInfo.InvariantCulture)}");
+                if (l1 != null) output.Add($"SPEED, {l1.Measure}, {l1.Num}, {l1.Den}, {NoteLayer.Bottom}, {l1.Multiplier.ToString("0.00", CultureInfo.InvariantCulture)}" + (l1.ShowChange ? ", SHOW" : ""));
+                if (l2 != null) output.Add($"SPEED, {l2.Measure}, {l2.Num}, {l2.Den}, {NoteLayer.Top}, {l2.Multiplier.ToString("0.00", CultureInfo.InvariantCulture)}" + (l2.ShowChange ? ", SHOW" : ""));
             }
         }
         
@@ -1986,6 +1998,54 @@ public class ChartEditorManager : MonoBehaviour
 
         File.WriteAllLines(path, output, System.Text.Encoding.UTF8);
         Debug.Log("채보가 성공적으로 저장되었습니다!");
+
+        // 저장한 채보를 게임과 같은 규칙으로 다시 읽어 전체 노트 수(롱노트 틱 포함)를 세고 songs.json 에 기록
+        UpdateNoteCountInSongsJson(songId, editLevelId, path);
+    }
+
+    private void UpdateNoteCountInSongsJson(int songId, int levelId, string chartPath)
+    {
+        ChartNoteCounter.Result r = ChartNoteCounter.CountFile(chartPath);
+        if (!r.Ok)
+        {
+            Debug.LogWarning("[NoteCount] 채보를 읽지 못해 노트 수를 갱신하지 않았습니다: " + r.Error);
+            return;
+        }
+
+        string jsonPath = Path.Combine(Application.streamingAssetsPath, "data", "songs.json");
+        string key = "NoteCount_" + DifficultyHelper.GetName(levelId);
+        string message;
+        if (SongsJsonEditor.SetIntField(jsonPath, songId, key, r.Total, out message))
+            Debug.Log($"[NoteCount] {songId} {DifficultyHelper.GetName(levelId)} = {r.Total} (notes {r.Notes} + long ticks {r.Ticks}) → songs.json \"{key}\" {message}");
+        else
+            Debug.LogWarning("[NoteCount] songs.json 갱신 실패: " + message);
+
+        // 곡 길이(m:ss)도 함께 기록 → 곡 선택창이 음원을 통째로 읽지 않아도 됨
+        if (bgmSource != null && bgmSource.clip != null)
+        {
+            int sec = Mathf.FloorToInt(bgmSource.clip.length);
+            string len = (sec / 60) + ":" + (sec % 60).ToString("00");
+            string lenMsg;
+            if (SongsJsonEditor.SetStringField(jsonPath, songId, "Length", len, out lenMsg))
+                Debug.Log($"[Length] {songId} = {len} → songs.json \"Length\" {lenMsg}");
+        }
+
+        // 메모리에 들고 있는 곡 정보도 맞춰 둔다 (에디터 → 게임으로 바로 넘어가도 같은 값)
+        if (CoreManager.Instance != null && CoreManager.Instance.CurrentSongData != null && CoreManager.Instance.CurrentSongData.Id == songId)
+        {
+            SongData s = CoreManager.Instance.CurrentSongData;
+            if (levelId == 1) s.NoteCount_EASY = r.Total;
+            else if (levelId == 3) s.NoteCount_INSANE = r.Total;
+            else s.NoteCount_HARD = r.Total;
+        }
+    }
+
+    // 에디터 미리보기용: 시간(초) → 그 시점의 BPM
+    private double GetEditorBpmAtTime(double time)
+    {
+        double beat = GetBeatFromTime(time);
+        var b = bpmChanges.LastOrDefault(x => x.AbsoluteBeat <= beat + 1e-6);
+        return b != null ? b.Bpm : (bpmChanges.Count > 0 ? bpmChanges[0].Bpm : 120.0);
     }
 
     private void UpdateUITexts()
@@ -2062,7 +2122,8 @@ public class ChartEditorManager : MonoBehaviour
         GUI.DrawTexture(new Rect(x + w - h/2f, y - h/2f, h, h), circle);
     }
 
-    private void DrawPill(float cx, float cy, string text, Color c, Font font, int fontSize = 16, float h = 28f)
+    // 그린 알약의 전체 영역(GUI 좌표)을 돌려줌
+    private Rect DrawPill(float cx, float cy, string text, Color c, Font font, int fontSize = 16, float h = 28f)
     {
         GUIStyle style = new GUIStyle();
         if (font != null) style.font = font;
@@ -2077,6 +2138,34 @@ public class ChartEditorManager : MonoBehaviour
         GUI.DrawTexture(new Rect(x - h/2f, y, h, h), circle);
         GUI.DrawTexture(new Rect(x + w - h/2f, y, h, h), circle);
         GUI.Label(new Rect(x, y, w, h), text, style);
+        return new Rect(x - h / 2f, y, w + h, h);
+    }
+
+    // ----- SPEED 표시 우클릭 → 게임에서 SPEED UP / DOWN 표시 켜고 끄기 -----
+    private readonly List<KeyValuePair<Rect, List<EditorSpeed>>> speedPillHits = new List<KeyValuePair<Rect, List<EditorSpeed>>>();
+
+    // 마우스(화면 좌표)가 SPEED 알약 위면 표시를 뒤집고 true
+    private bool TryToggleSpeedShowAt(Vector2 screenPos)
+    {
+        float scale = (Screen.height / 1080f) * 0.85f; // OnGUI 와 같은 배율
+        Vector2 gui = new Vector2(screenPos.x / scale, (Screen.height - screenPos.y) / scale);
+        for (int i = speedPillHits.Count - 1; i >= 0; i--)
+        {
+            if (!speedPillHits[i].Key.Contains(gui)) continue;
+            var list = speedPillHits[i].Value;
+            bool on = !list.Any(o => o.ShowChange);
+            foreach (var o in list) o.ShowChange = on;
+            return true;
+        }
+        return false;
+    }
+
+    // 이 박자에 직접 추가한 마디선(Type 4)이 있는지
+    private bool HasCustomMeasureLineAt(double beat)
+    {
+        foreach (var n in editorNotes)
+            if (n.Type == 4 && !n.IsFreeKey && Math.Abs(n.AbsoluteBeat - beat) < 1e-6) return true;
+        return false;
     }
 
     void OnGUI()
@@ -2207,6 +2296,7 @@ public class ChartEditorManager : MonoBehaviour
         }
 
         bool isVisible = !IsSettingInputOpen;
+        if (Event.current.type == EventType.Repaint) speedPillHits.Clear(); // 다시 그릴 때마다 우클릭 영역 갱신
         if (currentState == EditorState.Editing && mainCam != null && isVisible)
         {
             List<UIDrawEvent> uiEvents = new List<UIDrawEvent>();
@@ -2220,6 +2310,8 @@ public class ChartEditorManager : MonoBehaviour
             for (int m = minMeasure; m <= maxMeasure; m++) {
                 double beat = (m - 1) * 4.0;
                 float y = hitLineScreenOffsetY + (float)((beat - currentBeat) * beatSpacing);
+                // 같은 박자에 직접 추가한 마디선(4번 키)이 있으면 원래 마디선은 표시하지 않음
+                if (HasCustomMeasureLineAt(beat)) continue;
                 if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
                     Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
                     uiEvents.Add(new UIDrawEvent { beat = beat, y = (Screen.height - sp.y) * invScale, text = $"M: {m}", shortText = $"{m}", color = new Color(1f, 0.2f, 0.2f), isWide = IsFreeKeyZone(beat) });
@@ -2243,7 +2335,13 @@ public class ChartEditorManager : MonoBehaviour
                 float y = hitLineScreenOffsetY + (float)((ev.AbsoluteBeat - currentBeat) * beatSpacing);
                 if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
                     Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
-                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale, text = $"{layerTag}SPEED: {ev.Multiplier:F2}x", shortText = $"{layerTag}{ev.Multiplier:F2}", color = new Color(0.8f, 0.4f, 1f), isWide = IsFreeKeyZone(ev.AbsoluteBeat) });
+                    var spList = new List<EditorSpeed> { ev };
+                    if (twin != null) spList.Add(twin);
+                    bool show = spList.Any(o => o.ShowChange);
+                    // SPEED UP / DOWN 표시가 켜진 변속: 글자 뒤에 [SHOW], 더 밝은 분홍
+                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale,
+                        text = $"{layerTag}SPEED: {ev.Multiplier:F2}x" + (show ? "  [SHOW]" : ""), shortText = $"{layerTag}{ev.Multiplier:F2}" + (show ? "*" : ""),
+                        color = show ? new Color(1f, 0.35f, 0.75f) : new Color(0.8f, 0.4f, 1f), isWide = IsFreeKeyZone(ev.AbsoluteBeat), speeds = spList });
                 }
             }
             foreach (var ev in stopEvents) {
@@ -2322,7 +2420,8 @@ public class ChartEditorManager : MonoBehaviour
                 {
                     var ev = group[0];
                     DrawRoundedLine(drawStartX, avgY, drawWidth, 6f, ev.color);
-                    DrawPill(centerX, avgY, ev.text, ev.color, customGuiFont);
+                    Rect pr = DrawPill(centerX, avgY, ev.text, ev.color, customGuiFont);
+                    if (ev.speeds != null && Event.current.type == EventType.Repaint) speedPillHits.Add(new KeyValuePair<Rect, List<EditorSpeed>>(pr, ev.speeds));
                 }
                 else
                 {
@@ -2334,7 +2433,8 @@ public class ChartEditorManager : MonoBehaviour
                     {
                         float subY = avgY + 35f;
                         foreach(var ev in group) {
-                            DrawPill(centerX, subY, ev.text, ev.color, customGuiFont);
+                            Rect pr = DrawPill(centerX, subY, ev.text, ev.color, customGuiFont);
+                            if (ev.speeds != null && Event.current.type == EventType.Repaint) speedPillHits.Add(new KeyValuePair<Rect, List<EditorSpeed>>(pr, ev.speeds));
                             subY += 30f;
                         }
                     }
@@ -2343,7 +2443,8 @@ public class ChartEditorManager : MonoBehaviour
                         float subY = avgY - ((group.Count - 1) * 22f) / 2f;
                         float subX = (p2.x * invScale) + 40f; 
                         foreach(var ev in group) {
-                            DrawPill(subX, subY, ev.shortText, ev.color, customGuiFont, 12, 20f);
+                            Rect pr = DrawPill(subX, subY, ev.shortText, ev.color, customGuiFont, 12, 20f);
+                            if (ev.speeds != null && Event.current.type == EventType.Repaint) speedPillHits.Add(new KeyValuePair<Rect, List<EditorSpeed>>(pr, ev.speeds));
                             subY += 22f;
                         }
                     }

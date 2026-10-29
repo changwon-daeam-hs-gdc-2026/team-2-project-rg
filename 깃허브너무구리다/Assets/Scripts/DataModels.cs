@@ -2,16 +2,45 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
+// ============================================================
+// 설정 값
+//  - 개발용(Mode, EditorSongid)      : StreamingAssets/data/settings.json 에서만 읽는다
+//  - 사용자 설정(나머지 전부)         : 설정창에서 바꾸면 persistentDataPath/user_settings.json 에 저장되고,
+//                                      다음 실행 때 settings.json 값 위에 덮어써진다 (SettingsStore 참고)
+// ============================================================
 [Serializable]
 public class SettingsData
 {
-    public double AudioOffset = 0.0;
-    public double JudgeOffset = 0.0;
+    // ----- 개발용 -----
     public int Mode = 2; 
     public int EditorSongid = 1; 
+
+    // ----- 오프셋 (초 단위) -----
+    public double AudioOffset = 0.0;   // + : 음악을 노트보다 일찍 재생 (음악이 늦게 들릴 때)
+    public double JudgeOffset = 0.0;   // + : 판정 시점을 늦춤 (SLOW 가 많을 때)
+
+    // ----- 게임플레이 -----
     public double SettingSpeed = 1.0; 
-    
-    public int judgeoverrange = 10; 
+    public int judgeoverrange = 10;    // FAST/SLOW 를 표시하는 최소 오차(ms)
+    public bool ShowFastSlow = true;
+    public int GameSkin = 0;           // 게임 화면 UI: 0 = DEFAULT, 1 = SIMPLE (GameSkins 참고)
+    public float LaneOpacity = 0.85f;  // SIMPLE 레인 배경 불투명도 (0 = 완전 투명, 1 = 불투명)
+    public bool ShowInfoUI = true;     // 게임 화면 Information UI (곡 정보 · 난이도 · 시간 · 점수 · 배속 · 진행 막대)
+    public string[] LaneKeys = { "D", "F", "J", "K" }; // UnityEngine.InputSystem.Key 이름
+
+    // ----- 사운드 (0 ~ 1) -----
+    public float MasterVolume = 1f;
+    public float MusicVolume = 1f;     // 게임 음악 + 곡 선택 미리듣기
+    public float HitSoundVolume = 1f;  // 키 탭 사운드
+    public bool HitSoundOn = true;
+
+    // ----- 화면 -----
+    public int FrameLimit = 0;         // 0 = 제한 없음
+    public bool VSync = false;
+    public bool ShowFps = false;
+    public int ScreenMode = -1;        // -1 = 바꾸지 않음, 0 = 전체 화면, 1 = 테두리 없는 창, 2 = 창 모드
+    public int ResolutionWidth = 0;    // 0 = 바꾸지 않음
+    public int ResolutionHeight = 0;
 }
 
 [Serializable]
@@ -26,10 +55,32 @@ public class SongData
     public string Composer;
     public string illustration; 
     public string Vocal;
-    public double BPM;
-    public int NoteCount;
+    // BPM 은 글자로 그대로 표시: "BPM": "132" 또는 "BPM": "132-250"
+    //  (예전처럼 숫자로 적혀 있어도 SongJson.Normalize 가 글자로 바꿔서 읽음)
+    public string BPM;
+
+    // 난이도별 전체 노트 수 (= 풀콤보 시 MAX COMBO = 노트 + 롱노트 중간 틱)
+    //  songs.json 예) "NoteCount_EASY": 412, "NoteCount_HARD": 806, "NoteCount_INSANE": 1234
+    //  값은 게임을 한 번 플레이하면 콘솔에 정확한 수가 찍힌다 ([NoteCount] 로그). 0 이면 NoteCount 를 대신 사용.
+    //  * FULL COMBO / ALL PERFECT 판정은 이 값이 아니라 채보에서 직접 센 수로 한다 (json 이 틀려도 판정은 정확).
+    public int NoteCount;          // (구) 난이도 구분 없는 값 — 호환용
+    public int NoteCount_EASY;
+    public int NoteCount_HARD;
+    public int NoteCount_INSANE;
     public int HasMV;
     public int ExistSongbar;
+}
+
+// songs.json 읽기 전 손질
+public static class SongJson
+{
+    // "BPM": 132  →  "BPM": "132"  (숫자로 적힌 예전 형식도 글자로 읽히도록)
+    public static string Normalize(string json)
+    {
+        if (string.IsNullOrEmpty(json)) return json;
+        return System.Text.RegularExpressions.Regex.Replace(json,
+            "(\"BPM\"\\s*:\\s*)(-?[0-9]+(?:\\.[0-9]+)?)", "$1\"$2\"");
+    }
 }
 
 // ============================================================
@@ -55,6 +106,10 @@ public class ResultData
     public int Bad;
     public int Miss;
     public int MaxCombo;
+    public int TotalNotes;          // 채보 전체 노트 수 (롱노트 중간 틱 포함)
+    public bool IsFullCombo;        // MAX COMBO = 전체 노트 수
+    public bool IsAllPerfect;       // + EXCELLENT 수 = 전체 노트 수 (표기: ALL PERFECT)
+    public bool IsFailed;           // LIFE 가 0 이 되어 중간에 끝남 (SIMPLE 스킨)
 
     // 전체 판정 오차(ms). FAST = 음수(-), SLOW = 양수(+)
     public double AverageErrorMs;
@@ -62,17 +117,64 @@ public class ResultData
 
     public bool IsAutoPlay;
 
-    // 에디터에서 결과 씬만 단독 실행해 볼 때 쓰는 샘플
+    // ----- 결과창 그래프용 (GameManager 가 판정마다 기록) -----
+    public int Fast;                    // PERFECT 를 뺀 판정 중 빨리 친 수
+    public int Slow;                    // PERFECT 를 뺀 판정 중 늦게 친 수
+    public float[] TimelineProgress;    // 판정 시점의 곡 진행도 (0 ~ 1)
+    public byte[] TimelineJudge;        // 0 PERFECT  1 GREAT  2 GOOD  3 BAD  4 MISS
+    public float[] LifeHistory;         // 판정 직후 LIFE (0 ~ 100)
+    public float[] ErrorsMs;            // 타이밍 오차 ms (FAST -, SLOW +)
+    public bool HasLife;                // LIFE 를 쓰는 판 (SIMPLE 스킨)
+    public float FinalLife = 100f;
+    public float FailedAtProgress = -1f; // FAILED 된 진행도 (아니면 -1)
+    public float LengthSeconds;
+    public bool IsMv;
+    public double Speed = 1.0;
+
+    // 화면에 보여 줄 클리어 등급 (높을수록 좋음): 0 FAILED  1 CLEAR  2 FULL COMBO  3 ALL PERFECT
+    public int ClearRank { get { return IsFailed ? 0 : (IsAllPerfect ? 3 : (IsFullCombo ? 2 : 1)); } }
+
+    // 에디터에서 결과 씬만 단독 실행해 볼 때 쓰는 샘플 (그래프까지 가짜 데이터로 채움)
     public static ResultData CreateSample()
     {
-        return new ResultData
+        ResultData r = new ResultData
         {
             SongId = 1, SongName = "Glow Embrace", SubName = "", Composer = "Composer Name", LevelId = 3,
             DifficultyName = "INSANE", DifficultyValue = "13",
             Score = 987654, Accuracy = 98.76,
             Excellent = 812, Great = 40, Good = 7, Bad = 2, Miss = 3,
-            MaxCombo = 640, AverageErrorMs = -3.4, ErrorSampleCount = 864, IsAutoPlay = false
+            MaxCombo = 640, TotalNotes = 864, IsFullCombo = false, IsAllPerfect = false,
+            AverageErrorMs = -3.4, ErrorSampleCount = 864, IsAutoPlay = false,
+            Fast = 28, Slow = 21, HasLife = true, LengthSeconds = 128f, Speed = 4.5
         };
+        System.Random rnd = new System.Random(4);
+        int n = r.TotalNotes;
+        r.TimelineProgress = new float[n];
+        r.TimelineJudge = new byte[n];
+        r.LifeHistory = new float[n];
+        System.Collections.Generic.List<float> errs = new System.Collections.Generic.List<float>();
+        float life = 100f;
+        int[] left = { r.Excellent, r.Great, r.Good, r.Bad, r.Miss };
+        for (int i = 0; i < n; i++)
+        {
+            r.TimelineProgress[i] = (i + 0.5f) / n;
+            int k = 0;
+            double roll = rnd.NextDouble() * (n - i);
+            double acc = 0;
+            for (int j = 0; j < 5; j++) { acc += left[j]; if (roll < acc) { k = j; break; } }
+            left[k]--;
+            r.TimelineJudge[i] = (byte)k;
+            if (k >= 3) life = Mathf.Max(5f, life - (k == 4 ? 10f : 6f)); else life = Mathf.Min(100f, life + (100f - life) * 0.05f);
+            r.LifeHistory[i] = life;
+            if (k < 4)
+            {
+                double g = Math.Sqrt(-2.0 * Math.Log(1.0 - rnd.NextDouble())) * Math.Cos(2.0 * Math.PI * rnd.NextDouble());
+                errs.Add((float)(g * (k == 0 ? 12.0 : 38.0) - 3.0));
+            }
+        }
+        r.FinalLife = life;
+        r.ErrorsMs = errs.ToArray();
+        return r;
     }
 }
 
@@ -84,10 +186,24 @@ public static class DifficultyHelper
         switch (levelId) { case 1: return "EASY"; case 3: return "INSANE"; default: return "HARD"; }
     }
 
+    // 게임 화면용 짧은 표기: EZ / HD / INS
+    public static string GetShortName(int levelId)
+    {
+        switch (levelId) { case 1: return "EZ"; case 3: return "INS"; default: return "HD"; }
+    }
+
     public static string GetValue(SongData song, int levelId)
     {
         if (song == null) return "";
         switch (levelId) { case 1: return song.Difficulty_EASY; case 3: return song.Difficulty_INSANE; default: return song.Difficulty_HARD; }
+    }
+
+    // 난이도별 노트 수 (없으면 구 NoteCount)
+    public static int GetNoteCount(SongData song, int levelId)
+    {
+        if (song == null) return 0;
+        int v = levelId == 1 ? song.NoteCount_EASY : (levelId == 3 ? song.NoteCount_INSANE : song.NoteCount_HARD);
+        return v > 0 ? v : song.NoteCount;
     }
 
     public static Color GetColor(int levelId)
@@ -96,6 +212,38 @@ public static class DifficultyHelper
         Color c = Color.white;
         ColorUtility.TryParseHtmlString(hex, out c);
         return c;
+    }
+}
+
+// ============================================================
+// 롱노트 중간 틱 규칙 (게임 / 에디터 미리보기 / 노트 수 계산이 모두 이 규칙을 쓴다)
+//  기본 간격: BPM 200 이하 1박에 3번, 300 이하 2번, 그 이상 1번  → IntervalMultiplier 배 만큼 늘림
+//  IntervalMultiplier = 2 : 틱 수가 절반 (예: 8분마다 1콤보 → 4분마다 1콤보)
+//  첫 틱은 머리 + 간격, 끝(꼬리)에서 EndMargin 초 이내의 틱은 만들지 않는다.
+// ============================================================
+public static class LongNoteTickRule
+{
+    public const double IntervalMultiplier = 2.0;
+    public const double EndMargin = 0.05;
+
+    public static double Interval(double bpm)
+    {
+        if (bpm <= 0.0) bpm = 120.0;
+        double ticksPerBeat = (bpm <= 200.0) ? 3.0 : ((bpm <= 300.0) ? 2.0 : 1.0);
+        return (60.0 / bpm) / ticksPerBeat * IntervalMultiplier;
+    }
+
+    // 롱노트 하나를 끝까지 눌렀을 때 나오는 틱 수
+    public static int Count(double headTime, double endTime, Func<double, double> bpmAtTime)
+    {
+        double t = headTime + Interval(bpmAtTime(headTime));
+        int count = 0;
+        while (t < endTime - EndMargin && count < 100000)
+        {
+            count++;
+            t += Interval(bpmAtTime(t));
+        }
+        return count;
     }
 }
 

@@ -27,6 +27,8 @@ public class CoreManager : MonoBehaviour
             Instance = this;
             DontDestroyOnLoad(gameObject);
             LoadSettings();
+            SettingsStore.ApplyAll(); // 볼륨 / 프레임 제한 / 화면 모드 / FPS 표시
+            Shader.WarmupAllShaders(); // 처음 쓰는 셰이더를 그 순간 컴파일하느라 멈칫하는 것 방지
         }
         else
         {
@@ -34,15 +36,15 @@ public class CoreManager : MonoBehaviour
         }
     }
 
+    // settings.json(기본값·개발용) 위에 user_settings.json(설정창에서 바꾼 값)을 덮어써서 읽는다
     private void LoadSettings()
     {
-        string path = Path.Combine(Application.streamingAssetsPath, "data", "settings.json");
-        if (File.Exists(path))
-        {
-            string json = File.ReadAllText(path, System.Text.Encoding.UTF8);
-            CurrentSettings = JsonUtility.FromJson<SettingsData>(json);
-            Debug.Log($"[Settings Loaded] Audio: {CurrentSettings.AudioOffset}, Judge: {CurrentSettings.JudgeOffset}, Mode: {CurrentSettings.Mode}");
-        }
+        CurrentSettings = SettingsStore.LoadAll();
+    }
+
+    void OnApplicationQuit()
+    {
+        SettingsStore.SaveIfDirty();
     }
 
     void Start()
@@ -63,7 +65,11 @@ public class CoreManager : MonoBehaviour
         CurrentSongData = songData;
         IsMvOn = mvState;
         CurrentLevelId = levelId;
-        StartCoroutine(TransitionScene("2_Game"));
+
+        // 곡 정보 화면(SongIntroOverlay)이 화면을 덮은 뒤 게임 씬을 불러온다. 게임 → 게임(RETRY)이면 짧게.
+        if (isTransitioning || SongIntroOverlay.IsActive) return;
+        bool retry = currentActiveScene == "2_Game";
+        SongIntroOverlay.Show(songData, levelId, retry, () => StartCoroutine(TransitionScene("2_Game")));
     }
 
     public void LoadSongSelectScene()
@@ -90,6 +96,9 @@ public class CoreManager : MonoBehaviour
     {
         if (isTransitioning) yield break;
         isTransitioning = true;
+
+        SettingsWindow.Close();
+        SettingsStore.SaveIfDirty();
 
         try
         {

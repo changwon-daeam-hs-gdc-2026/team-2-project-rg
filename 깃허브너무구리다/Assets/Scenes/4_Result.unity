@@ -499,7 +499,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &643998570
 RectTransform:
   m_ObjectHideFlags: 0
@@ -738,6 +738,89 @@ MonoBehaviour:
   m_hasFontAssetChanged: 0
   m_baseMaterial: {fileID: 0}
   m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!1 &921088793
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 921088796}
+  - component: {fileID: 921088795}
+  - component: {fileID: 921088794}
+  m_Layer: 0
+  m_Name: GameObject
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &921088794
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 921088793}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c392e42b5098c458856cdf6ecaaaa1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.EventSystems.EventSystem
+  m_FirstSelected: {fileID: 0}
+  m_sendNavigationEvents: 1
+  m_DragThreshold: 10
+--- !u!114 &921088795
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 921088793}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 409f0fc7318e35642a313cc91c68e7fc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ResultScreen
+  fonts:
+    title: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+    info: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+    number: {fileID: 0}
+    label: {fileID: 11400000, guid: 37201a8606bb46c48945159c44758367, type: 2}
+    status: {fileID: 11400000, guid: 8cb3b49c0bbd8fa4898740848360a934, type: 2}
+    rank: {fileID: 11400000, guid: 0a8c7609c1af5ae45a7a4abed63ef745, type: 2}
+  backgroundDim: 0.3
+  animationSpeed: 1
+  fadeInSeconds: 0.6
+  fadeOutSeconds: 0.5
+  monospaceNumbers: 1
+  rankNames:
+  - SSS
+  - SS
+  - S
+  - AAA
+  - AA
+  - A
+  - B
+  - C
+  - D
+  rankScores: 301b0f0010cd0e00f07e0e00c0090e00806d0d0000350c0060ae0a00c027090000000000
+--- !u!4 &921088796
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 921088793}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 637.0657, y: 920.49585, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1073139052
 GameObject:
   m_ObjectHideFlags: 0
@@ -1514,7 +1597,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1644204709
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1542,6 +1625,11 @@ MonoBehaviour:
   backgroundImage: {fileID: 1836001570}
   backgroundDim: 0.55
   autoPlayBadge: {fileID: 1989995460}
+  fullComboBadge: {fileID: 0}
+  allPerfectBadge: {fileID: 0}
+  clearTypeText: {fileID: 0}
+  failedBadge: {fileID: 0}
+  totalNotesText: {fileID: 0}
   blackOverlay: {fileID: 1737262791}
   fadeInDuration: 0.8
   fadeOutDuration: 0.6
@@ -2642,3 +2730,4 @@ SceneRoots:
   - {fileID: 2113199038}
   - {fileID: 643998570}
   - {fileID: 1644204710}
+  - {fileID: 921088796}

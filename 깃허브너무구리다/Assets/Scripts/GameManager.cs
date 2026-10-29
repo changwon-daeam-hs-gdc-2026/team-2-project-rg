@@ -15,6 +15,9 @@ class RawEvent {
     public string Type = ""; public long Measure = 1; public long Num, Den; public string Value = "";
 }
 
+// 채보에서 SHOW 표시된 변속 (게임에서 SPEED UP / DOWN 글자를 띄움)
+public class SpeedNotice { public double Time; public int Layer; } // Layer 0 = 두 층 모두
+
 class GameScrollEvent { 
     public double Time; 
     public double Multiplier; 
@@ -67,12 +70,89 @@ public class GameManager : MonoBehaviour
     [Tooltip("MV · 채보 · 노래가 모두 끝난 뒤 암전되기까지 기다리는 시간(초)")]
     public float resultDelaySeconds = 3.0f;
     [Tooltip("결과창으로 넘어갈 때 암막이 덮이는 시간(초)")]
-    public float resultFadeDuration = 1.0f;
+    public float resultOverlayFadeSeconds = 1.0f; // (이름 변경: 예전 resultFadeDuration 값이 씬에 0.5 로 저장돼 있어도 새 기본값 1.0 이 적용되도록)
     [Tooltip("결과창으로 넘어가기 직전 화면을 어둡게 덮는 암막 (CanvasGroup). 비워 두면 blackOverlayGroup 을 대신 사용")]
     public CanvasGroup resultTransitionOverlay;
     [Tooltip("true: MISS 도 전체 판정 오차 평균의 분모(전체 노트 수)에 포함 / false: 타이밍이 있는 판정만 평균")]
     public bool missCountsInErrorAverage = true;
     public const int MaxScore = 1000000;
+
+    [Header("FULL COMBO / ALL PERFECT 연출")]
+    public bool showClearEffect = true;
+    [Tooltip("오토플레이에서도 연출을 보여 줄지 (테스트용)")]
+    public bool showClearEffectInAutoPlay = true;
+    [Tooltip("연출 글자가 화면에 머무는 시간(초)")]
+    public float clearEffectHoldSeconds = 2.2f;
+    private bool clearChecked = false;
+    private SimpleGameSkin simpleSkin;  // 설정 > GAME UI 가 SIMPLE 일 때만 생성
+
+    [Header("Information UI / SIMPLE 스킨 폰트 (비워 두면 기본 폰트)")]
+    [Tooltip("title·info·number·label 은 Information UI(모든 GAME UI 공통)에도 쓰임")]
+    public SimpleSkinFonts simpleSkinFonts = new SimpleSkinFonts();
+    private GameInfoHud infoHud;
+    private RedHitEffects redFx;
+
+    [Header("Information UI 가 켜져 있을 때 숨길 기본 화면 오브젝트")]
+    [Tooltip("기본(DEFAULT) 화면에 원래 있던 곡명 · 점수 · 시간 표시처럼 Information UI 와 겹치는 것들")]
+    public GameObject[] hideWhenInfoUi;
+
+    [Header("SIMPLE 스킨 MV 레인 블러 (Resources/Shaders/LaneBlur*.shader 필요)")]
+    [Tooltip("MV 가 나올 때 레인 안쪽에 비치는 영상을 흐리게 처리")]
+    public bool simpleLaneBlur = true;
+    [Tooltip("흐림 정도 (클수록 더 흐림)")]
+    [Range(0.5f, 4f)] public float simpleLaneBlurStrength = 1.6f;
+
+    // ----- 점수: 판정 점수 850,000 + 콤보 점수 150,000 -----
+    public const int JudgeScoreMax = 850000;
+    public const int ComboScoreMax = 150000;
+    private long comboSum = 0; // Σ c(k), c(k) = (k번째 판정 직후 콤보) - 1, 콤보가 0이면 0
+
+    [Header("곡 종료 시 UI 사라짐 (모든 스킨)")]
+    [Tooltip("마지막 노트가 처리된 뒤 레인·노트·게임 UI 가 사라지는 시간(초). 배경은 그대로")]
+    public float endUiFadeDuration = 0.75f;
+    [Tooltip("자동으로 찾지 못한 게임 화면 오브젝트가 있으면 추가 (CanvasGroup 또는 SpriteRenderer 로 사라짐)")]
+    public GameObject[] fadeOutAtEnd;
+    [Tooltip("사라지면 안 되는 배경용 오브젝트 (bgRenderer 는 자동 제외)")]
+    public GameObject[] keepAtEnd;
+    private float endUiAlpha = 1f;
+    private bool endFadeCollected = false;
+    private readonly Dictionary<SpriteRenderer, Color> endFadeSprites = new Dictionary<SpriteRenderer, Color>();
+    private readonly Dictionary<CanvasGroup, float> endFadeGroups = new Dictionary<CanvasGroup, float>();
+    public float EndUiAlpha { get { return endUiAlpha; } }
+
+    [Header("LIFE / FAILED (SIMPLE 스킨 전용)")]
+    [Tooltip("라이프 0 → 채보가 멈추기까지 걸리는 시간(초)")]
+    public float failSlowDownSeconds = 1.8f;
+    [Tooltip("FAILED 글자가 머무는 시간(초)")]
+    public float failEffectHoldSeconds = 1.4f;
+    private double life = 100.0;
+
+    // ----- 결과창 그래프용 기록 (판정마다 한 칸) -----
+    private readonly List<float> recProgress = new List<float>();  // 곡 진행도 0 ~ 1
+    private readonly List<byte> recJudge = new List<byte>();       // 0 PERFECT(EXCELLENT) 1 GREAT 2 GOOD 3 BAD 4 MISS
+    private readonly List<float> recLife = new List<float>();      // 그 판정 직후 LIFE
+    private readonly List<float> recErrors = new List<float>();    // 타이밍 오차 ms (FAST -, SLOW +), MISS·틱 제외
+    private int fastCount, slowCount;                             // PERFECT 를 뺀 판정 중 빠름 / 느림
+    private float failProgress = -1f;
+    private bool isFailed = false;
+    private float failSpeed = 1f;
+    public bool LaneIntroStarted { get; private set; }   // 레인이 나타나기 시작했는가 (SIMPLE 레인 펼침)
+    public List<NoteData> RedNoteStarts { get; private set; } = new List<NoteData>(); // 빨간 노트(단노트·롱노트 머리) 시각순
+
+    // 해당 층의 그 시각 스크롤 배속 (SIMPLE: SPEED UP / DOWN 표시용)
+    public double GetSpeedMultiplier(int layer, double time)
+    {
+        var list = speedChangesByLayer[Mathf.Clamp(layer, 1, 2)];
+        double m = list.Count > 0 ? list[0].Multiplier : 1.0;
+        for (int i = 0; i < list.Count; i++) { if (list[i].Time <= time + 1e-6) m = list[i].Multiplier; else break; }
+        return m;
+    }
+
+    public bool LifeEnabled { get { return simpleSkin != null || SimpleGameSkin.Active != null; } }
+    public bool IsFailed { get { return isFailed; } }
+    // 게이지 표시용: 소수점 두 자리까지만 반영
+    public double LifeGauge { get { return Math.Round(life, 2); } }
+    private bool clearEffectPlaying = false;
 
     [Header("Pause UI 연출")]
     [Tooltip("Pause UI 가 투명 → 불투명으로 나타나는 시간(초). ESC 를 누르는 즉시 시작한다")]
@@ -82,8 +162,11 @@ public class GameManager : MonoBehaviour
     private int cntExcellent, cntGreat, cntGood, cntBad, cntMiss;
     private double errorSumMs = 0;      // FAST = 음수, SLOW = 양수 (표시되는 정수 ms 기준)
     private int timedCount = 0;         // 타이밍이 기록된 판정 수 (롱노트 중간 틱 제외)
-    private int chartJudgeCount = 0;    // 채보 전체의 판정 대상 수 (점수 계산용)
+    private int chartJudgeCount = 0;    // 채보 전체의 판정 대상 수 = 노트 + 롱노트 중간 틱 (점수 / FC / AP 기준)
+    private int chartNoteCount = 0;     // 그중 노트(머리·꼬리·일반·프리키) 수
+    private int chartTickCount = 0;     // 그중 롱노트 중간 틱 수
     private double chartLastTime = 0;   // 마지막 노트 시각
+    private double chartJudgeEndTime = 0; // 판정이 있는 마지막 노트(롱노트 꼬리 포함) 시각 → 게임 종료 기준
     private int chartEndCursor = 0;
 
     // 종료 조건 / 전환 상태
@@ -184,6 +267,8 @@ public class GameManager : MonoBehaviour
     [Header("키빔 & 라이트")]
     public SpriteRenderer[] beamRenderers; 
     public GameObject[] whiteLights;       
+    [Tooltip("설정 > GAME UI 가 SIMPLE 일 때 꺼 둘 기본 화면 오브젝트 (레인 배경 스프라이트, 장식 등). 레인 그룹·키빔·판정/콤보 UI 는 자동으로 숨겨짐")]
+    public GameObject[] hideInSimpleSkin;
     public Sprite[] offSprites;            
     public Sprite[] onSprites;             
 
@@ -243,7 +328,7 @@ public class GameManager : MonoBehaviour
 
     void Awake() { 
         Instance = this; 
-        Application.targetFrameRate = 1000; 
+        SettingsStore.ApplyFrameRate(); // 설정 > DISPLAY 의 프레임 제한 / VSync
 
         for (int i = 0; i < 4; i++) {
             notesByLane[i] = new List<NoteData>();
@@ -316,7 +401,14 @@ public class GameManager : MonoBehaviour
     { 
         mainCam = FindSceneCamera();
         currentSong = CoreManager.Instance.CurrentSongData;
+        if (SongIntroOverlay.PreferredTitleFont == null && loadingTitleText != null) SongIntroOverlay.PreferredTitleFont = loadingTitleText.font;
         hitSoundClip = Resources.Load<AudioClip>("Audio/etc/hitsound"); 
+        laneKeys = SettingsStore.GetLaneKeys();                        // 설정 > CONTROLS
+        int skinId = SettingsStore.Current.GameSkin;                     // 설정 > GAME UI
+        if (GameSkins.UsesSimpleSkin(skinId)) simpleSkin = SimpleGameSkin.Create(this, skinId == GameSkins.Diverse);
+        redFx = RedHitEffects.Create(this);  // RED 노트 전용 탭 / 롱노트 홀드 이펙트 (일반 이펙트 아래)
+        infoHud = GameInfoHud.Create(this); // 곡 정보 · 난이도 · 시간 · 점수 · 배속 · 진행 막대 (모든 GAME UI 공통, 설정 > INFORMATION UI)
+        if (bgmSource != null) bgmSource.volume = SettingsStore.MusicVolume; // 설정 > SOUND
 
         StartCoroutine(StartGameSetupRoutine());
     }
@@ -356,8 +448,9 @@ public class GameManager : MonoBehaviour
         }
 
         if(laneGroup != null) laneGroup.alpha = 0f;
-        loadingCanvasGroup.alpha = 1f;
-        loadingCanvasGroup.gameObject.SetActive(true);
+        bool introScreen = SongIntroOverlay.IsActive; // 곡 정보 화면이 따로 떠 있으면 게임 씬의 로딩 화면은 쓰지 않음
+        loadingCanvasGroup.alpha = introScreen ? 0f : 1f;
+        loadingCanvasGroup.gameObject.SetActive(!introScreen);
         if (selectScreenImg != null) selectScreenImg.gameObject.SetActive(true);
         if (darkOverlay != null) darkOverlay.gameObject.SetActive(true);
 
@@ -372,8 +465,13 @@ public class GameManager : MonoBehaviour
         ResourceRequest jacketReq = Resources.LoadAsync<Sprite>($"Sprites/loadimg-large/{songId}");
 
         LoadChart(songId, levelId); // 레벨 ID를 추가해 로딩
-        totalNotes = currentSong.NoteCount;
+        totalNotes = chartJudgeCount;
+        int jsonCount = DifficultyHelper.GetNoteCount(currentSong, levelId);
+        Debug.Log($"[NoteCount] {currentSong.Id} {DifficultyHelper.GetName(levelId)} = {chartJudgeCount} (notes {chartNoteCount} + long ticks {chartTickCount})" +
+                  (jsonCount != chartJudgeCount ? $"  ※ songs.json 값 {jsonCount} 과 다름 (에디터에서 이 채보를 다시 저장하면 갱신됨)" : ""));
         yield return null;
+
+        CreateNoteClipMask();
 
         notePool.Clear();
         noteObjectDict.Clear();
@@ -393,10 +491,12 @@ public class GameManager : MonoBehaviour
             Texture2D tex = new Texture2D(1, 1); tex.SetPixel(0, 0, new Color(128, 128, 128, 0.2f)); tex.Apply();
             sr.sprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
             sr.sortingOrder = 1; 
+            sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask; // 판정선 아래로는 안 그려짐
             ml.transform.SetParent(this.transform);
             ml.transform.localScale = new Vector3(3.2f, 0.015f, 1f); 
             ml.SetActive(false);
             measureLinePool.Enqueue(ml);
+            if (simpleSkin != null) simpleSkin.AdoptToPlayfield(ml); // SIMPLE-DIVERSE: 원근 재질 (판정선 아래 자름)
         }
         yield return null;
 
@@ -468,6 +568,9 @@ public class GameManager : MonoBehaviour
             mvPlayer.renderMode = VideoRenderMode.MaterialOverride;
             mvPlayer.targetMaterialRenderer = bgRenderer;
             mvPlayer.isLooping = false;
+            mvPlayer.skipOnDrop = true;       // 디코딩이 밀리면 프레임을 건너뛰어 음악을 따라감
+            mvPlayer.playbackSpeed = 1f;
+            mvStallTimer = 0f; mvLastTime = -1.0; mvSyncTimer = 0f;
             mvActive = true;
             mvFinished = false;
             HookMvEvents();
@@ -486,6 +589,33 @@ public class GameManager : MonoBehaviour
         if (basicUIContainer != null) basicUIContainer.SetActive(true);
         
         StartCoroutine(LoadingSequenceRoutine());
+    }
+
+    // =====================================================================
+    //  노트 · 마디선이 판정선 아래로 그려지지 않도록: 판정선 위쪽만 덮는 SpriteMask
+    //  (노트/마디선 SpriteRenderer 는 maskInteraction = VisibleInsideMask, 프리키 노트는 제외)
+    // =====================================================================
+    [Header("판정선 아래 가리기")]
+    [Tooltip("노트가 사라지는 경계 = 판정선 + 이 값 (유닛). 0 이면 판정선에서 바로 잘림, 음수면 조금 더 아래까지 보임")]
+    public float noteClipOffset = 0f;
+    private GameObject noteClipMask;
+
+    private void CreateNoteClipMask()
+    {
+        if (noteClipMask != null) return;
+        noteClipMask = new GameObject("NoteClipMask");
+        noteClipMask.transform.SetParent(transform, false);
+        SpriteMask mask = noteClipMask.AddComponent<SpriteMask>();
+        Texture2D tex = new Texture2D(4, 4, TextureFormat.RGBA32, false);
+        Color32[] px = new Color32[16];
+        for (int i = 0; i < 16; i++) px[i] = new Color32(255, 255, 255, 255);
+        tex.SetPixels32(px); tex.Apply();
+        mask.sprite = Sprite.Create(tex, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0f), 4f); // 1x1 유닛, 피벗 아래 가운데
+        float clipY = hitLineY + noteClipOffset;
+        float camX = mainCam != null ? mainCam.transform.position.x : 0f;
+        noteClipMask.transform.position = new Vector3(camX, clipY, 0f);
+        Vector3 ps = transform.lossyScale;
+        noteClipMask.transform.localScale = new Vector3(200f / Mathf.Max(0.0001f, Mathf.Abs(ps.x)), 200f / Mathf.Max(0.0001f, Mathf.Abs(ps.y)), 1f); // 판정선 위로 넓게
     }
 
     public NoteObject GetNoteFromPool()
@@ -510,6 +640,7 @@ public class GameManager : MonoBehaviour
     public void SpawnHitEffect(int lane)
     {
         if (lane < 0 || lane > 3) return;
+        if (simpleSkin != null) { simpleSkin.Hit(lane); return; }
 
         bool isBlue = (lane == 0 || lane == 3);
         if (isBlue && blueHitEffectPrefab == null) return;
@@ -546,6 +677,7 @@ public class GameManager : MonoBehaviour
 
     public void StartHoldEffect(int lane)
     {
+        if (simpleSkin != null) { simpleSkin.SetHold(lane, true); return; }
         if (holdEffects[lane] == null) return;
         holdEffects[lane].transform.position = new Vector3(laneXPositions[lane], hitLineY + hitEffectOffsetY, -4.9f);
         ParticleSystem[] pss = holdEffects[lane].GetComponentsInChildren<ParticleSystem>();
@@ -554,43 +686,52 @@ public class GameManager : MonoBehaviour
 
     public void StopHoldEffect(int lane)
     {
+        if (simpleSkin != null) { simpleSkin.SetHold(lane, false); return; }
         if (holdEffects[lane] == null) return;
         ParticleSystem[] pss = holdEffects[lane].GetComponentsInChildren<ParticleSystem>();
         foreach(var ps in pss) ps.Stop(true, ParticleSystemStopBehavior.StopEmitting);
     }
 
+    // 곡 정보 화면이 분리된 경우(SongIntroOverlay)에는 게임 씬 자체의 로딩 화면을 쓰지 않는다.
+    //  - 준비가 끝나면 NotifyGameReady → 곡 정보 화면이 걷히기 시작하면(IsRevealing) 레인을 띄우고 시작
+    //  - 게임 씬을 바로 실행한 경우(settings.json Mode = 2 등)에는 예전 로딩 화면 그대로
     private IEnumerator LoadingSequenceRoutine()
     {
-        Vector3 titleBasePos = titleGroup.transform.localPosition;
-        titleGroup.transform.localPosition = titleBasePos + new Vector3(0, 100f, 0); 
-
+        bool useIntro = SongIntroOverlay.IsActive;
         float t = 0;
-        while (t < 0.5f) {
-            t += Time.deltaTime;
-            float p = t / 0.5f;
-            loadImgLarge.color = new Color(1, 1, 1, p);
-            titleGroup.alpha = p;
-            titleGroup.transform.localPosition = Vector3.Lerp(titleBasePos + new Vector3(0, 100f, 0), titleBasePos, EaseOut(p));
-            yield return null;
-        }
-        yield return new WaitForSeconds(1.5f); 
 
-        t = 0;
-        Vector3 titleCurrentPos = titleGroup.transform.localPosition;
-        Vector3 detailStartPos = titleBasePos + new Vector3(-200f, 0, 0); 
-        Vector3 detailEndPos = titleBasePos;
+        if (!useIntro)
+        {
+            Vector3 titleBasePos = titleGroup.transform.localPosition;
+            titleGroup.transform.localPosition = titleBasePos + new Vector3(0, 100f, 0); 
 
-        while (t < 0.5f) {
-            t += Time.deltaTime;
-            float p = t / 0.5f;
-            titleGroup.alpha = 1f - p;
-            titleGroup.transform.localPosition = Vector3.Lerp(titleCurrentPos, titleCurrentPos + new Vector3(200f, 0, 0), EaseOut(p));
-            detailGroup.alpha = p;
-            detailGroup.transform.localPosition = Vector3.Lerp(detailStartPos, detailEndPos, EaseOut(p));
-            yield return null;
+            while (t < 0.5f) {
+                t += Time.deltaTime;
+                float p = t / 0.5f;
+                loadImgLarge.color = new Color(1, 1, 1, p);
+                titleGroup.alpha = p;
+                titleGroup.transform.localPosition = Vector3.Lerp(titleBasePos + new Vector3(0, 100f, 0), titleBasePos, EaseOut(p));
+                yield return null;
+            }
+            yield return new WaitForSeconds(1.5f); 
+
+            t = 0;
+            Vector3 titleCurrentPos = titleGroup.transform.localPosition;
+            Vector3 detailStartPos = titleBasePos + new Vector3(-200f, 0, 0); 
+            Vector3 detailEndPos = titleBasePos;
+
+            while (t < 0.5f) {
+                t += Time.deltaTime;
+                float p = t / 0.5f;
+                titleGroup.alpha = 1f - p;
+                titleGroup.transform.localPosition = Vector3.Lerp(titleCurrentPos, titleCurrentPos + new Vector3(200f, 0, 0), EaseOut(p));
+                detailGroup.alpha = p;
+                detailGroup.transform.localPosition = Vector3.Lerp(detailStartPos, detailEndPos, EaseOut(p));
+                yield return null;
+            }
+            
+            yield return new WaitForSeconds(0.2f); 
         }
-        
-        yield return new WaitForSeconds(0.2f); 
 
         if (mvPlayer != null && CoreManager.Instance.IsMvOn && !string.IsNullOrEmpty(mvPlayer.url)) {
             mvPlayer.Prepare();
@@ -603,16 +744,27 @@ public class GameManager : MonoBehaviour
             bgmSource.Pause(); 
         }
 
-        yield return new WaitForSeconds(2.5f); 
+        if (!useIntro)
+        {
+            yield return new WaitForSeconds(2.5f); 
 
-        t = 0;
-        while (t < 0.3f) {
-            t += Time.deltaTime;
-            loadingCanvasGroup.alpha = 1f - (t / 0.3f);
-            yield return null;
+            t = 0;
+            while (t < 0.3f) {
+                t += Time.deltaTime;
+                loadingCanvasGroup.alpha = 1f - (t / 0.3f);
+                yield return null;
+            }
+            loadingCanvasGroup.gameObject.SetActive(false);
         }
-        loadingCanvasGroup.gameObject.SetActive(false);
+        else
+        {
+            // 곡 정보 화면에 준비 완료를 알리고, 걷히기 시작할 때까지 대기
+            SongIntroOverlay.NotifyGameReady();
+            yield return new WaitUntil(() => !SongIntroOverlay.IsActive || SongIntroOverlay.IsRevealing);
+            yield return new WaitForSeconds(0.15f);
+        }
 
+        LaneIntroStarted = true; // SIMPLE 스킨: 레인이 좌우로 펼쳐지기 시작
         t = 0;
         while (t < 0.5f) {
             t += Time.deltaTime;
@@ -639,6 +791,7 @@ public class GameManager : MonoBehaviour
         notes.Clear(); bpmChanges.Clear(); 
         uiEvents.Clear(); linearEvents.Clear();
         for (int L = 1; L <= 2; L++) { speedChangesByLayer[L].Clear(); scrollEventsByLayer[L].Clear(); notesByLayer[L].Clear(); }
+        speedNotices.Clear();
         foreach (var line in activeLines.Values) Destroy(line.go);
         activeLines.Clear();
 
@@ -784,6 +937,7 @@ public class GameManager : MonoBehaviour
                 // 형식1(구형): SPEED, 마디, 분자, 분모, 속도           → 1층/2층 모두
                 // 형식2(신형): SPEED, 마디, 분자, 분모, 층, 속도       → 해당 층만
                 ParseSpeedEventValue(e.Value, out int spdLayer, out double spdValue);
+                if (IsSpeedShowFlag(e.Value)) speedNotices.Add(new SpeedNotice { Time = exactTime, Layer = spdLayer });
                 for (int L = 1; L <= 2; L++) {
                     if (spdLayer != 0 && spdLayer != L) continue;
                     currentSpeedByLayer[L] = spdValue;
@@ -868,21 +1022,35 @@ public class GameManager : MonoBehaviour
             }
         }
 
-        // 점수 계산용: 완벽하게 쳤을 때 ProcessHit 이 불리는 횟수 (롱노트 중간 틱 제외)
-        chartJudgeCount = 0; chartLastTime = 0; chartEndCursor = 0;
+        // 채보 전체 노트 수: 완벽하게 쳤을 때 판정이 나오는 횟수 (= 풀콤보 시 MAX COMBO)
+        //  노트(일반·롱노트 머리/꼬리·프리키) + 롱노트 중간 틱. 틱은 실제 플레이와 똑같은 규칙으로 미리 세어 둔다.
+        chartJudgeCount = 0; chartNoteCount = 0; chartTickCount = 0; chartLastTime = 0; chartEndCursor = 0;
+        chartJudgeEndTime = 0;
         foreach (var n in notes) {
             if (n.HitTime > chartLastTime) chartLastTime = n.HitTime;
-            if (n.IsFreeKey || n.Type == 1 || n.Type == 11) chartJudgeCount++;
-            else if (n.Type == 2 || n.Type == 12) chartJudgeCount += (n.NextLongNote != null) ? 2 : 1;
+            if (IsJudgableNote(n) && n.HitTime > chartJudgeEndTime) chartJudgeEndTime = n.HitTime; // 판정이 있는 마지막 노트 (꼬리 포함)
+            if (n.IsFreeKey || n.Type == 1 || n.Type == 11) chartNoteCount++;
+            else if (n.Type == 2 || n.Type == 12) {
+                chartNoteCount += (n.NextLongNote != null) ? 2 : 1;
+                if (n.NextLongNote != null) chartTickCount += CountLongNoteTicks(n);
+            }
         }
+        chartJudgeCount = chartNoteCount + chartTickCount;
+        RedNoteStarts = notes.Where(n => n.IsRedNote && (n.Type == 11 || n.Type == 12)).OrderBy(n => n.HitTime).ToList();
 
         double maxBeat = 0;
         if (rawEvents.Count > 0) {
             maxBeat = rawEvents.Max(e => ((e.Measure - 1) * 4.0) + ((double)e.Num / Math.Max(1, e.Den)) * 4.0);
         }
+        speedNotices.Sort((x, y) => x.Time.CompareTo(y.Time));
+
         allMeasureTimes.Clear();
+        // 같은 박자에 채보에서 직접 추가한 마디선(Type 4)이 있으면 원래 마디선은 만들지 않음
+        var customLineTimes = notes.Where(n => n.Type == 4 && !n.IsFreeKey).Select(n => n.HitTime).ToList();
         for (double b = 0; b <= maxBeat + 4.0; b += 4.0) {
-            allMeasureTimes.Add(GetExactTime(b));
+            double t = GetExactTime(b);
+            if (customLineTimes.Any(ct => Math.Abs(ct - t) < 0.0005)) continue;
+            allMeasureTimes.Add(t);
         }
         allMeasureTimes.Sort();
         measureSpawnIndex = 0;
@@ -906,6 +1074,17 @@ public class GameManager : MonoBehaviour
             notesByLane[lane].Add(newNote);
         }
     }
+
+    // "층, 속도, SHOW" 처럼 끝에 SHOW 가 붙은 변속 = 에디터에서 SPEED UP / DOWN 표시를 켠 변속
+    private static bool IsSpeedShowFlag(string value)
+    {
+        string[] p = value.Split(',');
+        return p.Length >= 3 && p[2].Trim().ToUpperInvariant() == "SHOW";
+    }
+
+    // SPEED UP / DOWN 을 표시할 변속 목록 (시간 순)
+    private readonly List<SpeedNotice> speedNotices = new List<SpeedNotice>();
+    public List<SpeedNotice> SpeedNotices { get { return speedNotices; } }
 
     private static void ParseSpeedEventValue(string value, out int layer, out double speed)
     {
@@ -980,9 +1159,12 @@ public class GameManager : MonoBehaviour
         return lastBpm != null ? lastBpm.Bpm : bpmChanges[0].Bpm;
     }
 
+    // ALL PERFECT / FULL COMBO / TRACK COMPLETE / FAILED 연출 중이거나 결과창으로 넘어가는 중이면 일시정지 불가
+    public bool CanPause { get { return currentState == GameState.Playing && !clearEffectPlaying && !isFailed && !finishRoutineStarted && !isLeaving; } }
+
     public void PauseGame()
     {
-        if (currentState != GameState.Playing) return;
+        if (!CanPause) return;
         currentState = GameState.Paused;
         
         if (bgmSource != null && bgmSource.isPlaying) bgmSource.Pause();
@@ -1069,6 +1251,7 @@ public class GameManager : MonoBehaviour
                 bgmSource.Play();
                 
                 dspStartTime = AudioSettings.dspTime - (currentPlayTime - triggerTime);
+                ResetAudioDrift();
                 StartCoroutine(FadeInAudioRoutine(1.0f));
             }
             if (mvPlayer != null && CoreManager.Instance.IsMvOn)
@@ -1090,10 +1273,10 @@ public class GameManager : MonoBehaviour
         while (elapsed < duration)
         {
             elapsed += Time.unscaledDeltaTime;
-            bgmSource.volume = Mathf.Lerp(0f, 1f, elapsed / duration);
+            bgmSource.volume = Mathf.Lerp(0f, SettingsStore.MusicVolume, elapsed / duration);
             yield return null;
         }
-        bgmSource.volume = 1f;
+        bgmSource.volume = SettingsStore.MusicVolume;
     }
 
     public void RetryGame()
@@ -1140,7 +1323,7 @@ public class GameManager : MonoBehaviour
         var kb = Keyboard.current;
         if (kb != null && kb[Key.Escape].wasPressedThisFrame)
         {
-            if (currentState == GameState.Playing) PauseGame();
+            if (currentState == GameState.Playing && !isFailed) PauseGame();
         }
 
         if (currentState != GameState.Playing) 
@@ -1155,7 +1338,12 @@ public class GameManager : MonoBehaviour
 
             double triggerTime = songStartOffset - CoreManager.Instance.CurrentSettings.AudioOffset;
 
-            if (!isFullMusicStarted) 
+            if (isFailed)
+            {
+                // FAILED: 음악과 동기화하지 않고 점점 느려지며 멈춘다
+                currentPlayTime += dt * failSpeed;
+            }
+            else if (!isFullMusicStarted) 
             {
                 currentPlayTime += dt; 
                 if (currentPlayTime >= triggerTime) 
@@ -1165,6 +1353,7 @@ public class GameManager : MonoBehaviour
                         if (overshoot > 0) bgmSource.time = (float)overshoot;
                         bgmSource.Play();
                         dspStartTime = AudioSettings.dspTime - overshoot; 
+                        ResetAudioDrift();
                     }
                     if (mvPlayer != null && !string.IsNullOrEmpty(mvPlayer.url) && CoreManager.Instance.IsMvOn) {
                         if (overshoot > 0) mvPlayer.time = overshoot;
@@ -1177,16 +1366,19 @@ public class GameManager : MonoBehaviour
             {
                 if (bgmSource != null && bgmSource.isPlaying) 
                 {
+                    CorrectAudioDrift();   // 실제 재생 위치(timeSamples)와 어긋나면 기준 시각을 다시 맞춤
                     double audioPlayedTime = AudioSettings.dspTime - dspStartTime;
                     double targetVisualTime = triggerTime + audioPlayedTime;
                     double diff = targetVisualTime - currentPlayTime;
                     
-                    if (Math.Abs(diff) > 0.1) {
+                    // 0.3초 넘게 벌어졌을 때(큰 끊김 직후 등)만 바로 맞추고, 그 밖에는 흐르는 속도를 살짝 조절해 따라감
+                    //  (예전: 0.1초 이상이면 바로 이동 + 속도 ±50% → 노트가 순간이동하거나 눈에 띄게 빨라짐)
+                    if (Math.Abs(diff) > 0.3) {
                         currentPlayTime = targetVisualTime; 
                     } 
                     else {
                         float timeScale = 1.0f + (float)(diff * 2.0); 
-                        timeScale = Mathf.Clamp(timeScale, 0.5f, 1.5f);
+                        timeScale = Mathf.Clamp(timeScale, 0.85f, 1.15f);
                         currentPlayTime += dt * timeScale; 
                     }
 
@@ -1200,6 +1392,8 @@ public class GameManager : MonoBehaviour
                 }
             }
         }
+
+        SyncMv(Time.unscaledDeltaTime);
 
         ProcessUIAndLinearEvents();
         EvaluateLineStates();
@@ -1273,12 +1467,13 @@ public class GameManager : MonoBehaviour
 
         UpdateJudgmentAnim();
 
-        if (currentState == GameState.Playing)
+        if (currentState == GameState.Playing && !isFailed)
         {
             if (CoreManager.Instance.IsAutoPlay) HandleAutoPlay(currentPlayTime);
             else HandleInputs(currentPlayTime);
         }
 
+        UpdateClearEffect();
         UpdateFinishCondition();
 
         if (comboAnimTimer > 0 && currentCombo > 0)
@@ -1462,6 +1657,14 @@ public class GameManager : MonoBehaviour
     private int SlotBase(NoteData n) { return n.Layer == NoteLayer.Bottom ? 4 : 0; }
     private int CoveredLaneCount(NoteData n) { return n.IsRedNote ? n.Width : 1; }
 
+    // 레인별 일반 홀드 효과가 필요한가 (RED 롱노트는 RED 전용 효과를 쓰므로 제외)
+    private bool LaneNeedsHoldEffect(int lane)
+    {
+        NoteData a = activeLongNote[lane], b = activeLongNote[lane + 4];
+        bool redOnly = redFx != null;
+        return (a != null && !(redOnly && a.IsRedNote)) || (b != null && !(redOnly && b.IsRedNote));
+    }
+
     private bool IsLaneHeldByLongNote(int lane)
     {
         return activeLongNote[lane] != null || activeLongNote[lane + 4] != null;
@@ -1476,8 +1679,9 @@ public class GameManager : MonoBehaviour
             if (l >= 4) continue;
             activeLongNote[b + l] = n;
             nextLongNoteTickTime[b + l] = n.HitTime + tickInterval;
-            StartHoldEffect(l);
+            if (!n.IsRedNote || redFx == null) StartHoldEffect(l); // RED 롱노트는 RED 전용 홀드 효과만
         }
+        if (n.IsRedNote && redFx != null) redFx.StartHold(n);
     }
 
     private void ClearActiveLongNote(NoteData n)
@@ -1488,8 +1692,9 @@ public class GameManager : MonoBehaviour
             int l = n.Lane + k;
             if (l >= 4) continue;
             if (activeLongNote[b + l] == n) activeLongNote[b + l] = null;
-            if (!IsLaneHeldByLongNote(l)) StopHoldEffect(l);
+            if (!LaneNeedsHoldEffect(l)) StopHoldEffect(l);
         }
+        if (redFx != null) redFx.StopHold(n);
     }
 
     private bool IsLongNoteHeld(NoteData ln)
@@ -1537,12 +1742,11 @@ public class GameManager : MonoBehaviour
                     }
                     
                     if (n.IsRedNote) {
+                        // RED 노트: 레인별 일반 히트 효과 대신 노트 폭만큼의 RED 전용 효과 하나
+                        if (redFx != null) redFx.Tap(n); else for (int w = 0; w < n.Width; w++) if (n.Lane + w < 4) SpawnHitEffect(n.Lane + w);
                         for (int w = 0; w < n.Width; w++) {
                             int l = n.Lane + w;
-                            if (l < 4) {
-                                SpawnHitEffect(l);
-                                StartCoroutine(AutoPlayLaneVisual(l, isTail));
-                            }
+                            if (l < 4) StartCoroutine(AutoPlayLaneVisual(l, isTail));
                         }
                     } else {
                         SpawnHitEffect(i);
@@ -1551,10 +1755,7 @@ public class GameManager : MonoBehaviour
 
                     if (n.Type == 2 || n.Type == 12)
                     {
-                        double currentBpm = GetBpmAtTime(n.HitTime);
-                        double ticksPerBeat = (currentBpm <= 200.0) ? 3.0 : ((currentBpm <= 300.0) ? 2.0 : 1.0);
-                        double tickInterval = (60.0 / currentBpm) / ticksPerBeat;
-                        RegisterActiveLongNote(n, tickInterval);
+                        RegisterActiveLongNote(n, GetTickInterval(n.HitTime));
                     }
                     laneStartIndex[i]++;
                 }
@@ -1579,22 +1780,30 @@ public class GameManager : MonoBehaviour
         {
             n.IsHit = true;
             ProcessHit("EXCELLENT", 0.0, true);
-            if (sfxSource != null && hitSoundClip != null) sfxSource.PlayOneShot(hitSoundClip);
+            PlayHitSound();
             HideNoteObject(n);
         }
+    }
+
+    // 탭 사운드 (설정 > SOUND 의 ON/OFF · 볼륨 반영)
+    private void PlayHitSound()
+    {
+        SettingsStore.PlayHitSound(sfxSource, hitSoundClip);
     }
 
     private IEnumerator AutoPlayLaneVisual(int lane, bool skipSound = false)
     {
         if (beamRenderers != null && beamRenderers[lane] != null && onSprites != null) beamRenderers[lane].sprite = onSprites[lane];
         if (whiteLights != null && whiteLights[lane] != null) whiteLights[lane].SetActive(true);
-        if (!skipSound && sfxSource != null && hitSoundClip != null) sfxSource.PlayOneShot(hitSoundClip);
+        if (simpleSkin != null) simpleSkin.SetPressed(lane, true);
+        if (!skipSound) PlayHitSound();
 
         yield return new WaitForSeconds(0.05f);
 
         if (!IsLaneHeldByLongNote(lane)) {
             if (beamRenderers != null && beamRenderers[lane] != null && offSprites != null) beamRenderers[lane].sprite = offSprites[lane];
             if (whiteLights != null && whiteLights[lane] != null) whiteLights[lane].SetActive(false);
+            if (simpleSkin != null) simpleSkin.SetPressed(lane, false);
         }
     }
 
@@ -1617,6 +1826,7 @@ public class GameManager : MonoBehaviour
             {
                 if (beamRenderers != null && beamRenderers[i] != null && offSprites != null) beamRenderers[i].sprite = offSprites[i];
                 if (whiteLights != null && whiteLights[i] != null) whiteLights[i].SetActive(false);
+                if (simpleSkin != null) simpleSkin.SetPressed(i, false);
                 StopHoldEffect(i);
                 
                 // 이 레인의 2층/1층 롱노트를 각각 검사
@@ -1636,11 +1846,12 @@ public class GameManager : MonoBehaviour
             {
                 if (beamRenderers != null && beamRenderers[i] != null && onSprites != null) beamRenderers[i].sprite = onSprites[i];
                 if (whiteLights != null && whiteLights[i] != null) whiteLights[i].SetActive(true);
-                if (sfxSource != null && hitSoundClip != null) sfxSource.PlayOneShot(hitSoundClip);
+                if (simpleSkin != null) simpleSkin.SetPressed(i, true);
+                PlayHitSound();
                 
                 EvaluateHit(i, T_sys);
                 
-                if (IsLaneHeldByLongNote(i)) StartHoldEffect(i);
+                if (LaneNeedsHoldEffect(i)) StartHoldEffect(i);
             }
         }
         
@@ -1695,15 +1906,22 @@ public class GameManager : MonoBehaviour
 
     private void FinishLongNote(NoteData head, double tailErrorMs = 0.0)
     {
+        // 끝나기 직전(0.15초 이내)에 손을 떼서 완료 처리된 경우, 남은 틱을 마저 정산한다 (풀콤보가 깨지지 않도록)
+        int tickSlot = SlotBase(head) + head.Lane;
+        if (head.Lane >= 0 && head.Lane < 4 && activeLongNote[tickSlot] == head)
+            ProcessLongNoteTick(tickSlot, GetLongNoteEndTime(head));
+
         NoteData tailNote = head.NextLongNote;
         if (tailNote != null && !tailNote.IsHit) {
             tailNote.IsHit = true; 
             ProcessHit("EXCELLENT", tailErrorMs, true); 
             
             int cnt = CoveredLaneCount(head);
-            for (int w = 0; w < cnt; w++) {
-                if (head.Lane + w < 4) SpawnHitEffect(head.Lane + w);
-            }
+            if (head.IsRedNote && redFx != null) redFx.Tap(head); // RED: 노트 폭만큼의 전용 효과 하나
+            else
+                for (int w = 0; w < cnt; w++) {
+                    if (head.Lane + w < 4) SpawnHitEffect(head.Lane + w);
+                }
             HideNoteObject(tailNote);
         }
         ClearActiveLongNote(head);
@@ -1729,7 +1947,7 @@ public class GameManager : MonoBehaviour
             {
                 n.IsHit = true;
                 ApplyJudgment(n.HitTime - adjustedHitTime);
-                if (sfxSource != null && hitSoundClip != null) sfxSource.PlayOneShot(hitSoundClip);
+                PlayHitSound();
                 HideNoteObject(n);
                 break; 
             }
@@ -1811,20 +2029,19 @@ public class GameManager : MonoBehaviour
         ApplyJudgment(targetNote.HitTime - adjustedHitTime);
         
         if (targetNote.IsRedNote) {
-            for (int w = 0; w < targetNote.Width; w++) {
-                if (targetNote.Lane + w < 4) SpawnHitEffect(targetNote.Lane + w);
-            }
+            // RED 노트: 레인별 일반 히트 효과 대신 노트 폭만큼의 RED 전용 효과 하나
+            if (redFx != null) redFx.Tap(targetNote);
+            else
+                for (int w = 0; w < targetNote.Width; w++) {
+                    if (targetNote.Lane + w < 4) SpawnHitEffect(targetNote.Lane + w);
+                }
         } else {
             SpawnHitEffect(lane); 
         }
 
         if (targetNote.Type == 2 || targetNote.Type == 12)
         {
-            double currentBpm = GetBpmAtTime(targetNote.HitTime);
-            double ticksPerBeat = (currentBpm <= 200.0) ? 3.0 : ((currentBpm <= 300.0) ? 2.0 : 1.0);
-            double tickInterval = (60.0 / currentBpm) / ticksPerBeat;
-
-            RegisterActiveLongNote(targetNote, tickInterval);
+            RegisterActiveLongNote(targetNote, GetTickInterval(targetNote.HitTime));
         }
     }
 
@@ -1835,20 +2052,38 @@ public class GameManager : MonoBehaviour
 
         double endTime = GetLongNoteEndTime(head);
         
-        while (T_sys >= nextLongNoteTickTime[slot] && nextLongNoteTickTime[slot] < endTime - 0.05)
+        while (T_sys >= nextLongNoteTickTime[slot] && nextLongNoteTickTime[slot] < endTime - LongNoteTickRule.EndMargin)
         {
-            currentCombo++;
-            if (currentCombo > maxCombo) maxCombo = currentCombo;
-            comboAnimTimer = 1f; 
-            
-            UpdateUI();
-
-            double currentBpm = GetBpmAtTime(nextLongNoteTickTime[slot]);
-            double ticksPerBeat = (currentBpm <= 200.0) ? 3.0 : ((currentBpm <= 300.0) ? 2.0 : 1.0);
-            double tickInterval = (60.0 / currentBpm) / ticksPerBeat;
-            
-            nextLongNoteTickTime[slot] += tickInterval;
+            RegisterTickExcellent();
+            nextLongNoteTickTime[slot] += GetTickInterval(nextLongNoteTickTime[slot]);
         }
+    }
+
+    // 롱노트 중간 틱 = EXCELLENT 판정 (콤보 +1, 정확도·점수·EXCELLENT 수에 포함, 판정 이미지/오차는 표시하지 않음)
+    private void RegisterTickExcellent()
+    {
+        if (isFailed) return;
+        processedNotes++;
+        currentAccSum += 1f;
+        cntExcellent++;
+        currentCombo++;
+        if (currentCombo > maxCombo) maxCombo = currentCombo;
+        comboSum += currentCombo - 1;
+        comboAnimTimer = 1f;
+        UpdateUI();
+        ApplyLife("EXCELLENT", true);
+        RecordJudge("EXCELLENT");
+    }
+
+    // 틱 간격 / 틱 수: DataModels 의 LongNoteTickRule (에디터 저장 시 노트 수 계산과 같은 규칙)
+    private double GetTickInterval(double time)
+    {
+        return LongNoteTickRule.Interval(GetBpmAtTime(time));
+    }
+
+    private int CountLongNoteTicks(NoteData head)
+    {
+        return LongNoteTickRule.Count(head.HitTime, GetLongNoteEndTime(head), GetBpmAtTime);
     }
 
     public void DimEntireLongNoteChain(NoteData head)
@@ -1867,17 +2102,55 @@ public class GameManager : MonoBehaviour
         if (noteObjectDict.TryGetValue(data, out NoteObject obj) && obj != null) obj.HideNote();
     }
 
+    // 롱노트를 중간에 놓침: 아직 지나지 않은 틱 + 끝 판정(꼬리)을 모두 MISS 로 셈
+    //  (판정 수 합계 = 전체 노트 수가 되도록. 판정 글자는 꼬리 MISS 한 번만 표시)
     private void FailLongNote(NoteData ln)
     {
-        ProcessHit("MISS"); 
+        int slot = SlotBase(ln) + ln.Lane;
+        double from = (ln.Lane >= 0 && ln.Lane < 4 && activeLongNote[slot] == ln) ? nextLongNoteTickTime[slot] : currentPlayTime;
+        int remaining = CountTicksFrom(from, GetLongNoteEndTime(ln));
+        for (int i = 0; i < remaining; i++) RegisterTickMiss();
+        if (ln.NextLongNote != null && !ln.NextLongNote.IsHit) ProcessHit("MISS"); // 꼬리
         DimEntireLongNoteChain(ln);
         ClearActiveLongNote(ln);
     }
 
+    // 롱노트 머리를 놓침: 머리 + 모든 틱 + 꼬리를 MISS 로 셈
     public void MissLongNoteHead(NoteData headNote)
     {
-        ProcessHit("MISS"); 
+        ProcessHit("MISS"); // 머리
+        if (headNote.NextLongNote != null && !headNote.NextLongNote.IsHit)
+        {
+            int ticks = CountLongNoteTicks(headNote);
+            for (int i = 0; i < ticks; i++) RegisterTickMiss();
+            ProcessHit("MISS"); // 꼬리
+        }
         DimEntireLongNoteChain(headNote);
+    }
+
+    // time 부터 끝까지 남은 틱 수 (ProcessLongNoteTick 과 같은 규칙)
+    private int CountTicksFrom(double time, double endTime)
+    {
+        int count = 0;
+        double t = time;
+        while (t < endTime - LongNoteTickRule.EndMargin && count < 100000)
+        {
+            count++;
+            t += GetTickInterval(t);
+        }
+        return count;
+    }
+
+    // 놓친 롱노트 틱 = MISS (콤보 끊김, MISS 수 · 정확도에 포함, LIFE 감소는 일반 MISS 의 10%, 판정 글자는 표시하지 않음)
+    private void RegisterTickMiss()
+    {
+        if (isFailed) return;
+        processedNotes++;
+        cntMiss++;
+        currentCombo = 0;
+        UpdateUI();
+        ApplyLife("MISS", true);
+        RecordJudge("MISS");
     }
 
     private double GetLongNoteEndTime(NoteData head) { return head.NextLongNote != null ? head.NextLongNote.HitTime : head.HitTime; }
@@ -1893,8 +2166,9 @@ public class GameManager : MonoBehaviour
         else if (absDiff <= W_GOOD) ProcessHit("GOOD", signedMs, true);
         else ProcessHit("BAD", signedMs, true);
 
-        if (msDiff >= CoreManager.Instance.CurrentSettings.judgeoverrange && absDiff <= W_BAD)
+        if (CoreManager.Instance.CurrentSettings.ShowFastSlow && msDiff >= CoreManager.Instance.CurrentSettings.judgeoverrange && absDiff <= W_BAD)
         {
+            if (simpleSkin != null) simpleSkin.OnFastSlow(diff > 0, msDiff);
             if (fastSlowDirectionText != null && fastSlowValueText != null)
             {
                 bool isFast = diff > 0;
@@ -1912,6 +2186,7 @@ public class GameManager : MonoBehaviour
 
     public void ProcessHit(string judge, double signedErrorMs = 0.0, bool hasTiming = false)
     {
+        if (isFailed) return; // FAILED 이후의 판정은 무시
         processedNotes++;
         float accMultiplier = 0f;
 
@@ -1923,6 +2198,7 @@ public class GameManager : MonoBehaviour
             case "MISS": accMultiplier = 0f; currentCombo = 0; break;
         }
         if (currentCombo > maxCombo) maxCombo = currentCombo; 
+        if (currentCombo > 0) comboSum += currentCombo - 1;
 
         currentAccSum += accMultiplier;
 
@@ -1933,10 +2209,46 @@ public class GameManager : MonoBehaviour
             case "BAD": cntBad++; break;
             case "MISS": cntMiss++; break;
         }
-        if (hasTiming && judge != "MISS") { errorSumMs += signedErrorMs; timedCount++; }
+        if (hasTiming && judge != "MISS")
+        {
+            errorSumMs += signedErrorMs; timedCount++;
+            recErrors.Add((float)signedErrorMs);
+            if (judge != "EXCELLENT")
+            {
+                if (signedErrorMs < 0) fastCount++;
+                else if (signedErrorMs > 0) slowCount++;
+            }
+        }
 
         UpdateUI();
         ShowJudgmentImage(judge);
+        if (simpleSkin != null) simpleSkin.OnJudge(judge);
+        ApplyLife(judge, false);
+        RecordJudge(judge);
+    }
+
+    // 결과창 판정 타임라인 / LIFE 그래프용 기록
+    private void RecordJudge(string judge)
+    {
+        byte code;
+        switch (judge)
+        {
+            case "EXCELLENT": code = 0; break;
+            case "GREAT": code = 1; break;
+            case "GOOD": code = 2; break;
+            case "BAD": code = 3; break;
+            default: code = 4; break;
+        }
+        recProgress.Add(PlayProgress());
+        recJudge.Add(code);
+        recLife.Add((float)life);
+    }
+
+    private float PlayProgress()
+    {
+        double s, e;
+        GetPlayRange(out s, out e);
+        return (float)Math.Max(0.0, Math.Min(1.0, (currentPlayTime - s) / Math.Max(0.001, e - s)));
     }
 
     // =====================================================================
@@ -1991,8 +2303,12 @@ public class GameManager : MonoBehaviour
         processedNotes = 0; currentCombo = 0; maxCombo = 0; currentAccSum = 0;
         cntExcellent = cntGreat = cntGood = cntBad = cntMiss = 0;
         errorSumMs = 0; timedCount = 0;
-        chartJudgeCount = 0; chartLastTime = 0; chartEndCursor = 0;
+        chartJudgeCount = 0; chartNoteCount = 0; chartTickCount = 0; chartLastTime = 0; chartEndCursor = 0;
         finishHoldTimer = 0f; finishRoutineStarted = false;
+        clearChecked = false; clearEffectPlaying = false;
+        comboSum = 0; life = 100.0; isFailed = false; failSpeed = 1f; endUiAlpha = 1f;
+        recProgress.Clear(); recJudge.Clear(); recLife.Clear(); recErrors.Clear();
+        fastCount = slowCount = 0; failProgress = -1f;
     }
 
     // =====================================================================
@@ -2097,6 +2413,291 @@ public class GameManager : MonoBehaviour
         return true;
     }
 
+    // =====================================================================
+    //  FULL COMBO / ALL PERFECT
+    //   FULL COMBO  : MAX COMBO = 전체 노트 수
+    //   ALL PERFECT : FULL COMBO 이면서 EXCELLENT 수 = 전체 노트 수 (롱노트 중간 틱 포함)
+    // =====================================================================
+    // ===== 게임 화면 UI(스킨)가 읽어 가는 값 =====
+    public int Combo { get { return currentCombo; } }
+    public double LiveAccuracy { get { return processedNotes == 0 ? 100.0 : (currentAccSum / processedNotes) * 100.0; } }
+    public int LiveScore { get { return ComputeScore(); } }
+
+    // 점수 = 판정 점수 + 콤보 점수
+    //  판정 점수 = 850,000 × (판정 가중치 합) / N            (EXCELLENT 1, GREAT 0.5, GOOD 0.3, BAD 0.05, MISS 0)
+    //  콤보 점수 = 150,000 × 2 / ((N - 1) N) × Σ c(k)        c(k) = n - 1 (n ≠ 0), 0 (n = 0)
+    //  N = 채보 전체 노트 수(롱노트 틱 포함), n = k번째 판정 직후의 콤보.  풀콤보면 Σ c(k) = N(N-1)/2 → 150,000
+    private int ComputeScore()
+    {
+        int n = chartJudgeCount;
+        if (n <= 0) return 0;
+        double judge = JudgeScoreMax * currentAccSum / n;
+        double combo = n > 1 ? ComboScoreMax * 2.0 / ((double)(n - 1) * n) * comboSum : (maxCombo >= 1 ? ComboScoreMax : 0);
+        return Mathf.Clamp((int)Math.Round(judge + combo), 0, MaxScore);
+    }
+
+    // =====================================================================
+    //  LIFE (SIMPLE 스킨 전용, 0 ~ 100, 시작 100)
+    //   EXCELLENT : + (100 - LIFE) × 0.05 × 100%     (롱노트 틱은 × 10%)
+    //   GREAT     : + (100 - LIFE) × 0.05 × 50%
+    //   GOOD      : + (100 - LIFE) × 0.05 × 35%
+    //   BAD       : - 100 × (1750 / N) × 3%
+    //   MISS      : - 100 × (1750 / N) × 5%          N = 전체 노트 수(틱 포함)
+    //   99.3 이상이면 100. 0 이 되면 FAILED.
+    // =====================================================================
+    private void ApplyLife(string judge, bool isTick)
+    {
+        if (!LifeEnabled || isFailed || chartJudgeCount <= 0) return;
+        double gain = (100.0 - life) * 0.05;
+        double damage = 100.0 * (1750.0 / chartJudgeCount);
+        switch (judge)
+        {
+            case "EXCELLENT": life += gain * (isTick ? 0.10 : 1.0); break;
+            case "GREAT": life += gain * 0.5; break;
+            case "GOOD": life += gain * 0.35; break;
+            case "BAD": life -= damage * 0.03; break;
+            case "MISS": life -= damage * 0.05 * (isTick ? 0.10 : 1.0); break; // 놓친 롱노트 틱은 10%
+        }
+        if (life >= 99.3) life = 100.0;
+        if (life <= 0.0)
+        {
+            life = 0.0;
+            StartFail();
+        }
+    }
+
+    private void StartFail()
+    {
+        if (isFailed) return;
+        isFailed = true;
+        failProgress = PlayProgress();
+        finishRoutineStarted = true; // 일반 종료 흐름 대신 FAILED 흐름으로
+        clearChecked = true;
+        for (int i = 0; i < 4; i++) StopHoldEffect(i);
+        if (redFx != null) redFx.StopAll();
+        Debug.Log($"[Life] FAILED at {currentPlayTime:0.00}s");
+        StartCoroutine(FailRoutine());
+    }
+
+    // 채보가 점점 느려지며 멈추고(음악도 함께 늘어지며 사라짐), 레인·노트·UI 가 투명해진 뒤 FAILED 연출 → 결과창
+    private IEnumerator FailRoutine()
+    {
+        float slow = Mathf.Max(0.3f, failSlowDownSeconds);
+        float startPitch = bgmSource != null ? bgmSource.pitch : 1f;
+        float startVol = bgmSource != null ? bgmSource.volume : 1f;
+        bool effectStarted = false, effectDone = false;
+        float t = 0f;
+
+        while (t < slow || !effectDone)
+        {
+            t += Time.unscaledDeltaTime;
+            float p = Mathf.Clamp01(t / slow);
+            failSpeed = 0.5f * (1f + Mathf.Cos(Mathf.PI * p)); // 1 → 0 부드럽게
+
+            if (bgmSource != null)
+            {
+                bgmSource.pitch = Mathf.Lerp(startPitch, 0.3f, p);
+                bgmSource.volume = startVol * (1f - p);
+            }
+            if (mvPlayer != null && mvPlayer.isPlaying) mvPlayer.playbackSpeed = Mathf.Max(0.05f, failSpeed);
+
+            endUiAlpha = 1f - p;
+            ApplyEndFade();
+
+            if (!effectStarted && t >= slow * 0.4f)
+            {
+                effectStarted = true;
+                ClearEffect.Play(transform, ClearEffect.ClearType.Failed, maxCombo, failEffectHoldSeconds, () => effectDone = true);
+            }
+            yield return null;
+        }
+
+        if (bgmSource != null) { bgmSource.Stop(); bgmSource.pitch = startPitch; }
+        if (mvPlayer != null) mvPlayer.Pause();
+        StartCoroutine(FinishToResultRoutine());
+    }
+
+    // =====================================================================
+    //  곡 종료 UI 페이드 (모든 스킨): 마지막 노트 처리 직후 endUiFadeDuration 동안 사라짐
+    //   대상: 기본 UI 컨테이너·레인 그룹·프리키 UI (CanvasGroup), 게임 씬의 모든 스프라이트(배경 제외), SIMPLE 스킨
+    // =====================================================================
+    private IEnumerator EndUiFadeRoutine()
+    {
+        float t = 0f, dur = Mathf.Max(0.01f, endUiFadeDuration);
+        while (t < dur)
+        {
+            t += Time.unscaledDeltaTime;
+            endUiAlpha = 1f - Mathf.Clamp01(t / dur);
+            ApplyEndFade();
+            yield return null;
+        }
+        endUiAlpha = 0f;
+        ApplyEndFade();
+    }
+
+    private void ApplyEndFade()
+    {
+        if (!endFadeCollected) CollectEndFadeTargets();
+
+        // 노트는 NoteObject 가 EndUiAlpha 를 읽어 스스로 투명해진다. 새로 나온 마디선만 추가
+        foreach (var ml in activeMeasureLines)
+        {
+            if (ml == null || ml.go == null) continue;
+            SpriteRenderer sr = ml.go.GetComponent<SpriteRenderer>();
+            if (sr != null && !endFadeSprites.ContainsKey(sr)) endFadeSprites[sr] = sr.color;
+        }
+
+        foreach (var kv in endFadeSprites)
+        {
+            if (kv.Key == null) continue;
+            Color c = kv.Value;
+            kv.Key.color = new Color(c.r, c.g, c.b, c.a * endUiAlpha);
+        }
+        foreach (var kv in endFadeGroups)
+        {
+            if (kv.Key != null) kv.Key.alpha = kv.Value * endUiAlpha;
+        }
+    }
+
+    private void CollectEndFadeTargets()
+    {
+        endFadeCollected = true;
+
+        var keep = new HashSet<Transform>();
+        if (bgRenderer != null) keep.Add(bgRenderer.transform);
+        if (keepAtEnd != null) foreach (var go in keepAtEnd) if (go != null) keep.Add(go.transform);
+        if (simpleSkin != null) keep.Add(simpleSkin.transform); // SIMPLE 스킨은 EndUiAlpha 를 직접 읽어 사라짐
+        if (infoHud != null) keep.Add(infoHud.transform);       // Information UI 도 스스로 사라짐
+        if (redFx != null) keep.Add(redFx.transform);           // RED 이펙트도 스스로 사라짐
+
+        foreach (var root in gameObject.scene.GetRootGameObjects())
+        {
+            foreach (var sr in root.GetComponentsInChildren<SpriteRenderer>(true))
+            {
+                if (IsUnder(sr.transform, keep)) continue;
+                if (IsScreenFillingSprite(sr)) continue; // 화면 전체를 덮는 배경·배경 어둡게 하는 막은 배경으로 취급
+                if (sr.GetComponentInParent<NoteObject>() != null) continue; // 노트는 스스로 처리
+                endFadeSprites[sr] = sr.color;
+            }
+        }
+
+        ProtectBackgroundImages(basicUIContainer);
+        ProtectBackgroundImages(freeKeyUIContainer);
+        if (laneGroup != null) ProtectBackgroundImages(laneGroup.gameObject);
+        AddFadeGroup(basicUIContainer);
+        AddFadeGroup(freeKeyUIContainer);
+        if (laneGroup != null && simpleSkin == null) endFadeGroups[laneGroup] = laneGroup.alpha;
+        if (fadeOutAtEnd != null)
+        {
+            foreach (var go in fadeOutAtEnd)
+            {
+                if (go == null) continue;
+                if (go.transform is RectTransform) AddFadeGroup(go);
+                else foreach (var sr in go.GetComponentsInChildren<SpriteRenderer>(true)) endFadeSprites[sr] = sr.color;
+            }
+        }
+    }
+
+    // 카메라 화면의 80% 이상을 덮는 스프라이트 = 배경(또는 배경을 어둡게 하는 반투명 막) → 사라지지 않음
+    private bool IsScreenFillingSprite(SpriteRenderer sr)
+    {
+        Camera cam = SceneCamera;
+        if (sr == null || cam == null || !cam.orthographic) return false;
+        float h = cam.orthographicSize * 2f, w = h * cam.aspect;
+        Vector3 size = sr.bounds.size;
+        return size.x >= w * 0.8f && size.y >= h * 0.8f;
+    }
+
+    // UI 안의 '화면 전체를 덮는 어두운 이미지'(배경 어둡게 하는 막)는 부모가 투명해져도 그대로 남도록
+    // CanvasGroup.ignoreParentGroups 로 부모 투명도와 분리한다
+    private void ProtectBackgroundImages(GameObject container)
+    {
+        if (container == null) return;
+        Vector3[] a = new Vector3[4], b = new Vector3[4];
+        foreach (var img in container.GetComponentsInChildren<UnityEngine.UI.Image>(true))
+        {
+            if (img.canvas == null) continue;
+            Color c = img.color;
+            if (c.r > 0.25f || c.g > 0.25f || c.b > 0.25f) continue; // 어두운 색만
+            RectTransform canvasRt = img.canvas.rootCanvas.transform as RectTransform;
+            if (canvasRt == null) continue;
+            img.rectTransform.GetWorldCorners(a);
+            canvasRt.GetWorldCorners(b);
+            float iw = a[2].x - a[0].x, ih = a[2].y - a[0].y;
+            float cw = b[2].x - b[0].x, ch = b[2].y - b[0].y;
+            if (iw < cw * 0.8f || ih < ch * 0.8f) continue;     // 화면 대부분을 덮는 것만
+
+            CanvasGroup g = img.GetComponent<CanvasGroup>();
+            if (g == null) g = img.gameObject.AddComponent<CanvasGroup>();
+            g.ignoreParentGroups = true;
+            g.blocksRaycasts = false;
+            g.interactable = false;
+        }
+    }
+
+    private void AddFadeGroup(GameObject go)
+    {
+        if (go == null) return;
+        CanvasGroup cg = go.GetComponent<CanvasGroup>();
+        if (cg == null) cg = go.AddComponent<CanvasGroup>();
+        endFadeGroups[cg] = cg.alpha;
+    }
+
+    private static bool IsUnder(Transform t, HashSet<Transform> roots)
+    {
+        for (Transform p = t; p != null; p = p.parent) if (roots.Contains(p)) return true;
+        return false;
+    }
+
+    // 게임 종료 시점: 마지막 노트(롱노트는 꼬리)가 판정선을 지나 판정 범위(W_BAD) 밖으로 벗어났을 때.
+    //  사용자가 마지막 노트를 일찍 처리했거나 롱노트를 놓아 버려도, 이 시각이 되기 전에는 끝나지 않는다.
+    //  (+0.05초: 같은 프레임에 처리되는 마지막 MISS 판정이 반영된 뒤에 결과를 정하도록)
+    private bool IsAllNotesProcessed()
+    {
+        if (notes.Count == 0) return currentPlayTime >= 1.0;
+        if (currentPlayTime < chartJudgeEndTime + W_BAD + 0.05) return false;
+        if (currentPlayTime >= chartJudgeEndTime + W_BAD + 1.0) return true; // 안전장치
+        for (int s = 0; s < activeLongNote.Length; s++) if (activeLongNote[s] != null) return false;
+        return true;
+    }
+    public Camera SceneCamera { get { return mainCam != null ? mainCam : Camera.main; } }
+
+    // 진행 막대 / 남은 시간 기준: 시작 = min(0, 음악 시작), 끝 = max(마지막 노트 + 1초, 음악 끝)
+    public void GetPlayRange(out double start, out double end)
+    {
+        double trigger = songStartOffset - CoreManager.Instance.CurrentSettings.AudioOffset;
+        start = Math.Min(0.0, trigger);
+        double audioEnd = (bgmSource != null && bgmSource.clip != null) ? trigger + bgmSource.clip.length : 0.0;
+        end = Math.Max(chartLastTime + 1.0, audioEnd);
+    }
+
+    private ClearEffect.ClearType GetClearType()
+    {
+        if (chartJudgeCount <= 0 || maxCombo < chartJudgeCount) return ClearEffect.ClearType.None;
+        return cntExcellent >= chartJudgeCount ? ClearEffect.ClearType.AllPerfect : ClearEffect.ClearType.FullCombo;
+    }
+
+    // 마지막 노트까지 판정이 끝난 순간 한 번 검사해서 연출을 띄운다
+    private void UpdateClearEffect()
+    {
+        if (clearChecked || currentState != GameState.Playing || isFailed) return;
+        if (!IsAllNotesProcessed()) return;
+        clearChecked = true;
+
+        // 마지막 노트가 처리되자마자 게임 화면 UI 가 사라지기 시작 (FC / AP 연출은 동시에 시작)
+        StartCoroutine(EndUiFadeRoutine());
+
+        ClearEffect.ClearType type = GetClearType();
+        Debug.Log($"[Clear] {type}  (MAX COMBO {maxCombo} / EXCELLENT {cntExcellent} / TOTAL {chartJudgeCount})");
+        if (!showClearEffect) return;
+        if (CoreManager.Instance.IsAutoPlay && !showClearEffectInAutoPlay) return;
+
+        // 풀콤보가 아니면 일반 클리어 연출 (TRACK COMPLETE)
+        ClearEffect.ClearType fx = type == ClearEffect.ClearType.None ? ClearEffect.ClearType.Clear : type;
+        clearEffectPlaying = true;
+        ClearEffect.Play(transform, fx, maxCombo, clearEffectHoldSeconds, () => clearEffectPlaying = false);
+    }
+
     private bool IsSongFinished()
     {
         if (bgmSource == null || bgmSource.clip == null) return currentPlayTime >= chartLastTime + 3.0;
@@ -2106,23 +2707,104 @@ public class GameManager : MonoBehaviour
         return !bgmSource.isPlaying && currentPlayTime >= triggerTime + bgmSource.clip.length - 0.25;
     }
 
+    // MV 가 끝났는가
+    //  · 영상 끝 이벤트(loopPointReached) 또는 재생 오류 → 끝
+    //  · 재생이 멈춘 채 영상 시각이 2초 넘게 그대로 → 끝 (끝 이벤트가 안 오는 파일 대비)
+    //  · 최후 안전장치: 음악 기준으로 영상 길이 + 10초가 지남
+    //  [버그 수정] 예전에는 '음악 기준 시각이 영상 길이 + 1초'를 넘으면 바로 끝으로 봐서,
+    //   영상이 음악보다 조금 늦게 재생되거나 파일이 길이를 짧게 알려 주는 MV 는 끝나기 전에 잘렸다.
     private bool IsMvFinished()
     {
         if (!mvActive || mvFinished) return true;
-
-        // 안전장치: 종료 이벤트가 오지 않아도 영상 길이를 넘으면 종료로 본다
-        if (isFullMusicStarted && mvPlayer != null && mvPlayer.length > 0.0) {
+        if (!isFullMusicStarted || mvPlayer == null) return false;
+        if (!mvPlayer.isPlaying && mvStallTimer > 2f) return true;
+        if (mvPlayer.length > 0.0) {
             double triggerTime = songStartOffset - CoreManager.Instance.CurrentSettings.AudioOffset;
-            if (currentPlayTime - triggerTime >= mvPlayer.length + 1.0) return true;
+            if (currentPlayTime - triggerTime >= mvPlayer.length + 10.0) return true;
         }
         return false;
+    }
+
+    // =====================================================================
+    //  MV 동기화: 영상이 음악보다 늦거나 빨라지면 재생 속도를 살짝 조절해 따라잡음
+    //   (0.04초 이내는 그대로, 1초 넘게 벌어지면 그 위치로 바로 이동)
+    //  [버그 수정] 영상은 음악과 따로 재생되기 때문에, 디코딩이 밀리면 곡이 진행될수록 점점 어긋났다.
+    // =====================================================================
+    private float mvSyncTimer, mvStallTimer;
+    private double mvLastTime = -1.0;
+
+    private void SyncMv(float dt)
+    {
+        if (!mvActive || mvFinished || mvPlayer == null || !isFullMusicStarted) return;
+
+        // 영상 시각이 멈춰 있는 시간 (끝 판정용)
+        if (Math.Abs(mvPlayer.time - mvLastTime) > 0.0001) { mvLastTime = mvPlayer.time; mvStallTimer = 0f; }
+        else if (currentState == GameState.Playing) mvStallTimer += dt;
+
+        if (currentState != GameState.Playing || isFailed || !mvPlayer.isPlaying) return;
+        mvSyncTimer += dt;
+        if (mvSyncTimer < 0.25f) return;
+        mvSyncTimer = 0f;
+
+        double triggerTime = songStartOffset - CoreManager.Instance.CurrentSettings.AudioOffset;
+        double expected = currentPlayTime - triggerTime;
+        if (expected < 0.0 || (mvPlayer.length > 0.0 && expected > mvPlayer.length - 0.3)) { SetMvSpeed(1f); return; }
+
+        double diff = expected - mvPlayer.time;   // + : 영상이 늦음
+        if (Math.Abs(diff) > 1.0 && mvPlayer.canSetTime) { mvPlayer.time = expected; SetMvSpeed(1f); }
+        else if (Math.Abs(diff) > 0.04) SetMvSpeed(Mathf.Clamp(1f + (float)diff * 0.5f, 0.85f, 1.15f));
+        else SetMvSpeed(1f);
+    }
+
+    private void SetMvSpeed(float speed)
+    {
+        if (mvPlayer != null && mvPlayer.canSetPlaybackSpeed && Mathf.Abs(mvPlayer.playbackSpeed - speed) > 0.001f) mvPlayer.playbackSpeed = speed;
+    }
+
+    // =====================================================================
+    //  음악 시각 보정: 화면 시계는 AudioSettings.dspTime 기준인데, 음악 재생이 잠깐씩 밀리면(디코딩 지연 등)
+    //   실제 재생 위치와 점점 벌어진다. 실제 재생 위치(timeSamples)와의 차이를 지켜보다가
+    //   처음 1.5초 동안 잰 기준 차이보다 0.015초 이상 벌어지면 시계 기준(dspStartTime)을 아주 천천히 옮겨 맞춘다.
+    //  [버그 수정] 게임을 진행할수록 노트와 음악의 싱크가 틀어지던 문제
+    // =====================================================================
+    private double driftAvg, driftBase;
+    private int driftSamples, driftOutliers;
+
+    private void ResetAudioDrift() { driftSamples = 0; driftOutliers = 0; driftAvg = 0; driftBase = 0; }
+
+    private void CorrectAudioDrift()
+    {
+        if (bgmSource == null || bgmSource.clip == null || bgmSource.clip.frequency <= 0) return;
+        double sampleT = bgmSource.timeSamples / (double)bgmSource.clip.frequency;
+        double dspT = AudioSettings.dspTime - dspStartTime;
+        double err = sampleT - dspT;
+        if (Math.Abs(err) > 2.0) return;   // 반복 재생 등 이상한 값은 무시
+        // 한 프레임의 튀는 값(버퍼 단위로 갱신되는 timeSamples)은 평균에 거의 반영되지 않게
+        //  (계속 그 값이면 진짜로 밀린 것이므로 0.5초 뒤부터는 반영)
+        if (driftSamples > 0 && Math.Abs(err - driftAvg) > 0.25) { if (++driftOutliers < 30) return; }
+        else driftOutliers = 0;
+        driftAvg = driftSamples == 0 ? err : driftAvg + (err - driftAvg) * 0.03;
+        driftSamples++;
+        if (driftSamples == 90) driftBase = driftAvg;            // 처음 약 1.5초: 출력 지연 등으로 생기는 기준 차이
+        else if (driftSamples > 90)
+        {
+            // 0.015초 넘게 벌어졌을 때만, 한 프레임에 최대 1ms 씩 아주 천천히 옮김
+            //  → 노트가 순간이동하지 않고 눈에 띄지 않게 따라잡음
+            double dev = driftAvg - driftBase;
+            if (Math.Abs(dev) > 0.015)
+            {
+                double step = Math.Max(-0.001, Math.Min(0.001, dev * 0.05));
+                dspStartTime -= step;
+                driftAvg -= step;
+            }
+        }
     }
 
     private void UpdateFinishCondition()
     {
         if (currentState != GameState.Playing || finishRoutineStarted) return;
 
-        if (IsChartFinished() && IsSongFinished() && IsMvFinished()) {
+        if (IsChartFinished() && IsSongFinished() && IsMvFinished() && !clearEffectPlaying) {
             finishHoldTimer += Time.unscaledDeltaTime;
             if (finishHoldTimer >= resultDelaySeconds) {
                 finishRoutineStarted = true;
@@ -2133,14 +2815,20 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    private double PlayLengthSeconds()
+    {
+        double s, e;
+        GetPlayRange(out s, out e);
+        return Math.Max(0.0, e - s);
+    }
+
     private ResultData BuildResultData()
     {
         int levelId = CoreManager.Instance.CurrentLevelId;
 
         double acc = processedNotes == 0 ? 100.0 : (currentAccSum / processedNotes) * 100.0;
 
-        int score = 0;
-        if (chartJudgeCount > 0) score = Mathf.Clamp((int)Math.Round(MaxScore * currentAccSum / chartJudgeCount), 0, MaxScore);
+        int score = ComputeScore();
 
         // 전체 판정 오차 = (모든 판정의 부호 있는 ms 합) / 전체 노트 수. 롱노트 중간 틱은 포함하지 않는다.
         int denom = missCountsInErrorAverage ? (timedCount + cntMiss) : timedCount;
@@ -2158,9 +2846,27 @@ public class GameManager : MonoBehaviour
             Accuracy = acc,
             Excellent = cntExcellent, Great = cntGreat, Good = cntGood, Bad = cntBad, Miss = cntMiss,
             MaxCombo = maxCombo,
+            TotalNotes = chartJudgeCount,
+            IsFullCombo = !isFailed && GetClearType() != ClearEffect.ClearType.None,
+            IsAllPerfect = !isFailed && GetClearType() == ClearEffect.ClearType.AllPerfect,
+            IsFailed = isFailed,
             AverageErrorMs = avgError,
             ErrorSampleCount = denom,
-            IsAutoPlay = CoreManager.Instance.IsAutoPlay
+            IsAutoPlay = CoreManager.Instance.IsAutoPlay,
+
+            // 결과창 그래프용
+            Fast = fastCount,
+            Slow = slowCount,
+            TimelineProgress = recProgress.ToArray(),
+            TimelineJudge = recJudge.ToArray(),
+            LifeHistory = recLife.ToArray(),
+            ErrorsMs = recErrors.ToArray(),
+            HasLife = LifeEnabled,
+            FinalLife = (float)life,
+            FailedAtProgress = failProgress,
+            LengthSeconds = (float)PlayLengthSeconds(),
+            IsMv = CoreManager.Instance.IsMvOn,
+            Speed = SettingsStore.Current.SettingSpeed
         };
     }
 
@@ -2172,7 +2878,7 @@ public class GameManager : MonoBehaviour
 
         ResultData result = BuildResultData();
 
-        yield return FadeBlackOverlay(resultFadeDuration, resultTransitionOverlay);
+        yield return FadeBlackOverlay(resultOverlayFadeSeconds, resultTransitionOverlay);
 
         if (bgmSource != null) bgmSource.Stop();
         if (mvPlayer != null) mvPlayer.Stop();
