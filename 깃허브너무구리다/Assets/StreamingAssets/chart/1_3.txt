@@ -1,11 +1,8 @@
 ﻿BPM, 60
-OFFSET, 0.000
+MUSICOFFSET, 0
 KeyMode: 4
 SPEED, 1.00
-SPEED, 1, 5, 8, 2, 2.00, SHOW
-SPEED, 2, 1, 2, 2, 1.00, SHOW
-NOTE, 1, 1, 4, 1, 0, 0, 0
-NOTE, 1, 5, 16, 0, 1, 0, 0
-NOTE, 1, 3, 8, 0, 0, 1, 0
-NOTE, 1, 7, 16, 0, 0, 0, 1
-NOTE, 4, 7, 16, 1, 1, 1, 1
+FOLD, 1, 7, 16, 0.5
+UNFOLD, 5, 13, 16, 1.4
+NOTE, 1, 0, 1, 2, 0, 0, 0
+NOTE, 1, 9, 16, 3, 0, 0, 0

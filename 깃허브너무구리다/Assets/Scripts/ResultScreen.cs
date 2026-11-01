@@ -18,7 +18,7 @@ public class ResultFonts
     [Tooltip("숫자: 점수 · 정확도 · 콤보 · 판정 개수")] public TMP_FontAsset number;
     [Tooltip("작은 라벨: RESULT · SCORE · ACCURACY · 판정 이름 등")] public TMP_FontAsset label;
     [Tooltip("클리어 상태: ALL PERFECT / FULL COMBO / CLEAR / FAILED")] public TMP_FontAsset status;
-    [Tooltip("랭크 글자 (SSS, AA ...)")] public TMP_FontAsset rank;
+    [Tooltip("(지금은 안 씀 — 랭크 시스템 삭제)")] public TMP_FontAsset rank;
 }
 
 // ============================================================
@@ -29,8 +29,9 @@ public class ResultFonts
 //
 //  [화면 구성 (1920 x 1080 기준)]  흰색 / 회색 위주, 색은 난이도 이름과 클리어 상태에만
 //   왼쪽    자켓(squareimg, 둥근 모서리) · 난이도 · 곡명 · 작곡가
-//   오른쪽  클리어 상태 · 점수 + 랭크 (+ NEW RECORD)
-//           ACCURACY / MAX COMBO / BEST
+//   오른쪽  클리어 상태 · 점수 | 최고 점수 (이번 점수와의 차이 · NEW BEST)
+//           TP (Technical Point, 예전 ACCURACY) / MAX COMBO
+//   (랭크 시스템은 없앰)
 //           판정 5종 개수 · FAST / SLOW / 평균 오차
 //   아래    R  RETRY      ENTER  CONTINUE
 //
@@ -54,9 +55,6 @@ public class ResultScreen : MonoBehaviour
     [Tooltip("숫자가 올라갈 때 글자 폭이 흔들리지 않도록 고정 폭으로 표시")]
     public bool monospaceNumbers = true;
 
-    [Header("랭크 (위에서부터 점수 이상이면 해당 랭크, FAILED 는 F)")]
-    public string[] rankNames = { "SSS", "SS", "S", "AAA", "AA", "A", "B", "C", "D" };
-    public int[] rankScores = { 990000, 970000, 950000, 920000, 880000, 800000, 700000, 600000, 0 };
 
     // ----- 색 (흰색 단계만) -----
     private static readonly Color TextMain = new Color(0.96f, 0.97f, 1f, 1f);
@@ -75,7 +73,6 @@ public class ResultScreen : MonoBehaviour
     private ScoreRecord before;      // 이번 판 반영 전 기록 (첫 플레이면 null)
     private bool isNewRecord;
     private int clearKind;           // 0 FAILED 1 CLEAR 2 FC 3 AP
-    private string rankText;
     private int total;
     private readonly int[] judgeValues = new int[5];
 
@@ -90,7 +87,7 @@ public class ResultScreen : MonoBehaviour
 
     private TextMeshProUGUI scoreText, accText, comboText, statusText;
     private readonly TextMeshProUGUI[] judgeCounts = new TextMeshProUGUI[5];
-    private CanvasGroup statusGroup, rankGroup, newRecordGroup;
+    private CanvasGroup statusGroup, bestGroup;
 
     // ----- 상태 -----
     private float clock;
@@ -107,13 +104,13 @@ public class ResultScreen : MonoBehaviour
         bool standalone = r == null;
         if (r == null) r = ResultData.CreateSample(); // 결과 씬만 단독 실행했을 때 확인용
 
-        // 최고 기록: 단독 실행(샘플)일 때는 저장하지 않음
-        before = standalone ? ScoreRecords.Get(r.SongId, r.LevelId) : ScoreRecords.Submit(r);
-        isNewRecord = !r.IsAutoPlay && !standalone && r.Score > 0 && (before == null || r.Score > before.BestScore);
+        // 최고 기록: 단독 실행(샘플) · 시작 시간 조정(중간부터 시작)한 판은 저장하지 않음
+        bool noSave = standalone || r.IsMidStart;
+        before = noSave ? ScoreRecords.Get(r.SongId, r.LevelId) : ScoreRecords.Submit(r);
+        isNewRecord = !r.IsAutoPlay && !noSave && r.Score > 0 && (before == null || r.Score > before.BestScore);
 
         total = Mathf.Max(1, r.TotalNotes > 0 ? r.TotalNotes : r.Excellent + r.Great + r.Good + r.Bad + r.Miss);
         clearKind = r.ClearRank;
-        rankText = GetRank();
         judgeValues[0] = r.Excellent; judgeValues[1] = r.Great; judgeValues[2] = r.Good; judgeValues[3] = r.Bad; judgeValues[4] = r.Miss;
 
         SettingsUIKit.EnsureFont();
@@ -125,15 +122,6 @@ public class ResultScreen : MonoBehaviour
     void OnDestroy()
     {
         foreach (var t in ownedTextures) if (t != null) Destroy(t);
-    }
-
-    private string GetRank()
-    {
-        if (r.IsFailed) return "F";
-        int n = Mathf.Min(rankNames.Length, rankScores.Length);
-        for (int i = 0; i < n; i++)
-            if (r.Score >= rankScores[i]) return rankNames[i];
-        return n > 0 ? rankNames[n - 1] : "-";
     }
 
     // =====================================================================
@@ -204,6 +192,7 @@ public class ResultScreen : MonoBehaviour
         string opt = "SPEED " + r.Speed.ToString("0.0#", CultureInfo.InvariantCulture);
         if (r.IsMv) opt += "     MV";
         if (r.IsAutoPlay) opt += "     AUTO PLAY";
+        if (r.IsMidStart) opt += "     START " + r.MidStartSeconds.ToString("0.0", CultureInfo.InvariantCulture) + "s";
         TextMeshProUGUI o = T(g, opt, 18, TextAlignmentOptions.MidlineRight, TextDim, fonts.label, FontStyles.Bold);
         o.characterSpacing = 6f;
         Box(o.rectTransform, 1160, 90, 600, 36);
@@ -252,51 +241,74 @@ public class ResultScreen : MonoBehaviour
         statusGroup = st.gameObject.AddComponent<CanvasGroup>();
         string[] names = { "FAILED", "CLEAR", "FULL COMBO", "ALL PERFECT" };
         Color sc = clearKind == 0 ? FailColor : (clearKind == 1 ? TextSub : TextMain);
-        statusText = T(st, names[clearKind], 34, TextAlignmentOptions.MidlineLeft, sc, fonts.status, FontStyles.Bold);
+        // ALL JUST (TP 100%) 는 ALL PERFECT 보다 위
+        statusText = T(st, r.IsAllJust ? "ALL JUST" : names[clearKind], 34, TextAlignmentOptions.MidlineLeft, sc, fonts.status, FontStyles.Bold);
         statusText.characterSpacing = 14f;
         SettingsUIKit.Stretch(statusText.rectTransform);
 
-        // ---- 점수 + 랭크 ----
+        // ---- 점수 | 최고 점수 ----
+        const float BestW = 300f;
         RectTransform g1 = Group("Score", 0.3f, 0.5f, new Vector2(30f, 0f));
         TextMeshProUGUI sl = T(g1, "SCORE", 16, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
         sl.characterSpacing = 10f;
         Box(sl.rectTransform, X, 268, 120, 24);
         scoreText = T(g1, Mono("0"), 110, TextAlignmentOptions.MidlineLeft, TextMain, fonts.number, FontStyles.Bold);
-        Box(scoreText.rectTransform, X - 6, 290, 760, 124);
+        Box(scoreText.rectTransform, X - 6, 290, W - BestW - 40, 124);
 
-        RectTransform nr = SettingsUIKit.Rect("NewRecord", stage);
-        Box(nr, X + 120, 268, 200, 24);
-        newRecordGroup = nr.gameObject.AddComponent<CanvasGroup>();
-        TextMeshProUGUI nt = T(nr, "NEW RECORD", 16, TextAlignmentOptions.MidlineLeft, TextMain, fonts.label, FontStyles.Bold);
-        nt.characterSpacing = 8f;
-        SettingsUIKit.Stretch(nt.rectTransform);
-        nr.gameObject.SetActive(isNewRecord);
+        // 최고 점수 묶음 (오른쪽): 세로 구분선 · BEST · 이전 최고 점수 · 이번 점수와의 차이 / NEW BEST
+        RectTransform bs = SettingsUIKit.Rect("Best", stage);
+        Box(bs, X + W - BestW, 268, BestW, 146);
+        bestGroup = bs.gameObject.AddComponent<CanvasGroup>();
+        Image div = SettingsUIKit.Img("Divider", bs, LineColor);
+        Box(div.rectTransform, -28, 6, 1, 134);
+        TextMeshProUGUI bl = T(bs, "BEST", 16, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
+        bl.characterSpacing = 10f;
+        Box(bl.rectTransform, 0, 0, BestW, 24);
 
-        RectTransform rk = SettingsUIKit.Rect("Rank", stage);
-        Box(rk, X + W - 260, 268, 260, 146);
-        rankGroup = rk.gameObject.AddComponent<CanvasGroup>();
-        TextMeshProUGUI rl = T(rk, "RANK", 16, TextAlignmentOptions.TopRight, TextDim, fonts.label, FontStyles.Bold);
-        rl.characterSpacing = 10f;
-        Box(rl.rectTransform, 0, 0, 260, 24);
-        TextMeshProUGUI rt = T(rk, rankText, 110, TextAlignmentOptions.MidlineRight, clearKind == 0 ? FailColor : TextMain, fonts.rank, FontStyles.Bold);
-        Box(rt.rectTransform, 0, 22, 260, 124);
-        Shrink(rt, 0.6f);
+        bool hasBest = before != null && !r.IsAutoPlay;
+        string bestStr = hasBest ? before.BestScore.ToString("N0", CultureInfo.InvariantCulture) : "-";
+        TextMeshProUGUI bv = T(bs, Mono(bestStr), 52, TextAlignmentOptions.MidlineLeft, hasBest ? TextMain : TextDim, fonts.number, FontStyles.Bold);
+        Box(bv.rectTransform, -2, 28, BestW, 66);
+        Shrink(bv, 0.6f);
+
+        if (isNewRecord)
+        {
+            // NEW BEST: 흰 알약 + 검정 글자, 옆에 올라간 점수
+            string up = before != null ? "+" + (r.Score - before.BestScore).ToString("N0", CultureInfo.InvariantCulture) : "FIRST PLAY";
+            TextMeshProUGUI pillText = T(bs, "NEW BEST", 15, TextAlignmentOptions.Center, new Color(0.05f, 0.05f, 0.05f, 1f), fonts.label, FontStyles.Bold);
+            pillText.characterSpacing = 6f;
+            float pw = pillText.GetPreferredValues("NEW BEST").x + 28f;
+            Image pill = SettingsUIKit.Img("NewBest", bs, Color.white);
+            pill.sprite = roundSprite; pill.type = Image.Type.Sliced; pill.pixelsPerUnitMultiplier = 32f / 13f;
+            Box(pill.rectTransform, 0, 104, pw, 28);
+            pillText.transform.SetParent(pill.transform, false);
+            SettingsUIKit.Stretch(pillText.rectTransform);
+            TextMeshProUGUI upText = T(bs, Mono(up), 22, TextAlignmentOptions.MidlineLeft, TextMain, fonts.number, FontStyles.Bold);
+            Box(upText.rectTransform, pw + 12, 104, BestW - pw - 12, 28);
+        }
+        else
+        {
+            string note;
+            if (r.IsAutoPlay) note = "AUTO PLAY  ·  NOT SAVED";
+            else if (r.IsMidStart) note = "PRACTICE  ·  NOT SAVED";
+            else if (before == null) note = "";
+            else
+            {
+                int d = r.Score - before.BestScore;
+                note = (d >= 0 ? "+" : "-") + Mathf.Abs(d).ToString("N0", CultureInfo.InvariantCulture);
+            }
+            TextMeshProUGUI nt = T(bs, note, 22, TextAlignmentOptions.MidlineLeft, TextSub, fonts.number, FontStyles.Bold);
+            if (r.IsAutoPlay || r.IsMidStart) { nt.fontSize = 15; nt.characterSpacing = 6f; nt.font = fonts.label != null ? fonts.label : nt.font; }
+            Box(nt.rectTransform, 0, 104, BestW, 28);
+        }
 
         // ---- 구분선 ----
         RectTransform g2 = Group("Stats", 0.45f, 0.5f, new Vector2(30f, 0f));
         Line(g2, X, 440, W);
 
-        // ---- ACCURACY / MAX COMBO / BEST ----
-        accText = Stat(g2, "ACCURACY", X, 466);
-        comboText = Stat(g2, "MAX COMBO", X + 340, 466);
-        TextMeshProUGUI best = Stat(g2, "BEST", X + 680, 466);
-        if (r.IsAutoPlay || before == null) best.text = "-";
-        else
-        {
-            int d = r.Score - before.BestScore;
-            best.text = Mono(before.BestScore.ToString("N0", CultureInfo.InvariantCulture))
-                      + "  <size=50%><color=#FFFFFF8C>" + (d >= 0 ? "+" : "-") + Mathf.Abs(d).ToString("N0", CultureInfo.InvariantCulture) + "</color></size>";
-        }
+        // ---- ACCURACY / MAX COMBO (최고 점수는 위 점수 옆으로 옮김) ----
+        accText = Stat(g2, "TP", X, 466);
+        comboText = Stat(g2, "MAX COMBO", X + 420, 466);
 
         Line(g2, X, 580, W);
 
@@ -310,6 +322,13 @@ public class ResultScreen : MonoBehaviour
             Box(l.rectTransform, X, y, 200, 44);
             judgeCounts[k] = T(g3, Mono("0"), 28, TextAlignmentOptions.MidlineRight, TextMain, fonts.number, FontStyles.Bold);
             Box(judgeCounts[k].rectTransform, X + 200, y, 220, 44);
+            if (k == 0)
+            {
+                // PERFECT 중 JUST PERFECT 수 (±15ms, 롱노트 중간 판정 포함)
+                TextMeshProUGUI js = T(g3, "JUST  " + r.JustPerfect.ToString("N0", CultureInfo.InvariantCulture), 14, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
+                js.characterSpacing = 4f;
+                Box(js.rectTransform, X + 436, y, 140, 44);
+            }
         }
 
         double avg = r.AverageErrorMs;
@@ -351,16 +370,17 @@ public class ResultScreen : MonoBehaviour
         TextButton(g, "R", "RETRY", x, () => Leave(GoRetry));
     }
 
-    // 글자만 있는 버튼 (마우스를 올리면 살짝 밝아짐)
+    // 키캡 + 설명 버튼 ( [ R ] RETRY ) — 마우스를 올리면 바탕이 살짝 밝아짐
     private float TextButton(RectTransform parent, string key, string label, float rightX, Action onClick)
     {
-        string txt = "<color=#FFFFFF52>" + key + "</color>   " + label;
-        TextMeshProUGUI t = T(parent, txt, 18, TextAlignmentOptions.Center, TextMain, fonts.info, FontStyles.Bold);
-        t.characterSpacing = 6f;
-        float w = t.GetPreferredValues(txt).x + 36f;
         Image bg = SettingsUIKit.Img("Btn_" + label, parent, Color.white, true);
-        bg.sprite = roundSprite; bg.type = Image.Type.Sliced; bg.pixelsPerUnitMultiplier = 32f / 20f;
-        Box(bg.rectTransform, rightX - w, 930, w, 40);
+        bg.sprite = roundSprite; bg.type = Image.Type.Sliced; bg.pixelsPerUnitMultiplier = 32f / 12f;
+        RectTransform hint = KeyHintUI.Build(bg.rectTransform, fonts.info, fonts.info,
+            new[] { new KeyHintUI.Item(label, key) }, 18f, 0, TextMain);
+        float w = hint.sizeDelta.x + 28f;
+        Box(bg.rectTransform, rightX - w, 926, w, 48);
+        hint.anchorMin = hint.anchorMax = new Vector2(0.5f, 0.5f);
+        hint.anchoredPosition = Vector2.zero;
         Button b = bg.gameObject.AddComponent<Button>();
         b.targetGraphic = bg;
         ColorBlock cb = b.colors;
@@ -371,9 +391,7 @@ public class ResultScreen : MonoBehaviour
         cb.fadeDuration = 0.08f;
         b.colors = cb;
         b.onClick.AddListener(() => onClick());
-        t.transform.SetParent(bg.transform, false);
-        SettingsUIKit.Stretch(t.rectTransform);
-        return rightX - w - 16f;
+        return rightX - w - 12f;
     }
 
     // =====================================================================
@@ -476,15 +494,17 @@ public class ResultScreen : MonoBehaviour
             judgeCounts[k].color = judgeValues[k] == 0 ? TextDim : TextMain;
         }
 
-        // 클리어 상태: 자간이 좁혀지며 나타남 / 랭크 · NEW RECORD 는 그 뒤에 페이드
+        // 클리어 상태: 자간이 좁혀지며 나타남 / 최고 점수는 점수가 다 올라간 뒤 오른쪽에서 밀려 들어옴
         float s = Mathf.Clamp01((t - TStatus) / 0.5f);
         statusGroup.alpha = Smooth(s);
         statusText.characterSpacing = Mathf.Lerp(34f, 14f, EaseOut(s));
-        rankGroup.alpha = Smooth((t - TStatus - 0.15f) / 0.4f);
-        newRecordGroup.alpha = Smooth((t - TStatus - 0.3f) / 0.4f);
+        float bp = Smooth((t - 1.3f) / 0.45f);
+        bestGroup.alpha = bp;
+        RectTransform brt = (RectTransform)bestGroup.transform;
+        brt.anchoredPosition = new Vector2(760f + 1000f - 300f + 24f * (1f - bp), -268f);
 
         // ALL PERFECT 글자만 옅은 무지개 (자간을 바꾼 뒤 칠해야 유지됨)
-        if (clearKind == 3) RainbowText.Apply(statusText, Time.unscaledTime);
+        if (clearKind == 3 || r.IsAllJust) RainbowText.Apply(statusText, Time.unscaledTime * (r.IsAllJust ? 1.8f : 1f));
     }
 
     // =====================================================================

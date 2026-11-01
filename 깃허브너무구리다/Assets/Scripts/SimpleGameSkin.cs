@@ -63,7 +63,12 @@ public class SimpleGameSkin : MonoBehaviour
     private static readonly Color TextSub = new Color(1f, 1f, 1f, 0.55f);
 
     public static Color LaneColor(int lane) { return (lane == 0 || lane == 3) ? OuterLane : InnerLane; }
-    public static Color NoteColor(NoteData n) { return n.IsRedNote ? RedNote : LaneColor(n.Lane); }
+    public static Color NoteColor(NoteData n)
+    {
+        if (n.IsRedNote) return RedNote;
+        if (NoteTypes.IsArrow(n.Type)) return NoteArt.ArrowColor(n.Type);   // 화살표 노트: 밝은 파랑 / 밝은 노랑
+        return LaneColor(n.Lane);
+    }
 
     // ----- 판정 글자 색 -----
     private static Color JudgeColor(string judge)
@@ -80,6 +85,16 @@ public class SimpleGameSkin : MonoBehaviour
     }
 
     public Sprite PixelSprite { get; private set; }
+
+    // ===== 영역(Area) · 레인 접기에서 쓰는 값 =====
+    public SpriteRenderer LaneBgRenderer { get; private set; }   // 반투명 검은 레인 배경 (영역 채보에서는 AreaLaneView 가 대신 그림)
+    public float LaneLeft { get { return laneLeft; } }
+    public float LaneRight { get { return laneRight; } }
+    public float LaneWidth { get { return laneWidth; } }
+    public float LaneVisibility { get { return lastLaneVis; } }   // 등장 · 곡 종료 페이드 (0 ~ 1)
+    public float LaneExpandNow { get { return Mathf.Max(0.001f, laneExpandApplied); } }
+    public Transform WorldRoot { get { return worldRoot; } }
+    private AreaLaneView areaView;
     public Sprite NoteSprite { get; private set; }
     private Sprite glowSprite;
 
@@ -96,7 +111,32 @@ public class SimpleGameSkin : MonoBehaviour
     private readonly bool[] held = new bool[4];
     private float worldAlpha = -1f;
 
-    private class Flash { public SpriteRenderer sr; public float t; public int lane; }
+    // 히트 이펙트 (노트 하나 칠 때 레인마다 1개)
+    //  · core : 노트 모양 섬광 — 흰색에서 노트 색으로 바뀌며 위아래로 부풀었다 사라짐
+    //  · ring : 둥근 빛 — 판정선을 중심으로 넓게 퍼짐
+    //  · beam : 빛기둥 — 판정선에서 레인 위쪽으로 짧게 솟았다 사라짐
+    //  · wave : 노트 테두리 모양 충격파 — 노트 자리에서 바깥으로 퍼지며 옅어짐
+    //  · arrow: (화살표 노트만) >>> / <<< 가 화살표 방향으로 미끄러지며 잔상 2개를 남기고 사라짐
+    private class Burst
+    {
+        public SpriteRenderer core, ring, beam, wave, wave2, flare, star;
+        public SpriteRenderer hot, hotCore;                                  // 판정선 위 밝은 광원 (넓은 빛 + 가운데 흰 심)
+        public bool perfect;                                                 // PERFECT(EXCELLENT) 판정 → 4갈래 반짝임
+        public bool mini;                                                    // 롱노트 홀드 중 맥박 (충격파 · 둥근 빛만 작게)
+        public readonly SpriteRenderer[] arrows = new SpriteRenderer[3];   // [0] 본체, [1][2] 잔상
+        public float t = 1f; public int lane; public Color c; public float power = 1f; public float x;
+        public int arrowDir;                                                 // 0 = 일반, 1 = >>>, -1 = <<<
+    }
+    private readonly List<Burst> bursts = new List<Burst>();
+    private const float BurstSeconds = 0.34f;
+
+    // 판정선의 키 자리(리셉터): 둥근 테두리, 누르면 레인 색으로 밝아짐
+    private readonly SpriteRenderer[] receptors = new SpriteRenderer[4];
+    private readonly float[] receptorPop = new float[4];
+    private readonly List<SpriteRenderer> laneLines = new List<SpriteRenderer>();   // 레인 구분선 3개
+    private string lastJudge = "";                     // 바로 전 판정 (히트 이펙트가 PERFECT 인지 알기 위해)
+    private readonly float[] holdPulseTimer = new float[4];
+
 
     // 롱노트 홀드 효과: 판정선 위에서 맥박처럼 빛나는 막대 + 위로 올라가는 작은 입자
     private readonly SpriteRenderer[] holdFlares = new SpriteRenderer[4];
@@ -157,7 +197,6 @@ public class SimpleGameSkin : MonoBehaviour
     public const float LifeBarWidth = 16f;        // 바 두께 (UI 픽셀)
     public const float LifeBarGap = 0.3f;         // 레인 오른쪽 끝에서 떨어진 거리 (월드 유닛)
     private const float LifeBarTopMargin = 1.4f;  // 화면 맨 위에서 띄울 거리 (월드 유닛, 곡 정보와 겹치지 않게)
-    private readonly List<Flash> flashes = new List<Flash>();
 
     // 레인 양쪽 벽
     private const float EdgeWidth = 0.025f;
@@ -342,7 +381,7 @@ public class SimpleGameSkin : MonoBehaviour
     //   · 넓고 진한 붉은 바깥 빛 (일반 노트와는 색 · 빛으로만 구분)
     //   · 9-slice: 빛 여백·테두리는 늘어나지 않고 가운데만 늘어남 (가로로 무늬가 없어 어떤 폭이든 같은 모양)
     // =====================================================================
-    private static Sprite CreateRedNoteSprite()
+    public static Sprite CreateRedNoteSprite()
     {
         const int W = 160, H = 68, G = 10, R = 10;   // G: 빛 여백(px) = RedGlowPad * PPU
         const float PPU = 200f;
@@ -397,7 +436,7 @@ public class SimpleGameSkin : MonoBehaviour
     //   · 가운데 타일이 가로·세로로 반복되므로 길이·폭이 달라져도 줄무늬 간격이 일정함
     // =====================================================================
     public const float RedBodyPPU = 160f;
-    private static Sprite CreateRedBodySprite()
+    public static Sprite CreateRedBodySprite()
     {
         const int B = 10;          // 좌우 테두리 폭(px)
         const int T = 44;          // 가운데 반복 타일 크기(px, 정사각형)
@@ -499,6 +538,7 @@ public class SimpleGameSkin : MonoBehaviour
         float opacity = Mathf.Clamp01(SettingsStore.Current.LaneOpacity);
         Color bgc = IsDiverse ? new Color(0.03f, 0.04f, 0.075f, opacity) : new Color(0.035f, 0.045f, 0.07f, opacity);
         SpriteRenderer laneBg = AddRect(worldRoot, "LaneBg", centerX, y + 13.5f, fullW + 0.06f, 33f, bgc, -20);
+        LaneBgRenderer = laneBg;
 
         // MV 레인 블러: 레인 어두운 판 바로 아래에 '흐리게 만든 MV' 를 깐다 (MV 가 나올 때만 보임)
         if (gm.simpleLaneBlur)
@@ -534,6 +574,12 @@ public class SimpleGameSkin : MonoBehaviour
 
         }
 
+        // 레인 구분선: 판정선에서 위로 갈수록 사라지는 아주 옅은 선 (레인이 또렷하게, 화면은 깔끔하게)
+        //  설정 > GAMEPLAY > LANE LINES 로 켜고 끔 (게임 중 설정을 바꿔도 바로 반영)
+        for (int i = 1; i < 4 && i < xs.Length; i++)
+            laneLines.Add(AddSprite(worldRoot, "LaneDiv" + i, glowSprite, laneLeft + i * laneWidth, y, IsDiverse ? 0.018f : 0.012f, IsDiverse ? 10f : 7f,
+                      new Color(1f, 1f, 1f, IsDiverse ? 0.11f : 0.09f), -19, false));
+
         // 키 누름 빛
         for (int i = 0; i < 4 && i < xs.Length; i++)
         {
@@ -547,6 +593,22 @@ public class SimpleGameSkin : MonoBehaviour
             go.transform.position = new Vector3(xs[i], y, 0f);
             go.transform.localScale = new Vector3(laneWidth / glowSprite.bounds.size.x, IsDiverse ? 3f : 3.2f, 1f);
             glows[i] = sr;
+        }
+
+        // 판정선의 키 자리(리셉터)
+        for (int i = 0; i < 4 && i < xs.Length; i++)
+        {
+            GameObject go = new GameObject("Receptor" + i);
+            go.transform.SetParent(worldRoot, false);
+            SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = NoteArt.NoteOutlineSprite;
+            sr.drawMode = SpriteDrawMode.Sliced;
+            sr.size = new Vector2(laneWidth * 0.90f, NoteHeight * 1.15f);
+            sr.sortingOrder = -16;
+            sr.color = new Color(1f, 1f, 1f, 0f);
+            go.transform.position = new Vector3(xs[i], y, 0f);
+            go.transform.localScale = new Vector3(1f, NoteScaleY, 1f);
+            receptors[i] = sr;
         }
 
         // 판정선 (노트 아래에 그려짐)
@@ -563,9 +625,9 @@ public class SimpleGameSkin : MonoBehaviour
             GameObject go = new GameObject("HoldFlare" + i);
             go.transform.SetParent(worldRoot, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = NoteSprite;
+            sr.sprite = NoteArt.NoteFaceSprite;       // 입체 노트 앞면 + 바깥 빛
             sr.drawMode = SpriteDrawMode.Sliced;
-            sr.size = new Vector2(laneWidth * 0.98f, 0.22f);
+            sr.size = new Vector2(laneWidth * 0.98f + NoteArt.NoteGlowPad * 2f, 0.22f + NoteArt.NoteGlowPad * 2f);
             sr.sortingOrder = 8;
             sr.enabled = false;
             go.transform.position = new Vector3(xs[i], y, 0f);
@@ -582,16 +644,24 @@ public class SimpleGameSkin : MonoBehaviour
             holdSparks.Add(new HoldSpark { sr = sr, t = 1f, life = 1f });  // 비어 있는 입자
         }
 
-        // 히트 플래시 풀
-        for (int i = 0; i < 16; i++)
+        // 히트 이펙트 풀
+        for (int i = 0; i < 32; i++)
         {
-            GameObject go = new GameObject("Flash" + i);
-            go.transform.SetParent(worldRoot, false);
-            SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = PixelSprite;
-            sr.sortingOrder = 7;
-            sr.enabled = false;
-            flashes.Add(new Flash { sr = sr, t = 1f });
+            Burst b = new Burst();
+            b.beam = EffectRenderer("HitBeam" + i, NoteArt.BeamSprite, -15);
+            b.ring = EffectRenderer("HitRing" + i, NoteArt.GlowSprite, 6);
+            b.core = EffectRenderer("HitCore" + i, NoteSprite, 7);
+            b.core.drawMode = SpriteDrawMode.Sliced;
+            b.wave = EffectRenderer("HitWave" + i, NoteArt.NoteOutlineSprite, 8);
+            b.wave.drawMode = SpriteDrawMode.Sliced;
+            b.wave2 = EffectRenderer("HitWave2_" + i, NoteArt.NoteOutlineSprite, 8);
+            b.wave2.drawMode = SpriteDrawMode.Sliced;
+            b.flare = EffectRenderer("HitFlare" + i, NoteArt.HBellSprite, 10);
+            b.star = EffectRenderer("HitStar" + i, NoteArt.StarSprite, 11);
+            b.hot = EffectRenderer("HitHot" + i, NoteArt.GlowSprite, 10);
+            b.hotCore = EffectRenderer("HitHotCore" + i, NoteArt.HBellSprite, 12);
+            for (int k = 0; k < 3; k++) b.arrows[k] = EffectRenderer("HitArrow" + i + "_" + k, NoteArt.ArrowSprite, 9 - k);
+            bursts.Add(b);
         }
 
         // RED 노트 예고: 화면 위쪽에서 아래로 번지는 붉은 빛 (레인별)
@@ -612,10 +682,12 @@ public class SimpleGameSkin : MonoBehaviour
             redWarnGlows[i] = sr;
         }
 
-        // 레인 펼침용: 배경·구분선·판정선의 원래 크기/위치 기억
+        // 레인 펼침용: 배경·구분선·판정선·키 자리의 원래 크기/위치 기억
         laneCenterX = centerX;
         foreach (var kv in worldSprites)
             laneParts.Add(new LanePart { t = kv.Key.transform, scale = kv.Key.transform.localScale, pos = kv.Key.transform.position });
+        foreach (var r in receptors)
+            if (r != null) laneParts.Add(new LanePart { t = r.transform, scale = r.transform.localScale, pos = r.transform.position });
         ApplyLaneExpand(0f);
 
         SetWorldAlpha(0f);
@@ -630,9 +702,17 @@ public class SimpleGameSkin : MonoBehaviour
             else
             {
                 playfield.ApplyAll(worldRoot, false);
+                PrewarmNoteMaterials();
                 if (laneBlur != null) playfield.Register(laneBlur.ShowMaterial);
+                // LIFE 바는 레인 접기(FOLD)의 영향을 받지 않음
+                foreach (var sr in new[] { wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot })
+                    if (sr != null) playfield.Apply(sr, false, false);
             }
         }
+
+        // 영역 채보: 영역 배경(사선) + 영역 밖에서만 보이는 일반 레인 배경
+        if (gm.IsAreaChart) areaView = AreaLaneView.Create(this, gm);
+
     }
 
     // =====================================================================
@@ -743,6 +823,18 @@ public class SimpleGameSkin : MonoBehaviour
         sr.color = c;
         sr.sortingOrder = order;
         worldSprites.Add(new KeyValuePair<SpriteRenderer, Color>(sr, c));
+        return sr;
+    }
+
+    // 히트 이펙트용 (처음엔 꺼 둠, 알파는 이펙트가 직접 관리)
+    private SpriteRenderer EffectRenderer(string name, Sprite sprite, int order)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(worldRoot, false);
+        SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
+        sr.sprite = sprite;
+        sr.sortingOrder = order;
+        sr.enabled = false;
         return sr;
     }
 
@@ -905,21 +997,55 @@ public class SimpleGameSkin : MonoBehaviour
         held[lane] = on;
     }
 
-    public void Hit(int lane)
+    public void Hit(int lane) { Hit(lane, LaneColor(lane), 1f); }
+
+    // 노트를 알 때: 노트 색(화살표 파랑/노랑 · RED) 그대로, 롱노트 끝은 조금 작게
+    public void Hit(int lane, NoteData n)
+    {
+        if (n == null) { Hit(lane); return; }
+        bool tail = n.Type == 3 || n.Type == 13;
+        int dir = n.Type == NoteTypes.ArrowRight ? 1 : n.Type == NoteTypes.ArrowLeft ? -1 : 0;
+        Hit(lane, NoteColor(n), tail ? 0.7f : 1f, dir);
+    }
+
+    public void Hit(int lane, Color c, float power, int arrowDir = 0) { Hit(lane, c, power, arrowDir, false); }
+
+    private void Hit(int lane, Color c, float power, int arrowDir, bool mini)
     {
         if (lane < 0 || lane > 3 || lane >= gm.laneXPositions.Length) return;
-        Flash f = flashes.Find(x => x.t >= 1f) ?? flashes[0];
-        f.t = 0f;
-        f.lane = lane;
-        f.sr.enabled = true;
-        f.sr.transform.position = new Vector3(gm.laneXPositions[lane], gm.hitLineY, 0f);
+        Burst b = bursts.Find(x => x.t >= 1f);
+        if (b == null) { b = bursts[0]; foreach (var o in bursts) if (o.t > b.t) b = o; }   // 다 쓰는 중이면 가장 오래된 것
+        b.t = 0f;
+        b.lane = lane;
+        b.c = c;
+        b.power = power;
+        b.x = gm.laneXPositions[lane];
+        b.arrowDir = mini ? 0 : arrowDir;
+        b.mini = mini;
+        b.perfect = !mini && (lastJudge == "EXCELLENT" || lastJudge == "JUST");
+        b.ring.enabled = b.wave.enabled = true;
+        // 설정 > 게임플레이 > 히트 이펙트 = 낮음 이면 두 번째 충격파 · 가로 섬광 · 광원 · 반짝임은 생략 (가벼움)
+        bool full = !mini && SettingsStore.Current.EffectQuality > 0;
+        b.core.enabled = b.beam.enabled = !mini;
+        b.wave2.enabled = b.flare.enabled = b.hot.enabled = b.hotCore.enabled = full;
+        if (!full) b.perfect = false;
+        b.star.enabled = b.perfect;
+        Vector3 at = new Vector3(b.x, gm.hitLineY, 0f);
+        b.beam.transform.position = at; b.ring.transform.position = at; b.core.transform.position = at;     // (배열을 만들지 않음 — 칠 때마다 쓰레기 생김 방지)
+        b.wave.transform.position = at; b.wave2.transform.position = at; b.flare.transform.position = at;
+        b.star.transform.position = at; b.hot.transform.position = at; b.hotCore.transform.position = at;
+        b.star.transform.rotation = Quaternion.identity;
+        for (int k = 0; k < 3; k++) b.arrows[k].enabled = b.arrowDir != 0;
+        if (!mini) receptorPop[lane] = 1f;
     }
 
     public void OnJudge(string judge)
     {
         // 게임 내부 판정 이름은 EXCELLENT 그대로, 화면에는 PERFECT 로 표시 (무지개 그라데이션)
-        string shown = judge == "EXCELLENT" ? "PERFECT" : judge;
-        judgeRainbow = shown == "PERFECT";
+        //  "JUST" = JUST PERFECT (±15ms, 설정에서 표시를 켰을 때만 이 이름으로 옴)
+        string shown = judge == "EXCELLENT" ? "PERFECT" : (judge == "JUST" ? "JUST PERFECT" : judge);
+        judgeRainbow = judge == "EXCELLENT" || judge == "JUST";
+        lastJudge = judge;
         judgeText.text = shown;
         judgeText.color = judgeRainbow ? Color.white : JudgeColor(judge);
         judgeTimer = 0f;
@@ -928,13 +1054,68 @@ public class SimpleGameSkin : MonoBehaviour
 
     public void OnFastSlow(bool isFast, int ms)
     {
-        fastSlowText.text = (isFast ? "FAST  " : "SLOW  ") + ms;
+        fastSlowText.text = (isFast ? "-" : "+") + ms + "ms";        // FAST 26 → -26ms,  SLOW 43 → +43ms
         fastSlowText.color = isFast ? new Color(0.53f, 0.81f, 0.92f) : new Color(1f, 0.42f, 0.42f);
     }
 
     // =====================================================================
     //  매 프레임
     // =====================================================================
+    private bool foldWarned;
+
+    // [렉 수정] 노트 그림(코드로 만드는 텍스처)과 원근 재질을 플레이 전에 미리 만들어 둠
+    //  예전에는 첫 노트 · 첫 롱노트 · 영역 노트가 나오는 순간에 만들어져서 그 프레임이 끊겼다
+    private void PrewarmNoteMaterials()
+    {
+        if (playfield == null) return;
+        Sprite[] sprites = { NoteArt.NoteFaceSprite, NoteArt.TailCapSprite, NoteArt.LongBodySprite, NoteArt.ArrowSprite, NoteArt.GlowSprite,
+                             NoteSprite, RedNoteSprite, RedBodySprite, PixelSprite };
+        foreach (var sp in sprites)
+        {
+            if (sp == null) continue;
+            playfield.MaterialFor(sp.texture, true, true);
+            playfield.MaterialFor(sp.texture, true, false);
+            playfield.MaterialFor(sp.texture, false, true);
+            playfield.MaterialFor(sp.texture, false, false);
+        }
+    }
+
+    // 레인 접기 중에도 '지금 영역인 레인'의 누름 빛 · 롱노트 홀드 빛 · 타격 섬광 · 불꽃은 접히지 않게 (영역 노트와 함께 보이도록)
+    private readonly bool[] keepLane = new bool[4];
+    private readonly Dictionary<SpriteRenderer, bool> appliedFold = new Dictionary<SpriteRenderer, bool>();
+
+    // [렉 수정] 재질은 '접힘 여부가 바뀔 때만' 바꿈 (예전에는 매 프레임 수십 개를 다시 지정)
+    private void ApplyFoldIfChanged(SpriteRenderer sr, bool fold)
+    {
+        if (sr == null) return;
+        bool cur;
+        if (appliedFold.TryGetValue(sr, out cur) && cur == fold) return;
+        appliedFold[sr] = fold;
+        playfield.Apply(sr, false, fold);
+    }
+
+    private void KeepAreaLaneEffects()
+    {
+        if (playfield == null || !gm.HasAreas || !gm.HasLaneFolds) return;   // 접기가 없는 채보는 할 일 없음
+        bool[] keep = keepLane;
+        for (int i = 0; i < 4; i++) keep[i] = gm.LaneInAreaNow(i);
+        for (int i = 0; i < 4; i++)
+        {
+            ApplyFoldIfChanged(glows[i], !keep[i]);
+            ApplyFoldIfChanged(holdFlares[i], !keep[i]);
+            ApplyFoldIfChanged(receptors[i], !keep[i]);
+        }
+        foreach (var b in bursts)
+        {
+            if (b.t >= 1f || b.lane < 0 || b.lane > 3) continue;
+            bool f = !keep[b.lane];
+            ApplyFoldIfChanged(b.core, f); ApplyFoldIfChanged(b.ring, f); ApplyFoldIfChanged(b.beam, f);
+            ApplyFoldIfChanged(b.wave, f); ApplyFoldIfChanged(b.wave2, f); ApplyFoldIfChanged(b.flare, f);
+            ApplyFoldIfChanged(b.star, f); ApplyFoldIfChanged(b.hot, f); ApplyFoldIfChanged(b.hotCore, f);
+            if (b.arrowDir != 0) for (int k = 0; k < 3; k++) ApplyFoldIfChanged(b.arrows[k], f);
+        }
+    }
+
     void Update()
     {
         if (gm == null) return;
@@ -965,14 +1146,31 @@ public class SimpleGameSkin : MonoBehaviour
         float endA = gm.EndUiAlpha;
         float laneVis = fadeIn * basicVis * endA;
         SetWorldAlpha(laneVis);
+        bool lines = SettingsStore.Current.LaneLines && laneVis > 0.001f;
+        foreach (var l in laneLines) if (l != null && l.enabled != lines) l.enabled = lines;
         hudGroup.alpha = fadeIn * endA;
         laneHudGroup.alpha = basicVis;
 
         lastLaneVis = laneVis;
         if (laneBlur != null) laneBlur.Tick(laneVis, laneExpandApplied);
+
+        // 레인 접기 / 펼치기 (채보의 FOLD · UNFOLD, SIMPLE-DIVERSE 전용): 레인 · 노트 · 효과가 가운데로 모이며 사라짐
+        // 레인 접기는 SIMPLE-DIVERSE 원근 셰이더가 함 → 셰이더가 없으면 접히지 않는다 (원인 확인용 경고 1번)
+        if (playfield == null && !foldWarned && gm.HasLaneFolds)
+        {
+            foldWarned = true;
+            Debug.LogWarning("[SimpleGameSkin] 채보에 FOLD/UNFOLD 가 있지만 SIMPLE-DIVERSE 원근 셰이더(Resources/Shaders/DiverseSprite.shader + DiverseProject.cginc)가 없거나 스킨이 SIMPLE-DIVERSE 가 아니라서 레인이 접히지 않습니다.");
+        }
+        if (playfield != null)
+        {
+            float fold = gm.LaneFoldAt(gm.currentPlayTime);
+            playfield.SetFold(fold, fold, laneCenterX);
+            laneHudGroup.alpha = basicVis * fold;
+            KeepAreaLaneEffects();
+        }
         UpdateGlows(dt, laneVis);
         UpdateHold(dt, laneVis);
-        UpdateFlashes(dt);
+        UpdateBursts(dt, laneVis);
         UpdateLife(dt);
         UpdateSpeedChange(dt);
         UpdateRedWarning(dt, laneVis);
@@ -996,20 +1194,137 @@ public class SimpleGameSkin : MonoBehaviour
             Color c = LaneColor(i);
             glows[i].color = new Color(c.r, c.g, c.b, 0.28f * glowLevel[i] * vis);
             glows[i].enabled = glowLevel[i] > 0.001f && vis > 0.001f;
+
+            // 키 자리: 평소엔 옅은 흰 테두리, 누르면 레인 색으로 밝아지고 칠 때 살짝 커졌다 돌아옴
+            SpriteRenderer r = receptors[i];
+            if (r == null) continue;
+            receptorPop[i] = Mathf.MoveTowards(receptorPop[i], 0f, dt / 0.12f);
+            float lit = Mathf.Max(glowLevel[i], receptorPop[i]);
+            Color rc = Color.Lerp(new Color(1f, 1f, 1f, 0.16f), new Color(c.r, c.g, c.b, 0.85f), lit);
+            r.color = new Color(rc.r, rc.g, rc.b, rc.a * vis);
+            float pop = 1f + 0.06f * receptorPop[i];
+            Vector2 want = new Vector2(laneWidth * 0.90f * pop, NoteHeight * 1.15f * pop);
+            if (r.size != want) r.size = want;                                        // 바뀔 때만 (메시 다시 만들기 줄임)
+            r.enabled = vis > 0.001f && SettingsStore.Current.ShowKeyMarkers;     // 설정 > GAMEPLAY > KEY MARKERS
         }
     }
 
-    private void UpdateFlashes(float dt)
+    private void UpdateBursts(float dt, float vis)
     {
-        foreach (var f in flashes)
+        float sy = NoteScaleY;
+        foreach (var b in bursts)
         {
-            if (f.t >= 1f) continue;
-            f.t = Mathf.Min(1f, f.t + dt / 0.18f);
-            float e = 1f - Mathf.Pow(1f - f.t, 2f);
-            Color c = LaneColor(f.lane);
-            f.sr.color = new Color(Mathf.Lerp(1f, c.r, e), Mathf.Lerp(1f, c.g, e), Mathf.Lerp(1f, c.b, e), 0.85f * (1f - f.t));
-            f.sr.transform.localScale = new Vector3(laneWidth * Mathf.Lerp(0.9f, 1.05f, e), Mathf.Lerp(0.10f, 0.55f, e), 1f);
-            if (f.t >= 1f) f.sr.enabled = false;
+            if (b.t >= 1f) continue;
+            b.t = Mathf.Min(1f, b.t + dt / (b.mini ? 0.28f : BurstSeconds));
+            if (b.mini)
+            {
+                // 홀드 맥박: 노트 테두리 모양이 살짝 퍼지고 둥근 빛이 옅게
+                float tm = b.t, em = 1f - (1f - tm) * (1f - tm);
+                Color mc = Color.Lerp(Color.white, b.c, 0.5f);
+                b.wave.size = new Vector2(laneWidth * Mathf.Lerp(0.95f, 1.05f, em), NoteHeight * Mathf.Lerp(1.2f, 1.9f, em));
+                b.wave.transform.localScale = new Vector3(1f, sy, 1f);
+                b.wave.color = new Color(mc.r, mc.g, mc.b, 0.55f * (1f - tm) * vis);
+                Vector2 gsm = NoteArt.GlowSprite.bounds.size;
+                float rwm = laneWidth * Mathf.Lerp(0.6f, 0.95f, em);
+                b.ring.transform.localScale = new Vector3(rwm / gsm.x, rwm * 0.4f * sy / gsm.y, 1f);
+                b.ring.color = new Color(b.c.r, b.c.g, b.c.b, 0.35f * (1f - tm) * vis);
+                if (b.t >= 1f) b.ring.enabled = b.wave.enabled = false;
+                continue;
+            }
+            float t = b.t, e = 1f - (1f - t) * (1f - t);           // 빠르게 시작해서 천천히 끝남
+            Color c = b.c;
+            Color w2c = Color.Lerp(Color.white, c, Mathf.Clamp01(t * 2.2f));
+
+            // 노트 모양 섬광 (앞쪽 55% 동안)
+            float tc = Mathf.Clamp01(t / 0.55f), ec = 1f - (1f - tc) * (1f - tc);
+            b.core.size = new Vector2(laneWidth * Mathf.Lerp(0.95f, 1.03f, ec), NoteHeight * Mathf.Lerp(1.0f, 2.1f, ec) * b.power);
+            b.core.transform.localScale = new Vector3(1f, sy, 1f);
+            b.core.color = new Color(w2c.r, w2c.g, w2c.b, 0.95f * (1f - tc) * vis);
+
+            // 둥근 빛
+            Vector2 gs = NoteArt.GlowSprite.bounds.size;
+            float rw = laneWidth * Mathf.Lerp(0.55f, 1.12f, e) * (0.8f + 0.2f * b.power);
+            b.ring.transform.localScale = new Vector3(rw / gs.x, rw * 0.42f * sy / gs.y, 1f);
+            Color rc2 = Color.Lerp(Color.white, c, Mathf.Clamp01(t * 1.5f));
+            b.ring.color = new Color(rc2.r, rc2.g, rc2.b, 0.95f * (1f - t) * (1f - t) * vis);
+
+            // 빛기둥
+            Vector2 bs = NoteArt.BeamSprite.bounds.size;
+            float bw = laneWidth * Mathf.Lerp(0.92f, 0.62f, e);
+            float bh = Mathf.Lerp(0.9f, 2.1f, e) * b.power * (IsDiverse ? 1.6f : 1f);   // 이전보다 조금 짧게
+            b.beam.transform.localScale = new Vector3(bw / bs.x, bh / bs.y, 1f);
+            b.beam.color = new Color(w2c.r, w2c.g, w2c.b, 0.32f * Mathf.Pow(1f - t, 1.6f) * vis);   // 이전보다 조금 약하게 (0.42 → 0.32)
+
+            // 판정선 위 광원 (강화): 레인 폭 안에서 강하게 번쩍하고 조금 오래 남음
+            float th = Mathf.Clamp01(t / 0.65f);
+            float hw = laneWidth * Mathf.Lerp(1.15f, 0.9f, th);
+            b.hot.transform.localScale = new Vector3(hw / gs.x, hw * 0.62f * sy / gs.y, 1f);
+            Color hc = Color.Lerp(Color.white, c, th * 0.55f);
+            b.hot.color = new Color(hc.r, hc.g, hc.b, Mathf.Pow(1f - th, 1.4f) * vis);
+            //  가운데 흰 심: 판정선 위에 아주 밝은 가로 빛 (레인 폭 정도)
+            Vector2 hsz = NoteArt.HBellSprite.bounds.size;
+            float tcw = Mathf.Clamp01(t / 0.5f);
+            b.hotCore.transform.localScale = new Vector3(laneWidth * Mathf.Lerp(1.25f, 1.0f, tcw) / hsz.x, 0.16f * sy * (1f - 0.4f * tcw) / hsz.y, 1f);
+            b.hotCore.color = new Color(1f, 1f, 1f, (1f - tcw) * (1f - tcw) * vis);
+
+            // 충격파: 노트 테두리 모양이 바깥으로 퍼짐
+            b.wave.size = new Vector2(laneWidth * Mathf.Lerp(0.92f, 1.10f, e), NoteHeight * Mathf.Lerp(1.1f, 2.4f, e) * b.power);
+            b.wave.transform.localScale = new Vector3(1f, sy, 1f);
+            b.wave.color = new Color(w2c.r, w2c.g, w2c.b, 0.85f * Mathf.Pow(1f - t, 1.5f) * vis);
+
+            // 두 번째 충격파: 조금 늦게, 더 크게 퍼짐
+            float t2 = Mathf.Clamp01((t - 0.18f) / 0.82f), e2 = 1f - (1f - t2) * (1f - t2);
+            b.wave2.size = new Vector2(laneWidth * Mathf.Lerp(0.95f, 1.20f, e2), NoteHeight * Mathf.Lerp(1.2f, 3.0f, e2) * b.power);
+            b.wave2.transform.localScale = new Vector3(1f, sy, 1f);
+            b.wave2.color = new Color(c.r, c.g, c.b, (t < 0.18f ? 0f : 0.55f * (1f - t2)) * vis);
+
+            // 가로 섬광 줄기: 판정선을 따라 좌우로 길게 번쩍 (빠르게 사라짐)
+            Vector2 fsz = NoteArt.HBellSprite.bounds.size;
+            float tf = Mathf.Clamp01(t / 0.75f);
+            float fw = laneWidth * Mathf.Lerp(1.1f, 1.7f, 1f - (1f - tf) * (1f - tf)) * b.power;
+            b.flare.transform.localScale = new Vector3(fw / fsz.x, 0.13f * sy * (1f - 0.4f * tf) / fsz.y, 1f);
+            b.flare.color = new Color(w2c.r, w2c.g, w2c.b, Mathf.Pow(1f - tf, 1.5f) * vis);
+
+            // PERFECT: 가운데 4갈래 반짝임 (돌면서 커졌다 작아짐)
+            if (b.perfect)
+            {
+                Vector2 ssz = NoteArt.StarSprite.bounds.size;
+                float ts = Mathf.Clamp01(t / 0.7f);
+                float grow = Mathf.Sin(ts * Mathf.PI);                       // 0 → 1 → 0
+                float sw = laneWidth * (0.45f + 0.55f * grow);
+                b.star.transform.localScale = new Vector3(sw / ssz.x, sw * sy / ssz.y, 1f);
+                b.star.transform.rotation = Quaternion.Euler(0f, 0f, 45f * ts);
+                b.star.color = new Color(1f, 1f, 1f, 0.95f * (1f - ts) * vis);
+            }
+
+            // 화살표 노트: >>> / <<< 가 화살표 방향으로 미끄러지며 잔상을 남김 (둥근 빛도 그쪽으로 끌려감)
+            if (b.arrowDir != 0)
+            {
+                float dir = b.arrowDir;
+                b.ring.transform.position = new Vector3(b.x + dir * laneWidth * 0.20f * e, gm.hitLineY, 0f);
+                Vector2 asz = NoteArt.ArrowSprite.bounds.size;
+                float lift = 0.13f * sy;
+                for (int k = 0; k < 3; k++)
+                {
+                    float lag = k * 0.16f;                                        // 잔상은 조금씩 늦게 따라옴
+                    float tk = Mathf.Clamp01((t - lag) / (1f - lag));
+                    float ek = 1f - (1f - tk) * (1f - tk);
+                    SpriteRenderer a = b.arrows[k];
+                    float stretch = 1f + 0.35f * ek;
+                    a.transform.position = new Vector3(b.x + dir * laneWidth * 0.45f * ek, gm.hitLineY + lift, 0f);
+                    a.transform.localScale = new Vector3(dir * 0.62f * stretch / asz.x, 0.24f * sy * (1f - 0.3f * ek) / asz.y, 1f);
+                    float ka = k == 0 ? 1f : (k == 1 ? 0.5f : 0.25f);
+                    float alive = t < lag ? 0f : 1f;
+                    a.color = new Color(w2c.r, w2c.g, w2c.b, ka * alive * (1f - tk) * vis);
+                }
+            }
+
+            if (b.t >= 1f)
+            {
+                b.core.enabled = b.ring.enabled = b.beam.enabled = b.wave.enabled = false;
+                b.wave2.enabled = b.flare.enabled = b.star.enabled = b.hot.enabled = b.hotCore.enabled = false;
+                for (int k = 0; k < 3; k++) b.arrows[k].enabled = false;
+            }
         }
     }
 
@@ -1107,19 +1422,23 @@ public class SimpleGameSkin : MonoBehaviour
             {
                 float pulse = 0.75f + 0.25f * Mathf.Sin(holdClock * 18f + i * 1.3f);
                 Color c = Color.Lerp(LaneColor(i), Color.white, 0.45f);
-                f.color = new Color(c.r, c.g, c.b, 0.6f * holdLevel[i] * pulse * vis);
-                f.size = new Vector2(laneWidth * 0.98f, 0.16f + 0.08f * pulse);
+                f.color = new Color(c.r, c.g, c.b, 0.75f * holdLevel[i] * pulse * vis);
+                float pad = NoteArt.NoteGlowPad * 2f;
+                f.size = new Vector2(laneWidth * 0.98f + pad, 0.16f + 0.08f * pulse + pad);
+                f.transform.localScale = new Vector3(1f, NoteScaleY, 1f);
             }
 
-            if (held[i] && vis > 0.001f)
+            // 누르고 있는 동안 일정 간격으로 노트 테두리 모양 맥박이 퍼짐 (빛 조각 대신)
+            if (held[i] && vis > 0.001f && SettingsStore.Current.EffectQuality > 0)
             {
-                holdSparkTimer[i] -= dt;
-                if (holdSparkTimer[i] <= 0f)
+                holdPulseTimer[i] -= dt;
+                if (holdPulseTimer[i] <= 0f)
                 {
-                    holdSparkTimer[i] = 0.045f;
-                    SpawnHoldSpark(i);
+                    holdPulseTimer[i] = 0.16f;
+                    Hit(i, LaneColor(i), 0.5f, 0, true);
                 }
             }
+            else holdPulseTimer[i] = 0f;
         }
 
         foreach (var s in holdSparks)

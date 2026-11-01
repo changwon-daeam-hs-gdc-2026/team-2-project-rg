@@ -795,17 +795,6 @@ MonoBehaviour:
   fadeInSeconds: 0.6
   fadeOutSeconds: 0.5
   monospaceNumbers: 1
-  rankNames:
-  - SSS
-  - SS
-  - S
-  - AAA
-  - AA
-  - A
-  - B
-  - C
-  - D
-  rankScores: 301b0f0010cd0e00f07e0e00c0090e00806d0d0000350c0060ae0a00c027090000000000
 --- !u!4 &921088796
 Transform:
   m_ObjectHideFlags: 0
@@ -2612,7 +2601,7 @@ AudioListener:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2113199035}
-  m_Enabled: 1
+  m_Enabled: 0
 --- !u!20 &2113199037
 Camera:
   m_ObjectHideFlags: 0

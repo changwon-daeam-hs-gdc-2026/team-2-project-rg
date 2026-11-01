@@ -9,9 +9,9 @@ using UnityEngine.UI;
 // 곡 선택 화면: 좌측 자켓 아래 플레이 설정 (코드로 생성, 씬 설정 필요 없음)
 //
 //   ┌──────────────────────────────────────────┐
-//   │    EASY    │    HARD    │▓▓▓ INSANE ▓▓▓│   ← 난이도 바: 위에 이름, 아래에 두 자리 숫자
-//   │     03     │     07     │▓▓▓▓  11  ▓▓▓▓│      고른 칸이 난이도 색으로 꽉 채워짐
-//   └──────────────────────────────────────────┘      (색 블록은 바의 둥근 모서리를 따라 잘려서 딱 맞게 들어감)
+//   │    EASY    │    HARD    │   INSANE   │   ← 난이도 바: 위에 이름, 아래에 숫자 (있는 그대로)
+//   │     3      │     7      │░░░  11  ░░░│      고른 칸: 아래에 난이도 색 그라데이션 밑줄 (가운데가 진하고 양끝으로 옅어짐)
+//   └────────────────────────━━━━━━━━━━━━━━┘      + 밑줄 위로 은은한 색 빛, 이름이 난이도 색으로 (칸 전체를 덮지 않음)
 //   ┌──────────────────────────────────────────┐
 //   │  SPEED                              4.5  │   ← 배속: 왼쪽 절반 누르면 -0.1, 오른쪽 절반 +0.1
 //   └──────────────────────────────────────────┘
@@ -54,7 +54,9 @@ public class SongDetailPanel : MonoBehaviour
 
     // 난이도 바
     private RectTransform diffBox;
-    private Image diffBlock;
+    private Image diffBlock;      // 고른 칸 아래 그라데이션 밑줄
+    private Image diffGlow;       // 밑줄 위로 옅게 번지는 빛
+    private const float GlowTop = 1.0f;   // 위로 번지는 빛이 닿는 높이 (칸 높이 비율, 1 = 칸 꼭대기까지)
     private readonly TextMeshProUGUI[] diffName = new TextMeshProUGUI[4];
     private readonly TextMeshProUGUI[] diffValue = new TextMeshProUGUI[4];
     private readonly Image[] diffSep = new Image[2];
@@ -101,12 +103,19 @@ public class SongDetailPanel : MonoBehaviour
         Image dbox = Box("Difficulty", 0f, 1f, y, DiffH, false);
         dbox.gameObject.AddComponent<Mask>().showMaskGraphic = true;
         diffBox = dbox.rectTransform;
-        // 선택 블록: 바와 같은 반지름으로 네 모서리를 둥글게 (빈틈 없이 칸에 꽉 차게, 바 바깥은 마스크가 잘라 줌)
-        diffBlock = SettingsUIKit.Img("Selected", diffBox, Color.clear);
-        diffBlock.sprite = round; diffBlock.type = Image.Type.Sliced; diffBlock.pixelsPerUnitMultiplier = 32f / Radius;
+        // 선택 표시: 칸을 덮지 않고 아래쪽 그라데이션 밑줄 + 위로 옅게 번지는 빛
+        diffGlow = SettingsUIKit.Img("SelectedGlow", diffBox, Color.clear);
+        diffGlow.sprite = UpGlowSprite();
+        diffGlow.rectTransform.anchorMin = new Vector2(0f, 0f);
+        diffGlow.rectTransform.anchorMax = new Vector2(1f / 3f, GlowTop);
+        diffGlow.rectTransform.offsetMin = diffGlow.rectTransform.offsetMax = Vector2.zero;
+        diffBlock = SettingsUIKit.Img("SelectedLine", diffBox, Color.clear);
+        diffBlock.sprite = NoteArt.HBellSprite;
         diffBlock.rectTransform.anchorMin = new Vector2(0f, 0f);
-        diffBlock.rectTransform.anchorMax = new Vector2(1f / 3f, 1f);
-        diffBlock.rectTransform.offsetMin = diffBlock.rectTransform.offsetMax = Vector2.zero;
+        diffBlock.rectTransform.anchorMax = new Vector2(1f / 3f, 0f);
+        diffBlock.rectTransform.pivot = new Vector2(0.5f, 0f);
+        diffBlock.rectTransform.offsetMin = new Vector2(2f, 5f);
+        diffBlock.rectTransform.offsetMax = new Vector2(-2f, 10f);
         for (int i = 0; i < 2; i++)
         {
             diffSep[i] = SettingsUIKit.Img("Sep", diffBox, LineColor);
@@ -182,12 +191,6 @@ public class SongDetailPanel : MonoBehaviour
 
     private void Speed(double d) { if (OnSpeedDelta != null) OnSpeedDelta(d); }
 
-    // 숫자면 두 자리로 (1 → 01, 13 → 13), 숫자가 아니면 그대로
-    private static string TwoDigits(string v)
-    {
-        int n;
-        return int.TryParse(v, out n) ? n.ToString("00") : v;
-    }
 
     // =====================================================================
     //  상태 반영 (바뀌었을 때만)
@@ -207,13 +210,14 @@ public class SongDetailPanel : MonoBehaviour
             diffAvailable[d] = SongRowUI.IsDifficultyAvailable(val);
             bool sel = d == level && diffAvailable[d];
             diffName[d].text = DifficultyHelper.GetName(d);
-            diffValue[d].text = diffAvailable[d] ? TwoDigits(SongRowUI.FormatDifficulty(val)) : "-";
-            diffName[d].color = sel ? new Color(1f, 1f, 1f, 0.85f) : (diffAvailable[d] ? TextSub : TextDim);
-            diffValue[d].color = sel ? Color.white : (diffAvailable[d] ? TextMain : TextDim);
+            diffValue[d].text = diffAvailable[d] ? SongRowUI.FormatDifficulty(val) : "-";   // 있는 그대로 (9 → 9, 두 자리로 채우지 않음)
+            Color dc = DifficultyHelper.GetColor(d);
+            diffName[d].color = sel ? new Color(dc.r, dc.g, dc.b, 1f) : (diffAvailable[d] ? TextSub : TextDim);
+            diffValue[d].color = diffAvailable[d] ? TextMain : TextDim;
             if (sel) { selLevel = d; blockTarget = DifficultyHelper.GetColor(d); }
         }
-        // 고른 칸 양옆 구분선은 숨김 (색 블록과 겹치지 않게)
-        for (int i = 0; i < 2; i++) diffSep[i].enabled = selLevel != i + 1 && selLevel != i + 2;
+        // 구분선은 항상 보임 (선택 표시가 칸을 덮지 않으므로)
+        for (int i = 0; i < 2; i++) diffSep[i].enabled = true;
 
         speedValue.text = speed.ToString("0.0", CultureInfo.InvariantCulture);
 
@@ -246,11 +250,14 @@ public class SongDetailPanel : MonoBehaviour
             blockPos = blockPos < 0f ? target : Mathf.Lerp(blockPos, target, k);
             if (Mathf.Abs(blockPos - target) < 0.0005f) blockPos = target;
             diffBlock.rectTransform.anchorMin = new Vector2(blockPos, 0f);
-            diffBlock.rectTransform.anchorMax = new Vector2(blockPos + 1f / 3f, 1f);
+            diffBlock.rectTransform.anchorMax = new Vector2(blockPos + 1f / 3f, 0f);
+            diffGlow.rectTransform.anchorMin = new Vector2(blockPos, 0f);
+            diffGlow.rectTransform.anchorMax = new Vector2(blockPos + 1f / 3f, GlowTop);
             blockColor = Color.Lerp(blockColor, blockTarget, k);
-            diffBlock.color = new Color(blockColor.r, blockColor.g, blockColor.b, 0.88f);
+            diffBlock.color = new Color(blockColor.r, blockColor.g, blockColor.b, 1f);
+            diffGlow.color = new Color(blockColor.r, blockColor.g, blockColor.b, 0.30f);
         }
-        diffBlock.enabled = selLevel >= 1 && diffAvailable[selLevel];
+        diffBlock.enabled = diffGlow.enabled = selLevel >= 1 && diffAvailable[selLevel];
 
         TickSwitch(mv, k);
         TickSwitch(auto, k);
@@ -364,6 +371,29 @@ public class SongDetailPanel : MonoBehaviour
         t.fontSizeMax = size;
         t.fontSizeMin = size * 0.6f;
         return t;
+    }
+
+    // 아래가 진하고 위로 갈수록 사라지는 빛 (가로로도 양끝이 옅음)
+    private static Sprite upGlow;
+    private static Sprite UpGlowSprite()
+    {
+        if (upGlow != null) return upGlow;
+        const int W = 64, H = 64;
+        Texture2D tex = new Texture2D(W, H, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        Color32[] px = new Color32[W * H];
+        for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+        {
+            // 위로 더 멀리 번지도록 완만하게 (2.2 → 1.4), 옆으로도 칸 끝까지 넓게 (u² → u⁴)
+            float v = Mathf.Pow(1f - y / (H - 1f), 2.2f);
+            float u = Mathf.Abs((x + 0.5f) / W * 2f - 1f);
+            float a = v * (1f - u * u * u * u);
+            px[y * W + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a) * 255f));
+        }
+        tex.SetPixels32(px); tex.Apply();
+        upGlow = Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0f), 100f);
+        return upGlow;
     }
 
     private static Sprite MakeRoundSprite()

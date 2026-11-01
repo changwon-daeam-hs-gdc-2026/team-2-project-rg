@@ -3726,6 +3726,8 @@ MonoBehaviour:
   accuracyText: {fileID: 401535364}
   judgmentImage: {fileID: 480675168}
   judgmentImageScale: 0.529
+  pauseFont: {fileID: 0}
+  pauseBoldFont: {fileID: 0}
   pauseUIContainer: {fileID: 762972363}
   btnResume: {fileID: 57726051}
   btnRetry: {fileID: 1531380975}
@@ -3734,7 +3736,6 @@ MonoBehaviour:
   fastSlowDirectionText: {fileID: 1780700669}
   fastSlowValueText: {fileID: 1280789399}
   comboImageContainer: {fileID: 1237780619}
-  fkComboImageContainer: {fileID: 0}
   comboDigitWidth: 45
   comboDigitHeight: 93
   comboDigitSpacing: 2
@@ -3747,14 +3748,6 @@ MonoBehaviour:
   yellowHitEffectPrefab: {fileID: 8272294297163203850, guid: e265cb67d36d9ac4e95e48e289d615e8, type: 3}
   hitEffectDuration: 0.3
   hitEffectOffsetY: -0.1
-  freeKeyUIContainer: {fileID: 0}
-  freeKeyNormalSprite: {fileID: 21300000, guid: a15d6794471134944b4da0c912ba3c85, type: 3}
-  freeKeySpaceSprite: {fileID: 21300000, guid: ea7d05c58bc50ef41b5aa1c0f0e54fed, type: 3}
-  freeKeyDragSprite: {fileID: 21300000, guid: 6c9d3c4c55df98c428a9b1d1773a160c, type: 3}
-  freeKeyLinearSprite: {fileID: 6260396550234228546, guid: ca1e0df93dde9134d8decba06dbabae0, type: 3}
-  fkInfoUI: {fileID: 0}
-  fkLevelUI: {fileID: 0}
-  fkComboUI: {fileID: 0}
   laneXPositions:
   - -1.2
   - -0.4
@@ -3801,85 +3794,6 @@ Transform:
   - {fileID: 705990374}
   - {fileID: 1659374357}
   - {fileID: 893695737}
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1330128875
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1330128878}
-  - component: {fileID: 1330128877}
-  - component: {fileID: 1330128876}
-  m_Layer: 0
-  m_Name: EventSystem
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1330128876
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1330128875}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 01614664b831546d2ae94a42149d80ac, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.InputSystem::UnityEngine.InputSystem.UI.InputSystemUIInputModule
-  m_SendPointerHoverToParent: 1
-  m_MoveRepeatDelay: 0.5
-  m_MoveRepeatRate: 0.1
-  m_XRTrackingOrigin: {fileID: 0}
-  m_ActionsAsset: {fileID: -944628639613478452, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_PointAction: {fileID: -1654692200621890270, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_MoveAction: {fileID: -8784545083839296357, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_SubmitAction: {fileID: 392368643174621059, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_CancelAction: {fileID: 7727032971491509709, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_LeftClickAction: {fileID: 3001919216989983466, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_MiddleClickAction: {fileID: -2185481485913320682, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_RightClickAction: {fileID: -4090225696740746782, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_ScrollWheelAction: {fileID: 6240969308177333660, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_TrackedDevicePositionAction: {fileID: 6564999863303420839, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_TrackedDeviceOrientationAction: {fileID: 7970375526676320489, guid: ca9f5fa95ffab41fb9a615ab714db018, type: 3}
-  m_DeselectOnBackgroundClick: 1
-  m_PointerBehavior: 0
-  m_CursorLockBehavior: 0
-  m_ScrollDeltaPerTick: 6
---- !u!114 &1330128877
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1330128875}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 76c392e42b5098c458856cdf6ecaaaa1, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.EventSystems.EventSystem
-  m_FirstSelected: {fileID: 0}
-  m_sendNavigationEvents: 1
-  m_DragThreshold: 10
---- !u!4 &1330128878
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1330128875}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1412954080
@@ -5918,7 +5832,6 @@ SceneRoots:
   - {fileID: 519420032}
   - {fileID: 619394802}
   - {fileID: 1315987724}
-  - {fileID: 1330128878}
   - {fileID: 2083300741}
   - {fileID: 377750118}
   - {fileID: 762972368}

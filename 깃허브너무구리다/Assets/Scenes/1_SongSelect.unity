@@ -727,8 +727,13 @@ MonoBehaviour:
   previewVolume: 1
   previewDelay: 0.15
   previewFadeIn: 0.4
+  previewFadeOut: 1.5
+  previewLoopGap: 0.6
+  previewFallbackStartRatio: 0.35
   showDetailPanel: 1
   detailFont: {fileID: 11400000, guid: 374c5492305579b499304268efdfe845, type: 2}
+  areaNoticeFont: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+  dialogFont: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
 --- !u!4 &260078938
 Transform:
   m_ObjectHideFlags: 0
@@ -1374,8 +1379,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: 3:39
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
-  m_sharedMaterial: {fileID: 3528953259351424421, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []

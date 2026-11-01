@@ -2622,9 +2622,10 @@ MonoBehaviour:
   greenLongTail: {fileID: 4552639008375619276, guid: da0eff8447713a14e805dd79137d35c0, type: 3}
   blueLongBody: {fileID: -5135340943140926371, guid: a8d9c192419274740bf67561c629f3f4, type: 3}
   greenLongBody: {fileID: -1655296658213930226, guid: 389fead9c7d5cec43896a09cd0535230, type: 3}
-  freeKeyNormal: {fileID: 21300000, guid: a15d6794471134944b4da0c912ba3c85, type: 3}
-  freeKeySpace: {fileID: 21300000, guid: 6c9d3c4c55df98c428a9b1d1773a160c, type: 3}
-  freeKeyDrag: {fileID: 21300000, guid: ea7d05c58bc50ef41b5aa1c0f0e54fed, type: 3}
+  areaEditorFont: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+  areaEditorFontScale: 1
+  areaEditorKorean: 1
+  areaEditorLongNoteHitSound: 1
   chartUIGroup: {fileID: 552099566}
   settingUIGroup: {fileID: 4606562}
   settingMainText: {fileID: 1015375115}
@@ -2707,8 +2708,8 @@ MonoBehaviour:
       m_Calls: []
   m_text: "Scroll SPEED\uB97C \uC218\uCE58\uC5D0 \uB9DE\uAC8C \uC870\uC815\uD558\uC138\uC694"
   m_isRightToLeft: 0
-  m_fontAsset: {fileID: 11400000, guid: 8d68e57d16724da41986b4d54fc17fd8, type: 2}
-  m_sharedMaterial: {fileID: 2953776307126180261, guid: 8d68e57d16724da41986b4d54fc17fd8, type: 2}
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_fontSharedMaterials: []
   m_fontMaterial: {fileID: 0}
   m_fontMaterials: []

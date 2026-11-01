@@ -12,15 +12,16 @@ public static class SettingsUIKit
 {
     public static TMP_FontAsset Font;
 
-    public static readonly Color Accent = new Color(0.36f, 0.88f, 0.90f, 1f);      // #5ce1e6
-    public static readonly Color AccentDark = new Color(0.09f, 0.32f, 0.36f, 1f);
-    public static readonly Color TextMain = new Color(0.95f, 0.97f, 1f, 1f);
-    public static readonly Color TextSub = new Color(0.62f, 0.68f, 0.78f, 1f);
-    public static readonly Color TextOnAccent = new Color(0.04f, 0.08f, 0.12f, 1f);
-    public static readonly Color PanelColor = new Color(0.055f, 0.08f, 0.13f, 0.97f);
-    public static readonly Color PanelSolid = new Color(0.05f, 0.075f, 0.12f, 1f);
-    public static readonly Color RowColor = new Color(1f, 1f, 1f, 0.035f);
-    public static readonly Color ButtonColor = new Color(1f, 1f, 1f, 0.09f);
+    // 색 배합: 검정 + 흰색 계열 (설정창 · 오프셋 측정 화면)
+    public static readonly Color Accent = new Color(1f, 1f, 1f, 1f);                  // 강조 = 흰색 (선택된 탭 · ON · 슬라이더 채움)
+    public static readonly Color AccentDark = new Color(0.20f, 0.20f, 0.20f, 1f);     // 닫기 버튼 등 진한 회색
+    public static readonly Color TextMain = new Color(0.96f, 0.96f, 0.96f, 1f);
+    public static readonly Color TextSub = new Color(0.60f, 0.60f, 0.60f, 1f);
+    public static readonly Color TextOnAccent = new Color(0.04f, 0.04f, 0.04f, 1f);   // 흰 바탕 위 글자 = 검정
+    public static readonly Color PanelColor = new Color(0.035f, 0.035f, 0.035f, 0.97f);
+    public static readonly Color PanelSolid = new Color(0.03f, 0.03f, 0.03f, 1f);
+    public static readonly Color RowColor = new Color(1f, 1f, 1f, 0.04f);
+    public static readonly Color ButtonColor = new Color(1f, 1f, 1f, 0.08f);
     public static readonly Color FastColor = new Color(0.53f, 0.81f, 0.92f, 1f);
     public static readonly Color SlowColor = new Color(1f, 0.35f, 0.35f, 1f);
 
@@ -110,7 +111,7 @@ public static class SettingsUIKit
         cb.normalColor = baseColor;
         cb.highlightedColor = Brighten(baseColor, 0.12f);
         cb.pressedColor = new Color(Accent.r, Accent.g, Accent.b, 0.55f);
-        cb.selectedColor = Blend(baseColor, new Color(Accent.r, Accent.g, Accent.b, 0.45f));
+        cb.selectedColor = Blend(baseColor, new Color(Accent.r, Accent.g, Accent.b, 0.30f));   // 키보드로 고른 버튼: 옅은 흰색
         cb.disabledColor = new Color(baseColor.r, baseColor.g, baseColor.b, baseColor.a * 0.4f);
         cb.colorMultiplier = 1f;
         cb.fadeDuration = 0.06f;
@@ -122,7 +123,7 @@ public static class SettingsUIKit
         RectTransform root = Rect("Slider", parent);
         Slider s = root.gameObject.AddComponent<Slider>();
 
-        Image bg = Img("Background", root, new Color(1f, 1f, 1f, 0.12f), true);
+        Image bg = Img("Background", root, new Color(1f, 1f, 1f, 0.14f), true);
         Place(bg.rectTransform, new Vector2(0f, 0.4f), new Vector2(1f, 0.6f), Vector2.zero, Vector2.zero);
 
         RectTransform fillArea = Rect("Fill Area", root);
@@ -144,10 +145,10 @@ public static class SettingsUIKit
         s.wholeNumbers = whole;
 
         ColorBlock cb = s.colors;
-        cb.normalColor = new Color(0.85f, 0.9f, 0.95f, 1f);
+        cb.normalColor = new Color(0.85f, 0.85f, 0.85f, 1f);
         cb.highlightedColor = Color.white;
-        cb.pressedColor = Accent;
-        cb.selectedColor = Accent;
+        cb.pressedColor = Color.white;
+        cb.selectedColor = Color.white;
         cb.fadeDuration = 0.06f;
         s.colors = cb;
         return s;

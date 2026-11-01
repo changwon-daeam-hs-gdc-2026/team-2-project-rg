@@ -11,6 +11,10 @@ using UnityEngine.UI;
 //
 //  FULL COMBO  : 흰색 번쩍 → 띠가 펼쳐지고 글자가 크게 → 제자리, 반짝이 조각, 빛줄기 (흰색)
 //  ALL PERFECT : FULL COMBO 와 같은 움직임 + 글자·선·반짝이가 연한 무지개 그라데이션 (천천히 흐름)
+//  ALL JUST    : ALL PERFECT 와 똑같은 움직임 (TP 100%) + 심플한 차이 세 가지만
+//                · 위아래 선 바깥에 가는 흰 선 한 겹 더
+//                · 시작할 때 흰 빛 고리 하나가 퍼짐
+//                · 띠 아래 작은 글자 "TECHNICAL POINT 100.00%"
 //  CLEAR       : "TRACK COMPLETE" — 번쩍임/반짝이/빛줄기 없이 띠가 열리고 글자가 조용히 떠오르는 약한 연출
 //  FAILED      : "TRACK CRASH" — 축하가 아닌 연출. 번쩍임/반짝이/빛줄기 없음. 화면이 어둡게 가라앉고,
 //                회색 띠 위로 바랜 빨간 글자가 위에서 무겁게 내려앉은 뒤 자간이 아주 조금씩 벌어짐
@@ -19,7 +23,7 @@ using UnityEngine.UI;
 // ============================================================
 public class ClearEffect : MonoBehaviour
 {
-    public enum ClearType { None, FullCombo, AllPerfect, Failed, Clear }
+    public enum ClearType { None, FullCombo, AllPerfect, Failed, Clear, AllJust }   // AllJust 는 맨 뒤 (기존 값 유지)
 
     private static readonly Color MainColor = Color.white;
     private static readonly Color FailText = new Color(0.86f, 0.38f, 0.40f, 1f);
@@ -60,7 +64,14 @@ public class ClearEffect : MonoBehaviour
     }
 
     private bool IsFailed { get { return type == ClearType.Failed; } }
-    private bool IsAllPerfect { get { return type == ClearType.AllPerfect; } }
+    private bool IsAllPerfect { get { return type == ClearType.AllPerfect || type == ClearType.AllJust; } }   // 무지개 연출 (AP · AJ)
+    private bool IsAllJust { get { return type == ClearType.AllJust; } }
+    private float BandH { get { return BandHeight; } }
+
+    // ALL JUST 전용 요소 (바깥 흰 선 · 빛 고리 · 아래 글자)
+    private Image lineTop2, lineBottom2, ring;
+    private TextMeshProUGUI subTitle;
+    private readonly List<Texture2D> ownedTex = new List<Texture2D>();
     private bool IsComplete { get { return type == ClearType.Clear; } }
     private bool IsQuiet { get { return IsFailed || IsComplete; } } // 번쩍임·반짝이·빛줄기 없는 연출
 
@@ -99,6 +110,14 @@ public class ClearEffect : MonoBehaviour
         flash = NewImage("Flash", transform, IsFailed ? new Color(0f, 0f, 0f, 0f) : new Color(1f, 1f, 1f, 0f));
         Stretch(flash.rectTransform);
 
+        // ALL JUST: 흰 빛 고리 하나 (띠보다 먼저 만들어서 뒤에 그려짐)
+        if (IsAllJust)
+        {
+            ring = NewImage("Ring", transform, Color.clear);
+            ring.sprite = MakeRing();
+            ring.rectTransform.anchorMin = ring.rectTransform.anchorMax = ring.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+        }
+
         // 가운데 띠 (안쪽은 RectMask2D 로 잘림 → 빛줄기·글자가 띠 밖으로 나가지 않음)
         Image bandImg = NewImage("Band", transform, IsFailed ? new Color(0.04f, 0.04f, 0.05f, 0.78f)
                                                   : (IsComplete ? new Color(0f, 0f, 0f, 0.5f) : new Color(0f, 0f, 0f, 0.6f)));
@@ -113,6 +132,18 @@ public class ClearEffect : MonoBehaviour
         Color lineColor = IsFailed ? FailLine : (IsComplete ? new Color(1f, 1f, 1f, 0.7f) : MainColor);
         lineTop = NewImage("LineTop", transform, lineColor);
         lineBottom = NewImage("LineBottom", transform, lineColor);
+        if (IsAllJust)
+        {
+            lineTop2 = NewImage("LineTop2", transform, Color.clear);
+            lineBottom2 = NewImage("LineBottom2", transform, Color.clear);
+            foreach (var l in new[] { lineTop2, lineBottom2 })
+            {
+                RectTransform r = l.rectTransform;
+                r.anchorMin = r.anchorMax = new Vector2(0.5f, 0.5f);
+                r.pivot = new Vector2(0.5f, 0.5f);
+                r.sizeDelta = new Vector2(0f, 2f);
+            }
+        }
         foreach (var l in new[] { lineTop, lineBottom })
         {
             RectTransform r = l.rectTransform;
@@ -139,14 +170,24 @@ public class ClearEffect : MonoBehaviour
         if (font == null) font = Resources.Load<TMP_FontAsset>("Fonts/MoveSans-Light");
         if (font == null) font = TMP_Settings.defaultFontAsset;
 
-        string label = type == ClearType.AllPerfect ? "ALL PERFECT"
+        string label = type == ClearType.AllJust ? "ALL JUST"
+                     : type == ClearType.AllPerfect ? "ALL PERFECT"
                      : type == ClearType.FullCombo ? "FULL COMBO"
                      : type == ClearType.Clear ? "TRACK COMPLETE"
                      : "TRACK CRASH";
         title = NewText("Title", band, label, TitleSize, font, FontStyles.Bold);
         title.color = IsFailed ? FailText : MainColor;
         title.rectTransform.anchoredPosition = Vector2.zero;
-        title.rectTransform.sizeDelta = new Vector2(1800f, BandHeight);
+        title.rectTransform.sizeDelta = new Vector2(1800f, BandH);
+
+        if (IsAllJust)
+        {
+            subTitle = NewText("Sub", transform, "TECHNICAL POINT  100.00%", 22f, font, FontStyles.Bold);
+            subTitle.characterSpacing = 10f;
+            subTitle.rectTransform.sizeDelta = new Vector2(1200f, 40f);
+            subTitle.rectTransform.anchoredPosition = new Vector2(0f, CenterY - BandH * 0.5f - 44f);
+            subTitle.alpha = 0f;
+        }
 
         // 반짝이 조각 (FAILED 에는 없음)
         int count = IsQuiet ? 0 : (IsAllPerfect ? 36 : 24);
@@ -169,11 +210,13 @@ public class ClearEffect : MonoBehaviour
                 rt = r, img = img,
                 velocity = new Vector2(Mathf.Cos(angle) * speed, Mathf.Sin(angle) * speed * 0.35f),
                 spin = UnityEngine.Random.Range(-360f, 360f),
-                life = UnityEngine.Random.Range(0.6f, 1.1f)
+                life = UnityEngine.Random.Range(0.6f, 1.1f),
             });
         }
 
-        PlaySound(IsFailed ? "Audio/etc/failed" : IsComplete ? "Audio/etc/complete" : (IsAllPerfect ? "Audio/etc/allperfect" : "Audio/etc/fullcombo"));
+        PlaySound(IsFailed ? "Audio/etc/failed" : IsComplete ? "Audio/etc/complete"
+                : IsAllJust ? (Resources.Load<AudioClip>("Audio/etc/alljust") != null ? "Audio/etc/alljust" : "Audio/etc/allperfect")
+                : (IsAllPerfect ? "Audio/etc/allperfect" : "Audio/etc/fullcombo"));
     }
 
     // =====================================================================
@@ -195,9 +238,10 @@ public class ClearEffect : MonoBehaviour
             // 띠 펼침 / 접힘
             float open = EaseOut(Mathf.Clamp01(t / 0.25f));
             float close = t > outStart ? Smooth((t - outStart) / 0.4f) : 0f; // 위아래에서 닫힘
-            float h = BandHeight * open * (1f - close);
+            float h = BandH * open * (1f - close);
             band.sizeDelta = new Vector2(0f, h);
             UpdateLines(1920f * EaseOut(Mathf.Clamp01((t - 0.05f) / 0.45f)), h); // 선은 가로 길이 그대로, 띠와 함께 가운데로 모임
+            if (IsAllJust) UpdateAllJust(t, h, close);
 
             // 글자: 크게 → 제자리, 자간 좁혀짐
             float tp = EaseOut(Mathf.Clamp01((t - 0.05f) / 0.4f));
@@ -216,7 +260,7 @@ public class ClearEffect : MonoBehaviour
             // 빛줄기 (두 번 훑음)
             float s1 = Mathf.Clamp01((t - 0.3f) / 0.55f);
             float s2 = Mathf.Clamp01((t - 1.6f) / 0.55f);
-            float sweep = (t < 1.6f) ? s1 : s2;
+            float sweep = t < 1.6f ? s1 : s2;
             shine.rectTransform.anchoredPosition = new Vector2(Mathf.Lerp(-1150f, 1150f, EaseInOut(sweep)), 0f);
             shine.enabled = (sweep > 0f && sweep < 1f) && close <= 0f;
 
@@ -225,7 +269,6 @@ public class ClearEffect : MonoBehaviour
             for (int i = 0; i < sparks.Count; i++)
             {
                 Spark s = sparks[i];
-                if (st < 0f) continue;
                 float p = Mathf.Clamp01(st / s.life);
                 float travel = 1f - Mathf.Pow(1f - p, 2f);
                 s.rt.anchoredPosition = new Vector2(0f, CenterY) + s.velocity * travel * s.life * 0.6f;
@@ -317,6 +360,47 @@ public class ClearEffect : MonoBehaviour
         Destroy(gameObject);
     }
 
+    // ALL JUST 전용: 바깥 가는 흰 선 · 흰 빛 고리 · 아래 글자
+    private void UpdateAllJust(float t, float bandH, float close)
+    {
+        // 바깥 흰 선: 안쪽 무지개 선보다 조금 늦게 펼쳐지고, 띠와 같이 가운데로 모임
+        float w2 = 1920f * EaseOut(Mathf.Clamp01((t - 0.15f) / 0.5f));
+        Color lc = new Color(1f, 1f, 1f, 0.55f);
+        foreach (var l in new[] { lineTop2, lineBottom2 }) { l.rectTransform.sizeDelta = new Vector2(w2, 2f); l.color = lc; }
+        lineTop2.rectTransform.anchoredPosition = new Vector2(0f, CenterY + bandH * 0.5f + 16f);
+        lineBottom2.rectTransform.anchoredPosition = new Vector2(0f, CenterY - bandH * 0.5f - 16f);
+
+        // 흰 빛 고리: 시작할 때 한 번, 납작하게 퍼지며 사라짐
+        float rg = Mathf.Clamp01((t - 0.05f) / 0.8f);
+        float size = Mathf.Lerp(200f, 2400f, EaseOut(rg));
+        ring.rectTransform.sizeDelta = new Vector2(size, size * 0.42f);
+        ring.color = new Color(1f, 1f, 1f, rg < 1f ? 0.6f * (1f - rg) : 0f);
+
+        // 아래 작은 글자: 띠가 열린 뒤 조용히 떠오름
+        float a = Smooth((t - 0.5f) / 0.4f) * (1f - close);
+        subTitle.rectTransform.anchoredPosition = new Vector2(0f, CenterY - bandH * 0.5f - 46f + 8f * (1f - a));
+        subTitle.color = new Color(1f, 1f, 1f, 0.85f * a);
+    }
+
+    private Sprite MakeRing()
+    {
+        const int S = 256;
+        Texture2D tex = new Texture2D(S, S, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        Color32[] px = new Color32[S * S];
+        for (int y = 0; y < S; y++)
+        for (int x = 0; x < S; x++)
+        {
+            float dx = (x + 0.5f) / S * 2f - 1f, dy = (y + 0.5f) / S * 2f - 1f;
+            float d = Mathf.Abs(Mathf.Sqrt(dx * dx + dy * dy) - 0.92f);
+            float a = Mathf.Clamp01(1f - d / 0.02f) + Mathf.Exp(-d / 0.04f) * 0.3f;
+            px[y * S + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a) * 255f));
+        }
+        tex.SetPixels32(px); tex.Apply();
+        ownedTex.Add(tex);
+        return Sprite.Create(tex, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), 100f);
+    }
+
     private void UpdateLines(float width, float bandH)
     {
         float th = IsQuiet ? 2f : 4f;
@@ -369,7 +453,7 @@ public class ClearEffect : MonoBehaviour
     }
 
     // 씬이 바뀌는 등으로 중간에 사라져도 결과창 전환이 막히지 않도록 OnDestroy 에서도 한 번만 호출
-    void OnDestroy() { Finish(); }
+    void OnDestroy() { Finish(); foreach (var tx in ownedTex) if (tx != null) Destroy(tx); }
 
     private void Finish()
     {

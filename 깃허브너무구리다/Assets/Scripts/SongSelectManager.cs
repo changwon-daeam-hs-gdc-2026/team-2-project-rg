@@ -109,14 +109,27 @@ public class SongSelectManager : MonoBehaviour
     public Sprite mvOnSprite;
     public Sprite mvOffSprite;
 
-    [Header("미리듣기")]
+    [Header("미리듣기 (Audio/Full/{id} 를 미리듣기 시작 시각부터 곡 끝까지 반복 재생, Audio/Preview 는 더 이상 쓰지 않음)")]
     public AudioSource previewAudioSource;
     [Range(0f, 1f)] public float previewVolume = 1f;
-    public float previewDelay = 0.15f;
-    public float previewFadeIn = 0.4f;
+    [Tooltip("곡을 고른 뒤 이만큼 머무르면 재생 (빠르게 넘길 때 큰 음원을 매번 읽지 않도록)")]
+    public float previewDelay = 0.25f;
+    [Tooltip("시작할 때 소리가 커지는 시간(초)")]
+    public float previewFadeIn = 0.8f;
+    [Tooltip("끝날 때 소리가 작아지는 시간(초)")]
+    public float previewFadeOut = 1.5f;
+    [Tooltip("한 번 끝나고 다시 시작하기 전 쉬는 시간(초)")]
+    public float previewLoopGap = 0.6f;
+    [Tooltip("미리듣기 시작 정보가 없을 때: 곡 길이의 이 비율 지점부터")]
+    [Range(0f, 0.9f)] public float previewFallbackStartRatio = 0.35f;
 
     // ===== 내부 상태 =====
-    [Serializable] private class SongExtra { public int Id; public string Length; public string BarColor; }
+    // songs.json 추가 항목 (선택): "PreviewStart": 54321 (ms, 음악 파일 기준) — 채보의 PREVIEW 줄보다 우선
+    //  "PreviewEnd" 도 적으면 그 시각에서 끝냄 (없으면 곡 끝까지)
+    [Serializable] private class SongExtra { public int Id; public string Length; public string BarColor; public double PreviewStart; public double PreviewEnd; }
+    private readonly Dictionary<int, Vector2> previewOverride = new Dictionary<int, Vector2>(); // 초
+    private readonly Dictionary<int, Vector2> previewFromChart = new Dictionary<int, Vector2>(); // 초 (x < 0 = 없음)
+    private AudioClip previewClip;
 
     private readonly List<SongData> songList = new List<SongData>();
     private readonly Dictionary<int, string> lengthOverride = new Dictionary<int, string>();
@@ -168,6 +181,11 @@ public class SongSelectManager : MonoBehaviour
     public TMP_FontAsset detailFont;
     private SongDetailPanel detailPanel;
 
+    [Header("영역 채보 경고 (SIMPLE-DIVERSE 전용 채보를 다른 스킨으로 골랐을 때)")]
+    [Tooltip("한글이 들어 있는 글꼴 (비우면 곡 제목 글꼴)")]
+    public TMP_FontAsset areaNoticeFont;
+    private AreaNoticeBanner areaNotice;
+
     private void CreateDetailPanel()
     {
         if (!showDetailPanel || selectedJacketImg == null) return;
@@ -212,6 +230,24 @@ public class SongSelectManager : MonoBehaviour
     void LateUpdate()
     {
         if (detailPanel != null && songList.Count > 0) detailPanel.Show(CurrentSong, currentDifficulty, isMvOn, CurrentSong.HasMV == 1);
+
+        // 영역 채보(SIMPLE-DIVERSE 전용)인데 지금 스킨이 다르면 경고 띠
+        if (songList.Count > 0)
+        {
+            bool need = AreaHelper.IsAreaLevel(CurrentSong, currentDifficulty) && SettingsStore.Current.GameSkin != GameSkins.Diverse;
+            if (need && areaNotice == null) CreateAreaNotice();
+            if (areaNotice != null) areaNotice.SetVisible(need && !isLeaving);
+        }
+    }
+
+    private void CreateAreaNotice()
+    {
+        Canvas c = selectedJacketImg != null ? selectedJacketImg.canvas : FindObjectOfType<Canvas>();
+        if (c == null) return;
+        Transform root = c.rootCanvas != null ? c.rootCanvas.transform : c.transform;
+        TMP_FontAsset font = areaNoticeFont != null ? areaNoticeFont
+                           : (selectedSongTitleText != null ? selectedSongTitleText.font : rowFont);
+        areaNotice = AreaNoticeBanner.Create(root, font);
     }
 
     private SongData CurrentSong { get { return songList[DataIndex(currentVirtualIndex)]; } }
@@ -223,6 +259,9 @@ public class SongSelectManager : MonoBehaviour
     // =====================================================================
     void Start()
     {
+        // 일시정지 → 곡 선택으로 나올 때 덮어 둔 곡 정보 화면(게임에 들어갈 때와 같은 전환)을 걷음
+        if (SongIntroOverlay.IsActive) SongIntroOverlay.NotifyGameReady();
+
         ColorUtility.TryParseHtmlString("#5ce1e6", out diffColors[1]);
         ColorUtility.TryParseHtmlString("#ff751f", out diffColors[2]);
         ColorUtility.TryParseHtmlString("#ff3131", out diffColors[3]);
@@ -273,6 +312,8 @@ public class SongSelectManager : MonoBehaviour
     {
         yield return null;
         yield return null;
+        // 설정창 글꼴 (한글): 인스펙터 Settings Font / Settings Bold Font. 비우면 확인 창 글꼴(Dialog Font → Area Notice Font …)
+        SettingsWindow.SetFonts(settingsFont != null ? settingsFont : DialogFont, settingsBoldFont);
         SettingsWindow.Prewarm(); // 설정창 UI 미리 생성
 
         // 글꼴: 자주 쓰는 영문·숫자·기호를 미리 글꼴 아틀라스에 올려 둔다 (첫 표시 때 글자 굽기 지연 방지)
@@ -311,6 +352,8 @@ public class SongSelectManager : MonoBehaviour
                 foreach (var e in extras)
                 {
                     if (!string.IsNullOrWhiteSpace(e.Length)) lengthOverride[e.Id] = e.Length.Trim();
+                    if (e.PreviewStart > 0 || e.PreviewEnd > 0)
+                        previewOverride[e.Id] = new Vector2((float)(Math.Max(0.0, e.PreviewStart) / 1000.0), e.PreviewEnd > e.PreviewStart ? (float)(e.PreviewEnd / 1000.0) : -1f);
 
                     // "BarColor": "#ff3131" (또는 "ff3131")
                     if (!string.IsNullOrWhiteSpace(e.BarColor))
@@ -427,7 +470,8 @@ public class SongSelectManager : MonoBehaviour
         float dt = Time.unscaledDeltaTime;
 
         // 설정창이 열려 있으면(또는 이번 프레임에 닫혔으면) 곡 선택 조작은 막고 화면 연출만 계속한다
-        bool inputBlocked = SettingsWindow.BlocksGameInput;
+        // 설정창 또는 플레이 확인 창(경고 · 알림)이 열려 있으면 곡 선택 조작을 막음
+        bool inputBlocked = SettingsWindow.BlocksGameInput || PlayConfirmDialog.IsOpen;
         if (!inputBlocked && kb.escapeKey.wasPressedThisFrame)
         {
             SettingsWindow.Open();
@@ -913,7 +957,7 @@ public class SongSelectManager : MonoBehaviour
 
         AudioClip clip = req.asset as AudioClip;
         lengthCache[songId] = clip != null ? clip.length : -1f;
-        if (clip != null) Resources.UnloadAsset(clip);
+        if (clip != null && clip != previewClip) Resources.UnloadAsset(clip); // 미리듣기에 쓰는 중이면 그대로
 
         if (songLengthText != null && CurrentSong.Id == songId) songLengthText.text = FormatSeconds(lengthCache[songId]);
         lengthRoutine = null;
@@ -1061,30 +1105,136 @@ public class SongSelectManager : MonoBehaviour
         previewRoutine = StartCoroutine(LoadAndPlayPreview(CurrentSong.Id));
     }
 
+    // =====================================================================
+    //  미리듣기: 전체 음원(Audio/Full/{id})을 미리듣기 시작 시각부터 곡 끝까지 반복 재생 (osu! 와 같음)
+    //   시작 시각 우선순위: songs.json PreviewStart → 채보 파일의 PREVIEW 줄(변환기가 osu! PreviewTime 으로 기록)
+    //                      → 곡 길이의 35% 지점
+    //   시작은 부드럽게 커지고(fade in) 끝은 부드럽게 작아진 뒤(fade out) 잠깐 쉬고 다시 시작한다.
+    // =====================================================================
     private IEnumerator LoadAndPlayPreview(int songId)
     {
         yield return new WaitForSecondsRealtime(previewDelay);
         if (CurrentSong.Id != songId) yield break;
 
-        ResourceRequest req = Resources.LoadAsync<AudioClip>($"Audio/Preview/{songId}");
+        ResourceRequest req = Resources.LoadAsync<AudioClip>($"Audio/Full/{songId}");
         yield return req;
-        if (CurrentSong.Id != songId || req.asset == null) yield break;
+        AudioClip clip = req.asset as AudioClip;
+        if (clip == null) { Debug.LogWarning($"[SongSelect] Resources/Audio/Full/{songId} 이 없습니다."); previewRoutine = null; yield break; }
+        if (CurrentSong.Id != songId) { ReleaseUnusedClip(clip); yield break; }
 
-        previewAudioSource.clip = req.asset as AudioClip;
-        previewAudioSource.loop = true;
-        previewAudioSource.time = 0f;
-        previewAudioSource.volume = 0f;
-        previewAudioSource.Play();
-
-        float t = 0f, dur = Mathf.Max(0.01f, previewFadeIn);
-        while (t < dur)
+        if (clip.loadState != AudioDataLoadState.Loaded) clip.LoadAudioData();
+        while (clip.loadState == AudioDataLoadState.Loading)
         {
-            t += UiTime.Delta;
-            previewAudioSource.volume = PreviewTargetVolume * Mathf.Clamp01(t / dur);
+            if (CurrentSong.Id != songId) { ReleaseUnusedClip(clip); yield break; }
             yield return null;
         }
-        previewAudioSource.volume = PreviewTargetVolume;
-        previewRoutine = null;
+
+        SetPreviewClip(clip);
+        if (!lengthCache.ContainsKey(songId)) lengthCache[songId] = clip.length;
+
+        float start, end;
+        GetPreviewRange(songId, clip.length, out start, out end);
+
+        while (true)
+        {
+            previewAudioSource.loop = false;
+            previewAudioSource.time = start;
+            previewAudioSource.volume = 0f;
+            previewAudioSource.Play();
+
+            float len = end - start;
+            float fadeIn = Mathf.Min(previewFadeIn, len * 0.3f);
+            float fadeOut = Mathf.Min(previewFadeOut, len * 0.4f);
+
+            // 앞부분: 서서히 커짐
+            float t = 0f;
+            while (t < fadeIn && previewAudioSource.isPlaying)
+            {
+                t += UiTime.Delta;
+                previewAudioSource.volume = PreviewTargetVolume * Smooth(t / Mathf.Max(0.01f, fadeIn));
+                yield return null;
+            }
+
+            // 가운데: 그대로 (설정 볼륨 변화는 바로 반영)
+            while (previewAudioSource.isPlaying && previewAudioSource.time < end - fadeOut)
+            {
+                previewAudioSource.volume = PreviewTargetVolume;
+                yield return null;
+            }
+
+            // 뒷부분: 서서히 작아짐
+            t = 0f;
+            while (t < fadeOut && previewAudioSource.isPlaying)
+            {
+                t += UiTime.Delta;
+                previewAudioSource.volume = PreviewTargetVolume * (1f - Smooth(t / Mathf.Max(0.01f, fadeOut)));
+                yield return null;
+            }
+
+            previewAudioSource.Stop();
+            yield return new WaitForSecondsRealtime(previewLoopGap);
+            if (CurrentSong.Id != songId) { previewRoutine = null; yield break; }
+        }
+    }
+
+    private static float Smooth(float x) { x = Mathf.Clamp01(x); return x * x * (3f - 2f * x); }
+
+    // 이전 곡의 전체 음원은 메모리에서 내린다 (전체 음원은 미리듣기 파일보다 훨씬 크다)
+    private void SetPreviewClip(AudioClip clip)
+    {
+        if (previewClip != null && previewClip != clip)
+        {
+            previewAudioSource.Stop();
+            previewAudioSource.clip = null;
+            Resources.UnloadAsset(previewClip);
+        }
+        previewClip = clip;
+        previewAudioSource.clip = clip;
+    }
+
+    private void ReleaseUnusedClip(AudioClip clip)
+    {
+        if (clip != null && clip != previewClip) Resources.UnloadAsset(clip);
+    }
+
+    // 미리듣기 구간(초)
+    private void GetPreviewRange(int songId, float clipLength, out float start, out float end)
+    {
+        Vector2 r;
+        if (!previewOverride.TryGetValue(songId, out r))
+        {
+            if (!previewFromChart.TryGetValue(songId, out r)) { r = ReadPreviewFromCharts(songId); previewFromChart[songId] = r; }
+        }
+
+        start = (r.x >= 0f && r.x < clipLength - 2f) ? r.x : clipLength * previewFallbackStartRatio;
+        end = (r.y > start) ? Mathf.Min(r.y, clipLength) : clipLength;   // 끝 시각이 없으면 곡 끝까지
+    }
+
+    // StreamingAssets/chart/{id}_{난이도}.txt 의 "PREVIEW, 시작ms" (끝ms 는 선택) — 현재 난이도 → INSANE → HARD → EASY 순으로 찾음
+    private Vector2 ReadPreviewFromCharts(int songId)
+    {
+        int[] order = { currentDifficulty, 3, 2, 1 };
+        foreach (int lv in order)
+        {
+            string path = Path.Combine(Application.streamingAssetsPath, "chart", $"{songId}_{lv}.txt");
+            if (!File.Exists(path)) continue;
+            try
+            {
+                foreach (string raw in File.ReadLines(path))
+                {
+                    string line = raw.Trim();
+                    if (!line.StartsWith("PREVIEW", StringComparison.OrdinalIgnoreCase)) continue;
+                    string[] d = line.Split(',');
+                    if (d.Length < 2 || d[0].Trim().ToUpperInvariant() != "PREVIEW") continue;
+                    float a, b = -1f;
+                    if (!float.TryParse(d[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out a)) continue;
+                    if (d.Length >= 3) float.TryParse(d[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out b);
+                    return new Vector2(a / 1000f, b > a ? b / 1000f : -1f);
+                }
+            }
+            catch (Exception) { }
+        }
+        return new Vector2(-1f, -1f);
     }
 
     private void TryEnter(bool toEditor)
@@ -1099,13 +1249,68 @@ public class SongSelectManager : MonoBehaviour
         if (!anyAvailable) return;
         if (!toEditor && !SongRowUI.IsDifficultyAvailable(GetDifficultyValue(song, currentDifficulty))) return;
 
+        if (toEditor) { BeginLeave(); CoreManager.Instance.LoadEditorScene(song, currentDifficulty); return; }
+
+        // 플레이 전 확인 창
+        //  · 경고창: MV 를 켠 채로, songs.json 에 "MvWarning" 이 있는 곡   → [돌아가기] [MV를 끈 채로 진행하기] [그대로 진행하기]
+        //  · 알림창: 영역 채보(SIMPLE-DIVERSE 전용)를 다른 스킨으로          → [돌아가기] [진행하기]
+        //  둘 다면 경고창 → 알림창 순서. 하나도 없으면 바로 시작
+        var pages = new List<PlayConfirmDialog.Page>();
+        string label = SongLabel(song);
+        if (isMvOn && song.HasMV == 1 && !string.IsNullOrWhiteSpace(song.MvWarning))
+            pages.Add(PlayConfirmDialog.WarningPage(label, song.MvWarning));
+        if (AreaHelper.IsAreaLevel(song, currentDifficulty) && SettingsStore.Current.GameSkin != GameSkins.Diverse)
+            pages.Add(PlayConfirmDialog.AreaNoticePage(label));
+
+        if (pages.Count == 0) { StartGame(song, isMvOn); return; }
+        int level = currentDifficulty;
+        PlayConfirmDialog.Show(pages, DialogFont, (proceed, mvOff) =>
+        {
+            if (!proceed || isLeaving) return;            // 돌아가기 → 곡 선택 그대로
+            if (mvOff) isMvOn = false;                    // MV 를 끈 채로 진행
+            currentDifficulty = level;
+            StartGame(song, isMvOn);
+        }, gameObject);
+    }
+
+    private void BeginLeave()
+    {
         isLeaving = true;
         if (previewRoutine != null) StopCoroutine(previewRoutine);
         if (lengthRoutine != null) StopCoroutine(lengthRoutine);
         if (previewAudioSource != null) previewAudioSource.Stop();
+    }
 
-        if (toEditor) CoreManager.Instance.LoadEditorScene(song, currentDifficulty);
-        else CoreManager.Instance.LoadGameScene(song, isMvOn, currentDifficulty);
+    private void StartGame(SongData song, bool mv)
+    {
+        BeginLeave();
+        CoreManager.Instance.LoadGameScene(song, mv, currentDifficulty);
+    }
+
+    // 확인 창 가운데 상자: "작곡가 - 곡 이름 (부제)"
+    private static string SongLabel(SongData song)
+    {
+        string name = song.Name ?? "";
+        if (!string.IsNullOrWhiteSpace(song.SubName)) name += " " + song.SubName.Trim();
+        return string.IsNullOrWhiteSpace(song.Composer) ? name : song.Composer.Trim() + " - " + name;
+    }
+
+    [Tooltip("설정창 일반 글자 글꼴 (한글이 들어 있는 TMP 글꼴). 비우면 Dialog Font 와 같음")]
+    public TMP_FontAsset settingsFont;
+    [Tooltip("설정창 강조 글자(제목 · 항목 이름 · 버튼 · 탭) 글꼴. 비우면 일반 글꼴을 굵게")]
+    public TMP_FontAsset settingsBoldFont;
+
+    // 확인 창 글꼴: 인스펙터 Dialog Font → Area Notice Font → 곡 제목 글꼴 순 (한글 · 일본어가 들어 있는 글꼴이어야 함)
+    [Tooltip("플레이 확인 창(경고 · 알림) 글꼴. 비우면 Area Notice Font → 곡 제목 글꼴")]
+    public TMP_FontAsset dialogFont;
+    private TMP_FontAsset DialogFont
+    {
+        get
+        {
+            if (dialogFont != null) return dialogFont;
+            if (areaNoticeFont != null) return areaNoticeFont;
+            return selectedSongTitleText != null ? selectedSongTitleText.font : rowFont;
+        }
     }
 
     private static T GetOrAdd<T>(GameObject go) where T : Component

@@ -11,10 +11,13 @@ float4 _DivCamR;     // 오른쪽 방향
 float4 _DivProj;     // x: 1/(tan*aspect)  y: 1/tan
 float4 _DivFade;     // x: 페이드 시작 월드 y  y: 완전히 사라지는 월드 y
 float4 _DivClip;     // x: 판정선 (이보다 아래는 _ClipBelow 일 때 잘림)
+float4 _DivFold;     // 레인 접기: x 가로 배율, y 투명도, z 접히는 중심 x, w 사용 여부(1) — 0 이면 영향 없음
 
 // 월드 좌표 → 클립 좌표 (w = 깊이 → 텍스처가 원근에 맞게 보간됨)
 inline float4 DiverseProject(float3 wp)
 {
+    // 레인 접기: 가운데(z)로 x 를 모음
+    wp.x = lerp(wp.x, _DivFold.z + (wp.x - _DivFold.z) * _DivFold.x, _DivFold.w);
     float3 r = wp - _DivCamPos.xyz;
     float z = max(dot(r, _DivCamF.xyz), 0.001);
     float x = dot(r, _DivCamR.xyz) * _DivProj.x;
@@ -26,7 +29,8 @@ inline float4 DiverseProject(float3 wp)
 inline float DiverseFade(float worldY)
 {
     float t = saturate((worldY - _DivFade.x) / max(_DivFade.y - _DivFade.x, 0.0001));
-    return 1.0 - t * t * (3.0 - 2.0 * t);
+    float foldA = lerp(1.0, _DivFold.y, _DivFold.w);   // 레인 접기 중 투명도
+    return (1.0 - t * t * (3.0 - 2.0 * t)) * foldA;
 }
 
 #endif

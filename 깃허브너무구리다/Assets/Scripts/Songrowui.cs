@@ -136,12 +136,20 @@ public class SongRowUI : MonoBehaviour
         return !string.IsNullOrWhiteSpace(raw) && raw.Trim() != "00";
     }
 
-    // "03" → "3", "00"/빈 값 → "" (사진의 I Wanna HD 칸처럼 비워 둠)
+    // "03" → "3", "09+" → "9+", "12" → "12", "00"/빈 값 → "" (사진의 I Wanna HD 칸처럼 비워 둠)
+    //  [수정] 숫자 뒤에 다른 글자(+, ?, . 등)가 붙어 있어도 앞자리 0 을 뗀다
     public static string FormatDifficulty(string raw)
     {
         if (!IsDifficultyAvailable(raw)) return "";
-        string t = raw.Trim();
-        return int.TryParse(t, out int v) ? v.ToString() : t;
+        return TrimLeadingZeros(raw.Trim());
+    }
+
+    public static string TrimLeadingZeros(string t)
+    {
+        if (string.IsNullOrEmpty(t)) return t;
+        int i = 0;
+        while (i < t.Length - 1 && t[i] == '0' && char.IsDigit(t[i + 1])) i++;
+        return t.Substring(i);
     }
 
     // =====================================================================

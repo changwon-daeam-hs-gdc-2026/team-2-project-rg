@@ -1,7 +1,8 @@
-BPM, 250.00
-OFFSET, -0.941
+BPM, 250
+MUSICOFFSET, 941
 KeyMode: 4
 SPEED, 1.0
+PREVIEW, 38261
 NOTE, 0, 1, 2, 1, 0, 0, 1
 NOTE, 0, 5, 8, 0, 1, 0, 0
 NOTE, 0, 3, 4, 0, 0, 1, 1

@@ -13,6 +13,16 @@ public class NoteObject : MonoBehaviour
 
     private float[] laneXPositions = { -1.2f, -0.4f, 0.4f, 1.2f }; 
 
+    // 화살표 노트(7: >>> 밝은 파랑 / 8: <<< 밝은 노랑): 노트 위에 떠 있는 화살표 + 노트에서 나오는 빛
+    private SpriteRenderer arrowRenderer, arrowGlowRenderer;
+    private const float ArrowLift = 0.30f;      // 노트 중심에서 화살표까지 높이 (월드 유닛)
+    private const float ArrowWidth = 0.62f;     // 화살표 폭
+    private const float ArrowHeight = 0.24f;
+
+    // 놓친 롱노트: 흘러가며 서서히 투명해짐
+    private float missFade = -1f;               // < 0 = 사라지는 중 아님, 0 ~ 1 = 진행도
+    private const float MissFadeSeconds = 0.45f;
+
     [Header("기본 에셋 설정")]
     public Sprite blueShort; public Sprite greenShort;
     public Sprite blueLongHead; public Sprite greenLongHead;
@@ -23,7 +33,6 @@ public class NoteObject : MonoBehaviour
     private double myNextTargetDist;
     private double myTailTime = 0.0;
     
-    private float screenW, screenH;
     private Vector3 originalScale;
 
     private static Dictionary<string, Sprite> redNoteSprites = null;
@@ -33,15 +42,13 @@ public class NoteObject : MonoBehaviour
     private Color bodyBaseColor = Color.white;
     private float appliedEndAlpha = 1f;
 
+    private static Sprite measureSprite;
+
     void Awake()
     {
         spriteRenderer = GetComponent<SpriteRenderer>();
         originalScale = transform.localScale; 
         
-        if (Camera.main != null) {
-            screenH = Camera.main.orthographicSize * 2f;
-            screenW = screenH * Camera.main.aspect;
-        }
 
         if (redNoteSprites == null)
         {
@@ -64,15 +71,9 @@ public class NoteObject : MonoBehaviour
         spriteRenderer.flipY = false;
         spriteRenderer.drawMode = SpriteDrawMode.Simple; // 풀링 재사용 시 SIMPLE 스킨의 Sliced 상태 해제
 
-        if (myData.IsFreeKey)
-        {
-            if (myData.FreeKeyType == 0) spriteRenderer.sprite = GameManager.Instance.freeKeyNormalSprite;
-            else if (myData.FreeKeyType == 1) spriteRenderer.sprite = GameManager.Instance.freeKeySpaceSprite;
-            else if (myData.FreeKeyType == 2) spriteRenderer.sprite = GameManager.Instance.freeKeyDragSprite;
-            
-            transform.localScale = new Vector3(1.2f, 1.2f, 1f); 
-        }
-        else if (myData.IsRedNote)
+        missFade = -1f;
+
+        if (myData.IsRedNote)
         {
             string prefix = $"{myData.Width}x";
             string targetSpriteName = "";
@@ -134,11 +135,16 @@ public class NoteObject : MonoBehaviour
         else if (myData.Type == 4) 
         {
             // ✅ GameManager의 마디선 생성 방식과 완전히 동일한 텍스처와 색상 적용
-            Texture2D tex = new Texture2D(1, 1); 
-            tex.SetPixel(0, 0, new Color(128, 128, 128, 0.2f)); 
-            tex.Apply();
-            
-            spriteRenderer.sprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+            // [끊김 수정] 예전에는 마디선 노트가 나올 때마다 텍스처 · 스프라이트를 새로 만들었다
+            //  (SIMPLE-DIVERSE 에서는 그때마다 원근 재질까지 새로 생김) → 한 번만 만들어 같이 씀
+            if (measureSprite == null)
+            {
+                Texture2D tex = new Texture2D(1, 1);
+                tex.SetPixel(0, 0, new Color(128, 128, 128, 0.2f));
+                tex.Apply();
+                measureSprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+            }
+            spriteRenderer.sprite = measureSprite;
             spriteRenderer.color = Color.white; 
             
             // ✅ 노트(5)보다 아래에 깔리도록 렌더링 오더를 1로 지정
@@ -155,7 +161,7 @@ public class NoteObject : MonoBehaviour
         else
         {
             bool isBlue = (myData.Lane == 0 || myData.Lane == 3);
-            if (myData.Type == 1) spriteRenderer.sprite = isBlue ? blueShort : greenShort;
+            if (myData.Type == 1 || NoteTypes.IsArrow(myData.Type)) spriteRenderer.sprite = isBlue ? blueShort : greenShort;
             else if (myData.Type == 2) spriteRenderer.sprite = isBlue ? blueLongHead : greenLongHead;
             else if (myData.Type == 3) spriteRenderer.sprite = isBlue ? blueLongTail : greenLongTail;
             transform.rotation = Quaternion.identity;
@@ -183,23 +189,31 @@ public class NoteObject : MonoBehaviour
             }
         }
 
-        // 설정 > GAME UI 가 SIMPLE 이면 단색 둥근 노트로 바꾼다 (프리키 노트 / 마디선은 기본 그대로)
-        if (SimpleGameSkin.Active != null && !myData.IsFreeKey && myData.Type != 4) ApplySimpleStyle();
+        // 설정 > GAME UI 가 SIMPLE 이면 단색 둥근 노트로 바꾼다 (마디선은 기본 그대로)
+        if (SimpleGameSkin.Active != null && myData.Type != 4) ApplySimpleStyle();
+
+        SetupArrow();
 
 
-        // 판정선 아래로는 그리지 않음 (GameManager 의 NoteClipMask). 프리키 노트는 자유롭게 움직이므로 제외
-        SpriteMaskInteraction clip = myData.IsFreeKey ? SpriteMaskInteraction.None : SpriteMaskInteraction.VisibleInsideMask;
+        // 판정선 아래로는 그리지 않음 (GameManager 의 NoteClipMask)
+        SpriteMaskInteraction clip = SpriteMaskInteraction.VisibleInsideMask;
         spriteRenderer.maskInteraction = clip;
         if (bodyRenderer != null) bodyRenderer.maskInteraction = clip;
+        if (arrowRenderer != null) arrowRenderer.maskInteraction = clip;
+        if (arrowGlowRenderer != null) arrowGlowRenderer.maskInteraction = clip;
 
         // SIMPLE-DIVERSE: 레인 노트는 원근 재질(판정선 아래 자르기 포함), 그 밖에는 원래 재질 (풀링 재사용 대비 매번 지정)
         if (baseMaterial == null) baseMaterial = spriteRenderer.sharedMaterial;
         if (bodyRenderer != null && baseBodyMaterial == null) baseBodyMaterial = bodyRenderer.sharedMaterial;
         DiversePlayfield pf = SimpleGameSkin.Active != null ? SimpleGameSkin.Active.Playfield : null;
-        if (pf != null && !myData.IsFreeKey)
+        if (pf != null)
         {
-            pf.Apply(spriteRenderer, true);
-            if (bodyRenderer != null) pf.Apply(bodyRenderer, true);
+            // 레인 접기(FOLD): 영역 안 노트는 접히지 않고 그대로 보이며 내려온다 (영역 밖 노트만 레인과 함께 접힘)
+            bool fold = !GameManager.Instance.NoteInArea(myData);
+            pf.Apply(spriteRenderer, true, fold);
+            if (bodyRenderer != null) pf.Apply(bodyRenderer, true, fold);
+            if (arrowRenderer != null) pf.Apply(arrowRenderer, true, fold);
+            if (arrowGlowRenderer != null) pf.Apply(arrowGlowRenderer, true, fold);
         }
         else
         {
@@ -225,60 +239,6 @@ public class NoteObject : MonoBehaviour
 
         bool isHidden = GameManager.Instance.IsNoteHiddenByFutureReverseScroll(currentTime, myData.HitTime, myData.Layer);
 
-        if (myData.IsFreeKey)
-        {
-            float distRemFloat = (float)(myTargetDist - currentDist) * 0.01f;
-
-            if (distRemFloat > 25f || isHidden)
-            {
-                spriteRenderer.enabled = false;
-                return;
-            }
-            spriteRenderer.enabled = true;
-
-            Vector3 linePos = Vector3.zero;
-            Quaternion lineRot = Quaternion.identity;
-
-            if (GameManager.Instance.activeLines.ContainsKey(myData.LineNumber)) {
-                var lineObj = GameManager.Instance.activeLines[myData.LineNumber].go;
-                if (lineObj != null) {
-                    linePos = lineObj.transform.position;
-                    lineRot = lineObj.transform.rotation;
-                }
-            }
-
-            float startOffset, targetOffset;
-            if (myData.Direction == "Top") {
-                startOffset = ((float)myData.StartPos / 100f) * (screenW / 2f);
-                targetOffset = ((float)myData.TargetPos / 100f) * (screenW / 2f);
-            } else {
-                startOffset = ((float)myData.StartPos / 100f) * (screenH / 2f);
-                targetOffset = ((float)myData.TargetPos / 100f) * (screenH / 2f);
-            }
-
-            float appearDist = (myData.Direction == "Top") ? 8.0f : 10.0f;
-            float p = Mathf.Clamp01(distRemFloat / appearDist); 
-            float currentOffset = Mathf.Lerp(targetOffset, startOffset, p);
-
-            float localCurrentX = 0f;
-            float localCurrentY = 0f;
-
-            if (myData.Direction == "Top") {
-                localCurrentX = currentOffset;
-                localCurrentY = distRemFloat; 
-            } else if (myData.Direction == "Right") {
-                localCurrentX = distRemFloat; 
-                localCurrentY = currentOffset;
-            } else if (myData.Direction == "Left") {
-                localCurrentX = -distRemFloat; 
-                localCurrentY = currentOffset;
-            }
-
-            Vector3 localPos = new Vector3(localCurrentX, localCurrentY, 0f);
-            transform.position = linePos + (lineRot * localPos);
-            transform.rotation = lineRot * Quaternion.Euler(0, 0, (float)myData.Rotation);
-        }
-        else
         {
             bool isLongNote = (myData.Type == 2 || myData.Type == 12) && (myData.NextLongNote != null);
 
@@ -344,8 +304,9 @@ public class NoteObject : MonoBehaviour
                             float laneWidthGame = 0.8f;
                             float targetW = (myData.Width - 1) * laneWidthGame + (laneWidthGame * 0.95f);
 
-                            if (bodyRenderer.drawMode == SpriteDrawMode.Tiled)
+                            if (bodyRenderer.drawMode == SpriteDrawMode.Tiled || bodyRenderer.sprite == NoteArt.LongBodySprite)
                             {
+                                // SIMPLE 일반 롱노트 몸통(Sliced)도 같은 방식: 크기(size)를 머리 ~ 꼬리 구간에 맞춤
                                 // SIMPLE RED 몸통: 줄무늬 타일이 늘어나지 않고 반복되도록 크기(size)로 맞춘다
                                 Vector3 ps = transform.lossyScale;
                                 myLongBody.transform.position = new Vector3(centerX, (yPos + endYPos) * 0.5f, 0f);
@@ -400,7 +361,7 @@ public class NoteObject : MonoBehaviour
 
         if (myData.IsHit && !isMissed)
         {
-            if (myData.IsFreeKey || myData.Type == 1 || myData.Type == 3 || myData.Type == 11 || myData.Type == 13 || myData.Type == 4) 
+            if (NoteTypes.IsTapLike(myData.Type) || myData.Type == 3 || myData.Type == 13 || myData.Type == 4) 
             {
                 GameManager.Instance.ReturnNoteToPool(this); 
                 return;
@@ -412,13 +373,24 @@ public class NoteObject : MonoBehaviour
         }
 
         UpdateTransform();
+        if (missFade >= 0f)
+        {
+            missFade += Time.deltaTime / MissFadeSeconds;
+            if (missFade >= 1f) { GameManager.Instance.ReturnNoteToPool(this); return; }
+        }
         ApplyEndAlpha();
+        UpdateHeldBody();
+        UpdateArrow();
 
         double currentTime = GameManager.Instance.currentPlayTime;
+        // 자동 MISS 는 '판정 기준 시각'(JUDGE OFFSET 반영)으로 판단
+        //  [버그 수정] 예전에는 화면 시각으로 판단해서, JUDGE OFFSET 을 바꾸면 늦게 친 쪽 판정 범위가 잘리거나(MISS 가 먼저 뜸)
+        //   반대로 범위 밖인데도 노트가 남아 있었다.
+        double judgeTime = GameManager.Instance.JudgeTime;
 
-        if (currentTime - myData.HitTime > GameManager.W_BAD && !myData.IsHit)
+        if (judgeTime - myData.HitTime > GameManager.W_BAD && !myData.IsHit)
         {
-            if (myData.IsFreeKey || myData.Type == 1 || myData.Type == 11) 
+            if (NoteTypes.IsTapLike(myData.Type)) 
             {
                 GameManager.Instance.ProcessHit("MISS");
                 DimNote(); 
@@ -443,11 +415,16 @@ public class NoteObject : MonoBehaviour
     {
         SimpleGameSkin skin = SimpleGameSkin.Active;
         float laneWidthGame = 0.8f;
-        float w = (myData.IsRedNote ? (myData.Width - 1) * laneWidthGame : 0f) + laneWidthGame * 0.95f;
+        // 폭: RED · 넓은 일반 노트(영역 채보) 모두 Width 칸 (일반 1칸 노트는 그대로)
+        float w = (Mathf.Max(1, myData.Width) - 1) * laneWidthGame + laneWidthGame * 0.95f;
         bool isTail = myData.Type == 3 || myData.Type == 13;
         Color c = SimpleGameSkin.NoteColor(myData);
 
-        spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+        // [끊김 수정] 그림(sprite)을 먼저 바꾸고 나서 Sliced 로 바꾼다.
+        //  예전에는 프리팹의 원래 노트 그림(Full Rect 가 아님)이 붙은 상태에서 Sliced 로 바꿔서, 노트가 나올 때마다
+        //  'Sprite Tiling might not appear correctly…' 경고가 찍혔다(한 판에 수백 번). 에디터에서는 경고를 찍는 순간마다
+        //  프레임이 끊기고, 그동안 밀린 시간만큼 노트가 진행 방향으로 순간이동한 것처럼 보였다.
+        spriteRenderer.drawMode = SpriteDrawMode.Simple;
         float h = myData.IsRedNote
             ? (isTail ? SimpleGameSkin.RedTailHeight : SimpleGameSkin.RedNoteHeight)  // 빨간 노트는 조금 더 두껍게
             : (isTail ? SimpleGameSkin.TailHeight : SimpleGameSkin.NoteHeight);
@@ -456,14 +433,27 @@ public class NoteObject : MonoBehaviour
             // 고급 RED 노트: 색이 스프라이트에 들어 있으므로 흰색으로, 바깥 빛 여백만큼 크게 그림
             float pad = SimpleGameSkin.RedGlowPad * 2f;
             spriteRenderer.sprite = skin.RedNoteSprite;
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
             spriteRenderer.size = new Vector2(w + pad, h + pad);
             spriteRenderer.color = isTail ? new Color(1f, 1f, 1f, 0.9f) : Color.white;
         }
+        else if (!isTail)
+        {
+            // 일반 · 화살표 노트: 입체 앞면(밝은 테두리 · 세로 그라데이션 · 광택 띠) + 바깥 은은한 빛 (빛 여백만큼 크게)
+            float pad = NoteArt.NoteGlowPad * 2f;
+            spriteRenderer.sprite = NoteArt.NoteFaceSprite;
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+            spriteRenderer.size = new Vector2(w + pad, h + pad);
+            spriteRenderer.color = c;
+        }
         else
         {
-            spriteRenderer.sprite = skin.NoteSprite;
-            spriteRenderer.size = new Vector2(w, h);
-            spriteRenderer.color = isTail ? new Color(c.r, c.g, c.b, 0.9f) : c;
+            // 롱노트 끝: 얇게 빛나는 막대 (위가 밝은 그라데이션 + 바깥 빛)
+            float tpad = NoteArt.TailGlowPad * 2f;
+            spriteRenderer.sprite = NoteArt.TailCapSprite;
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+            spriteRenderer.size = new Vector2(w + tpad, Mathf.Max(h, 0.075f) + tpad);
+            spriteRenderer.color = new Color(c.r, c.g, c.b, 0.95f);
         }
         spriteRenderer.flipY = false;
         transform.localScale = new Vector3(1f, skin.NoteScaleY, 1f); // DIVERSE 는 세로로 조금 두껍게 (몸통은 부모 배율을 되돌려 계산)
@@ -483,8 +473,12 @@ public class NoteObject : MonoBehaviour
             }
             else
             {
-                bodyRenderer.sprite = skin.PixelSprite;
-                bodyRenderer.color = new Color(c.r, c.g, c.b, SimpleGameSkin.BodyAlpha);
+                // 일반 롱노트 몸통: 양옆이 빛나는 반투명 띠 (투명도가 스프라이트에 들어 있음)
+                //  [버그 수정] Tiled 로 그리면 가운데 부분이 왼쪽부터 가로로도 반복돼서 가운데 하이라이트 선이 중심에서 어긋났다
+                //   → Sliced: 좌우 테두리는 그대로, 가운데는 늘어나서 하이라이트가 항상 정가운데 (세로로는 무늬가 없어 늘려도 같음)
+                bodyRenderer.sprite = NoteArt.LongBodySprite;
+                bodyRenderer.drawMode = SpriteDrawMode.Sliced;
+                bodyRenderer.color = new Color(c.r, c.g, c.b, 1f);
             }
         }
     }
@@ -500,15 +494,110 @@ public class NoteObject : MonoBehaviour
     private void ApplyEndAlpha()
     {
         float a = GameManager.Instance.EndUiAlpha;
+        if (missFade >= 0f) { float k = 1f - Mathf.Clamp01(missFade); a *= k * k * (3f - 2f * k); } // 놓친 롱노트: 서서히 투명
         if (Mathf.Approximately(a, appliedEndAlpha)) return;
         appliedEndAlpha = a;
         spriteRenderer.color = new Color(headBaseColor.r, headBaseColor.g, headBaseColor.b, headBaseColor.a * a);
         if (bodyRenderer != null) bodyRenderer.color = new Color(bodyBaseColor.r, bodyBaseColor.g, bodyBaseColor.b, bodyBaseColor.a * a);
     }
 
+    // SIMPLE 롱노트를 누르고 있는 동안: 몸통이 흰빛으로 밝아지며 맥박처럼 빛남
+    private void UpdateHeldBody()
+    {
+        if (bodyRenderer == null || SimpleGameSkin.Active == null || isMissed) return;
+        if (bodyRenderer.sprite != NoteArt.LongBodySprite) return;
+        if (!myData.IsHit || (myData.Type != 2 && myData.Type != 12)) return;
+        float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 14f);
+        Color lit = Color.Lerp(bodyBaseColor, Color.white, 0.30f + 0.20f * pulse);
+        bodyRenderer.color = new Color(lit.r, lit.g, lit.b, Mathf.Min(1f, bodyBaseColor.a * 1.15f) * appliedEndAlpha);
+    }
+
     public void HideNote() {
         if (spriteRenderer) spriteRenderer.enabled = false;
         if (bodyRenderer) bodyRenderer.enabled = false;
+        if (arrowRenderer) arrowRenderer.enabled = false;
+        if (arrowGlowRenderer) arrowGlowRenderer.enabled = false;
+    }
+
+    // 놓친 롱노트(머리를 놓침 / 중간에 끊김): 색은 그대로 두고, 판정선에 붙어 있지 않고 레인을 따라 흘러가며
+    //  MissFadeSeconds 동안 서서히 투명해진 뒤 사라진다. (예전: 회색으로 바뀐 채 끝까지 내려감)
+    public void FadeOutMissed()
+    {
+        if (myData == null) return;
+        myData.IsHit = true;
+        isMissed = true;
+        if (missFade < 0f) missFade = 0f;
+    }
+
+    // =====================================================================
+    //  화살표 노트 (7: >>> 밝은 파랑, 8: <<< 밝은 노랑)
+    // =====================================================================
+    private void SetupArrow()
+    {
+        bool isArrow = NoteTypes.IsArrow(myData.Type);
+        if (!isArrow)
+        {
+            if (arrowRenderer != null) arrowRenderer.gameObject.SetActive(false);
+            if (arrowGlowRenderer != null) arrowGlowRenderer.gameObject.SetActive(false);
+            return;
+        }
+        if (arrowRenderer == null)
+        {
+            GameObject a = new GameObject("Arrow");
+            a.transform.SetParent(transform, false);
+            arrowRenderer = a.AddComponent<SpriteRenderer>();
+            GameObject g = new GameObject("ArrowGlow");
+            g.transform.SetParent(transform, false);
+            arrowGlowRenderer = g.AddComponent<SpriteRenderer>();
+        }
+        arrowRenderer.gameObject.SetActive(true);
+        arrowGlowRenderer.gameObject.SetActive(true);
+        arrowRenderer.sprite = NoteArt.ArrowSprite;
+        arrowGlowRenderer.sprite = NoteArt.GlowSprite;
+        arrowRenderer.enabled = arrowGlowRenderer.enabled = true;
+        arrowRenderer.sortingOrder = spriteRenderer.sortingOrder + 1;          // 노트보다 위
+        arrowGlowRenderer.sortingOrder = spriteRenderer.sortingOrder - 1;      // 노트 뒤에서 퍼지는 빛
+        Color c = NoteArt.ArrowColor(myData.Type);
+        arrowRenderer.color = c;
+        arrowGlowRenderer.color = new Color(c.r, c.g, c.b, 0.55f);
+        if (SimpleGameSkin.Active == null)
+        {
+            // 기본 스킨: 노트 스프라이트에 화살표 색을 살짝 입힘
+            spriteRenderer.color = Color.Lerp(Color.white, c, 0.35f);
+        }
+        RememberBaseColors();
+    }
+
+    private void UpdateArrow()
+    {
+        if (arrowRenderer == null || !arrowRenderer.gameObject.activeSelf) return;
+        bool show = spriteRenderer.enabled;
+        arrowRenderer.enabled = arrowGlowRenderer.enabled = show;
+        if (!show) return;
+
+        // 부모(노트) 배율과 상관없이 월드 크기로 맞춤
+        Vector3 ps = transform.lossyScale;
+        float sx = Mathf.Max(0.0001f, Mathf.Abs(ps.x)), sy = Mathf.Max(0.0001f, Mathf.Abs(ps.y));
+        float dir = myData.Type == NoteTypes.ArrowLeft ? -1f : 1f;
+        float t = Time.time;
+        float bob = Mathf.Sin(t * 7f) * 0.035f * dir;                    // 화살표 방향으로 살짝 밀렸다 돌아옴
+        float yScale = SimpleGameSkin.Active != null ? SimpleGameSkin.Active.NoteScaleY : 1f;
+
+        Vector2 asz = arrowRenderer.sprite.bounds.size;
+        arrowRenderer.transform.position = transform.position + new Vector3(bob, ArrowLift * yScale, 0f);
+        arrowRenderer.transform.localScale = new Vector3(dir * ArrowWidth / asz.x / sx, ArrowHeight * yScale / asz.y / sy, 1f);
+
+        Vector2 gsz = arrowGlowRenderer.sprite.bounds.size;
+        float pulse = 0.8f + 0.2f * Mathf.Sin(t * 5f);
+        arrowGlowRenderer.transform.position = transform.position + new Vector3(0f, ArrowLift * 0.45f * yScale, 0f);
+        arrowGlowRenderer.transform.localScale = new Vector3(0.95f * pulse / gsz.x / sx, 0.75f * yScale * pulse / gsz.y / sy, 1f);
+
+        // 곡 종료 페이드 · 놓친 노트 페이드를 같이 따라감
+        float a = spriteRenderer.color.a / Mathf.Max(0.001f, headBaseColor.a);
+        if (isMissed && missFade < 0f) a *= 0.35f;                     // 놓친 화살표 노트는 흐리게
+        Color c = NoteArt.ArrowColor(myData.Type);
+        arrowRenderer.color = new Color(c.r, c.g, c.b, a);
+        arrowGlowRenderer.color = new Color(c.r, c.g, c.b, 0.55f * a * pulse);
     }
 
     public void DimNote() {
@@ -516,9 +605,9 @@ public class NoteObject : MonoBehaviour
         myData.IsHit = true; 
         Color darkGray = new Color(0.3f, 0.3f, 0.3f, 1f); 
         if (spriteRenderer) spriteRenderer.color = darkGray;
-        // SIMPLE 스킨의 몸통은 반투명이라 놓쳤을 때도 투명도를 유지
-        if (bodyRenderer) bodyRenderer.color = (SimpleGameSkin.Active != null && !myData.IsFreeKey)
-            ? new Color(0.3f, 0.3f, 0.3f, SimpleGameSkin.BodyAlpha) : darkGray;
+        // SIMPLE 스킨의 몸통은 투명도가 스프라이트에 들어 있으므로 색만 어둡게 (조금 더 흐리게)
+        if (bodyRenderer) bodyRenderer.color = (SimpleGameSkin.Active != null)
+            ? new Color(0.3f, 0.3f, 0.3f, 0.8f) : darkGray;
         RememberBaseColors();
     }
 }

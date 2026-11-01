@@ -36,8 +36,10 @@ public class DiversePlayfield : MonoBehaviour
     // 텍스처마다 재질을 따로 둠 (스프라이트끼리 텍스처가 섞여 그려지는 일이 없도록)
     private readonly Dictionary<long, Material> materials = new Dictionary<long, Material>();
     private readonly List<Material> extraMaterials = new List<Material>();   // MV 블러 등 (값만 넣어 줌)
-    private const int MaxMaterials = 48;
-    private Material fallbackSprite, fallbackClip;
+    private const int MaxMaterials = 128;
+    // 재질 수가 넘쳤을 때 쓰는 공용 재질 (스프라이트는 텍스처를 스스로 넘겨 주므로 공용이어도 그려짐)
+    //  [버그 수정] 예전에는 '접히지 않는' 공용 재질이 없어서, 재질 수가 넘친 뒤 생긴 영역 노트가 접히는 재질을 받아 안 보였다
+    private Material fallbackSprite, fallbackClip, fallbackSpriteNoFold, fallbackClipNoFold;
 
     private GameManager gm;
     private float laneCenterX, laneWidth;
@@ -70,17 +72,40 @@ public class DiversePlayfield : MonoBehaviour
         p.laneWidth = Mathf.Max(0.1f, laneRight - laneLeft);
         p.fallbackSprite = p.NewMaterial(null, false);
         p.fallbackClip = p.NewMaterial(null, true);
+        p.fallbackSpriteNoFold = p.NewMaterial(null, false);
+        p.fallbackClipNoFold = p.NewMaterial(null, true);
+        p.noFold.Add(p.fallbackSpriteNoFold);
+        p.noFold.Add(p.fallbackClipNoFold);
         p.Refresh();
         return p;
     }
 
-    // 스프라이트 하나를 원근 재질로 (clipBelow: 판정선 아래는 안 그림)
-    public void Apply(SpriteRenderer sr, bool clipBelow)
+    // 스프라이트 하나를 원근 재질로 (clipBelow: 판정선 아래는 안 그림, fold: 레인 접기(FOLD)를 따라감)
+    public void Apply(SpriteRenderer sr, bool clipBelow) { Apply(sr, clipBelow, true); }
+
+    public void Apply(SpriteRenderer sr, bool clipBelow, bool fold)
     {
         if (sr == null) return;
         Texture tex = sr.sprite != null ? sr.sprite.texture : null;
-        sr.sharedMaterial = GetMaterial(tex, clipBelow);
+        sr.sharedMaterial = GetMaterial(tex, clipBelow, fold);
         sr.maskInteraction = SpriteMaskInteraction.None; // 자르기는 셰이더가 함
+    }
+
+    // 메시(영역 배경 등)에 쓸 원근 재질
+    public Material MaterialFor(Texture tex, bool clipBelow, bool fold = true) { return GetMaterial(tex, clipBelow, fold); }
+
+    // ===== 레인 접기 (채보 FOLD / UNFOLD) =====
+    //  k: 가로 배율 (1 = 그대로, 0 = 가운데 한 줄로 접힘), alpha: 투명도, centerX: 접히는 중심
+    //  셰이더(DiverseProject.cginc)가 정점의 x 를 중심 쪽으로 모으고 알파를 곱한다 → 레인 · 노트 · 효과가 한꺼번에 접힘
+    private Vector4 vFold = new Vector4(1f, 1f, 0f, 1f);
+    private readonly HashSet<Material> noFold = new HashSet<Material>();
+
+    public void SetFold(float k, float alpha, float centerX)
+    {
+        Vector4 v = new Vector4(Mathf.Clamp01(k), Mathf.Clamp01(alpha), centerX, 1f);
+        if (v == vFold) return;
+        vFold = v;
+        // 값은 Refresh 에서 모든 재질에 들어간다
     }
 
     // MV 블러처럼 다른 셰이더도 같은 투영 값을 받도록 등록
@@ -89,16 +114,25 @@ public class DiversePlayfield : MonoBehaviour
         if (m != null && !extraMaterials.Contains(m)) { extraMaterials.Add(m); Push(m); }
     }
 
-    private Material GetMaterial(Texture tex, bool clip)
+    private Material GetMaterial(Texture tex, bool clip, bool fold = true)
     {
-        if (tex == null) return clip ? fallbackClip : fallbackSprite;
-        long key = ((long)tex.GetInstanceID() << 1) | (clip ? 1L : 0L);
+        if (tex == null) return Fallback(clip, fold);
+        long id = tex != null ? tex.GetInstanceID() : 0;
+        long key = (id << 2) | (clip ? 1L : 0L) | (fold ? 0L : 2L);
         Material m;
         if (materials.TryGetValue(key, out m) && m != null) return m;
-        if (materials.Count >= MaxMaterials) return clip ? fallbackClip : fallbackSprite;
+        if (materials.Count >= MaxMaterials) return Fallback(clip, fold);
         m = NewMaterial(tex, clip);
+        if (!fold) noFold.Add(m);
         materials[key] = m;
+        Push(m);
         return m;
+    }
+
+    private Material Fallback(bool clip, bool fold)
+    {
+        if (fold) return clip ? fallbackClip : fallbackSprite;
+        return clip ? fallbackClipNoFold : fallbackSpriteNoFold;
     }
 
     private Material NewMaterial(Texture tex, bool clip)
@@ -153,6 +187,8 @@ public class DiversePlayfield : MonoBehaviour
         // 이 판의 재질에만 값을 넣음 (재시도 · 다른 곡으로 넘어갈 때 이전 판과 섞이지 않음)
         Push(fallbackSprite);
         Push(fallbackClip);
+        Push(fallbackSpriteNoFold);
+        Push(fallbackClipNoFold);
         foreach (var m in materials.Values) Push(m);
         for (int i = extraMaterials.Count - 1; i >= 0; i--)
         {
@@ -171,6 +207,7 @@ public class DiversePlayfield : MonoBehaviour
         m.SetVector("_DivProj", vProj);
         m.SetVector("_DivFade", vFade);
         m.SetVector("_DivClip", vClip);
+        m.SetVector("_DivFold", noFold.Contains(m) ? new Vector4(1f, 1f, 0f, 0f) : vFold);
     }
 
     // 월드 → 화면 비율 좌표 (0~1)
@@ -209,5 +246,7 @@ public class DiversePlayfield : MonoBehaviour
         materials.Clear();
         if (fallbackSprite != null) Destroy(fallbackSprite);
         if (fallbackClip != null) Destroy(fallbackClip);
+        if (fallbackSpriteNoFold != null) Destroy(fallbackSpriteNoFold);
+        if (fallbackClipNoFold != null) Destroy(fallbackClipNoFold);
     }
 }

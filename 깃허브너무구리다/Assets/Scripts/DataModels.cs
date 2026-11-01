@@ -16,8 +16,15 @@ public class SettingsData
     public int EditorSongid = 1; 
 
     // ----- 오프셋 (초 단위) -----
-    public double AudioOffset = 0.0;   // + : 음악을 노트보다 일찍 재생 (음악이 늦게 들릴 때)
-    public double JudgeOffset = 0.0;   // + : 판정 시점을 늦춤 (SLOW 가 많을 때)
+    //  osu! 의 Universal offset 과 같은 방향: + = 노트(게임)가 음악보다 '빨라짐', - = '늦어짐'
+    //   · 블루투스 / TV 처럼 음악이 늦게 들리면  → AUDIO OFFSET 을 - 로
+    //   · SLOW 가 많으면(늦게 친다)              → JUDGE OFFSET 을 - 로,  FAST 가 많으면 + 로
+    //  게임 내부 계산은 SettingsStore.MusicLead / JudgeDelay 로 읽는다 (부호 변환은 그곳 한 군데에서만).
+    public double AudioOffset = 0.0;
+    public double JudgeOffset = 0.0;
+    // 저장 파일의 오프셋 부호 규칙 버전. 0 = 예전(반대 부호) → 불러올 때 부호를 뒤집어 1 로 바꾼다.
+    //  (기본값을 0 으로 둬야 이 칸이 없는 예전 파일을 알아볼 수 있다)
+    public int OffsetConvention = 0;
 
     // ----- 게임플레이 -----
     public double SettingSpeed = 1.0; 
@@ -26,7 +33,14 @@ public class SettingsData
     public int GameSkin = 0;           // 게임 화면 UI: 0 = DEFAULT, 1 = SIMPLE (GameSkins 참고)
     public float LaneOpacity = 0.85f;  // SIMPLE 레인 배경 불투명도 (0 = 완전 투명, 1 = 불투명)
     public bool ShowInfoUI = true;     // 게임 화면 Information UI (곡 정보 · 난이도 · 시간 · 점수 · 배속 · 진행 막대)
+    public bool LaneLines = true;      // SIMPLE 레인 사이 구분선 3개 켜기/끄기
+    public bool ShowKeyMarkers = true; // SIMPLE 판정선 위 노트 모양 키 자리 켜기/끄기
+    public bool ShowHitErrorBar = true; // 화면 아래 판정 오차 그래프 (osu! Hit Error Meter 처럼)
+    public int EffectQuality = 1;      // 히트 이펙트: 0 = 낮음 (가벼움), 1 = 높음
+    public bool ShowJustPerfect = false; // ±15ms 안의 PERFECT 를 'JUST PERFECT' 로 표시 (끄면 그냥 PERFECT)
     public string[] LaneKeys = { "D", "F", "J", "K" }; // UnityEngine.InputSystem.Key 이름
+    // 시작 타임 조정 (초, 0 = 처음부터). 예) 109.2 → 음악을 109.2초부터 틀고, 그 뒤 2초 안의 노트는 빼고 111.2초 노트부터 내려옴
+    public double StartTime = 0.0;
 
     // ----- 사운드 (0 ~ 1) -----
     public float MasterVolume = 1f;
@@ -69,6 +83,66 @@ public class SongData
     public int NoteCount_INSANE;
     public int HasMV;
     public int ExistSongbar;
+    // 영역(Area) 채보: "Area": "deployed(INSANE)"  (여러 난이도면 "deployed(HARD,INSANE)")
+    //  영역 채보는 SIMPLE-DIVERSE 스킨 전용 (다른 스킨이면 그 판만 강제로 바뀜) + 영역 전용 에디터로 열림
+    public string Area;
+    // MV 주의 경고: 값이 있으면 MV 를 켠 채로 플레이할 때 경고창(주의)이 뜬다
+    //  "MvWarning": "default"  → 기본 문구 (폭력적인 장면, 유혈 및 신체 훼손 …)
+    //  "MvWarning": "직접 쓴 문구\n두 번째 줄"  → 그 문구 그대로 (\n = 줄바꿈)
+    public string MvWarning;
+}
+
+public static class AreaHelper
+{
+    // 이 곡의 이 난이도(1: EASY, 2: HARD, 3: INSANE)가 영역 채보인가
+    public static bool IsAreaLevel(SongData song, int levelId)
+    {
+        if (song == null || string.IsNullOrWhiteSpace(song.Area)) return false;
+        string a = song.Area.Trim();
+        if (!a.StartsWith("deployed", StringComparison.OrdinalIgnoreCase)) return false;
+        int open = a.IndexOf('('), close = a.LastIndexOf(')');
+        if (open < 0 || close <= open) return false;
+        string name = DifficultyHelper.GetName(levelId);
+        foreach (string part in a.Substring(open + 1, close - open - 1).Split(','))
+            if (string.Equals(part.Trim(), name, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+}
+
+// 노트 종류 번호
+//  1 탭 · 2 롱노트 머리 · 3 롱노트 꼬리 · 4 마디선 · 7 화살표(>>> 밝은 파랑) · 8 화살표(<<< 밝은 노랑) · 11/12/13 RED
+//  화살표 노트는 판정이 탭과 똑같은 장식 노트 (주로 영역 경계에 둠)
+public static class NoteTypes
+{
+    public const int Tap = 1, LongHead = 2, LongTail = 3, Measure = 4, ArrowRight = 7, ArrowLeft = 8;
+    public static bool IsArrow(int type) { return type == ArrowRight || type == ArrowLeft; }
+    // 한 번 치고 끝나는 노트 (탭 · 화살표 · RED 탭)
+    public static bool IsTapLike(int type) { return type == Tap || type == 11 || IsArrow(type); }
+}
+
+// 영역: 이 시각부터 mask 의 레인들이 영역 (mask 0 = 영역 끝). 채보: AREA, 마디, 분자, 분모, 1100
+public class AreaEvent { public double Time; public int Mask; }
+// 레인 접기 / 펼치기. 채보: FOLD, 마디, 분자, 분모, 초  /  UNFOLD, 마디, 분자, 분모, 초
+public class LaneFoldEvent { public double Time; public bool Fold; public double Duration; }
+
+public static class AreaMask
+{
+    // "1100" → 레인 0,1 (왼쪽부터). 1 = 영역
+    public static int Parse(string s)
+    {
+        int m = 0;
+        if (string.IsNullOrEmpty(s)) return 0;
+        s = s.Trim();
+        for (int i = 0; i < s.Length && i < 4; i++) if (s[i] == '1') m |= 1 << i;
+        return m;
+    }
+    public static string Format(int mask)
+    {
+        char[] c = new char[4];
+        for (int i = 0; i < 4; i++) c[i] = (mask & (1 << i)) != 0 ? '1' : '0';
+        return new string(c);
+    }
+    public static bool Has(int mask, int lane) { return lane >= 0 && lane < 4 && (mask & (1 << lane)) != 0; }
 }
 
 // songs.json 읽기 전 손질
@@ -78,8 +152,12 @@ public static class SongJson
     public static string Normalize(string json)
     {
         if (string.IsNullOrEmpty(json)) return json;
-        return System.Text.RegularExpressions.Regex.Replace(json,
+        json = System.Text.RegularExpressions.Regex.Replace(json,
             "(\"BPM\"\\s*:\\s*)(-?[0-9]+(?:\\.[0-9]+)?)", "$1\"$2\"");
+        // "MvWarning": true / 1  →  "default" (기본 경고 문구),  false / 0 → "" (경고 없음)
+        json = System.Text.RegularExpressions.Regex.Replace(json, "(\"MvWarning\"\\s*:\\s*)(true|1)(?=\\s*[,}])", "$1\"default\"");
+        json = System.Text.RegularExpressions.Regex.Replace(json, "(\"MvWarning\"\\s*:\\s*)(false|0)(?=\\s*[,}])", "$1\"\"");
+        return json;
     }
 }
 
@@ -109,6 +187,8 @@ public class ResultData
     public int TotalNotes;          // 채보 전체 노트 수 (롱노트 중간 틱 포함)
     public bool IsFullCombo;        // MAX COMBO = 전체 노트 수
     public bool IsAllPerfect;       // + EXCELLENT 수 = 전체 노트 수 (표기: ALL PERFECT)
+    public bool IsAllJust;          // + 모든 판정이 JUST PERFECT (TP 100%) — ALL PERFECT 보다 위
+    public int JustPerfect;         // JUST PERFECT 수 (PERFECT 중 ±15ms 안, 롱노트 중간 판정 포함)
     public bool IsFailed;           // LIFE 가 0 이 되어 중간에 끝남 (SIMPLE 스킨)
 
     // 전체 판정 오차(ms). FAST = 음수(-), SLOW = 양수(+)
@@ -129,6 +209,9 @@ public class ResultData
     public float FailedAtProgress = -1f; // FAILED 된 진행도 (아니면 -1)
     public float LengthSeconds;
     public bool IsMv;
+    // 설정의 시작 시간 조정으로 곡 중간부터 시작한 판 (연습) → 최고 기록에 저장하지 않음
+    public bool IsMidStart;
+    public double MidStartSeconds;
     public double Speed = 1.0;
 
     // 화면에 보여 줄 클리어 등급 (높을수록 좋음): 0 FAILED  1 CLEAR  2 FULL COMBO  3 ALL PERFECT
@@ -247,8 +330,60 @@ public static class LongNoteTickRule
     }
 }
 
+// ============================================================
+// 채보 오프셋 (게임 · 에디터 · osu! 변환기가 같은 규칙을 쓴다)
+//  MUSICOFFSET, 1234      (ms) : 음악 파일 안에서 0박(1마디 시작)이 나오는 시각
+//                                 = osu! 타이밍 포인트의 Offset 과 같은 값 · 같은 부호
+//                                 값을 키우면(+) 노트(격자)가 음악보다 늦게 온다
+//  OFFSET, -1.234         (초, 예전 형식) : 게임 시계에서 음악이 재생되기 시작하는 시각
+//                                 = -(MUSICOFFSET / 1000). 부호가 반대라 헷갈려서 읽기만 지원하고,
+//                                 에디터에서 저장하면 MUSICOFFSET 으로 바뀐다.
+//  두 줄이 모두 있으면 MUSICOFFSET 이 우선.
+//  게임 내부에서는 AudioStart(= 예전 OFFSET 값, 초)로 계산한다.
+// ============================================================
+public static class ChartOffset
+{
+    public const string Key = "MUSICOFFSET";
+
+    public static double ToAudioStart(double musicOffsetMs) { return -musicOffsetMs / 1000.0; }
+    public static double ToMusicOffsetMs(double audioStart) { return Math.Round(-audioStart * 1000.0, 3); }
+
+    public static string Line(double audioStart)
+    {
+        return Key + ", " + ToMusicOffsetMs(audioStart).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    // 채보 한 줄을 읽어 오프셋 줄이면 true. isNew = MUSICOFFSET 형식인지
+    public static bool TryParse(string type, string[] data, out double audioStart, out bool isNew)
+    {
+        audioStart = 0.0; isNew = false;
+        if (data == null || data.Length < 2) return false;
+        double v;
+        if (!double.TryParse(data[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out v)) return false;
+        if (type == Key) { audioStart = ToAudioStart(v); isNew = true; return true; }
+        if (type == "OFFSET" || type == "SONGSTARTOFFSET") { audioStart = v; return true; }
+        return false;
+    }
+
+    // 화면 표시용: "+1234 ms"
+    public static string Display(double audioStart)
+    {
+        double ms = ToMusicOffsetMs(audioStart);
+        string s = Math.Abs(ms - Math.Round(ms)) < 0.0005
+            ? Math.Round(ms).ToString("0", System.Globalization.CultureInfo.InvariantCulture)
+            : ms.ToString("0.0##", System.Globalization.CultureInfo.InvariantCulture);
+        return (ms > 0 ? "+" : "") + s + " ms";
+    }
+}
+
 public class SpeedChange { public double Time; public double Multiplier; }
-public class BpmChange { public double Time; public double Bpm; public double Beats; }
+public class BpmChange
+{
+    public double Time; public double Bpm; public double Beats;
+    // TIMING 줄: 이 박이 와야 하는 고정 시각(초, 0박 기준). NaN = 일반 BPM 줄(앞에서부터 누적 계산)
+    public double AnchorTime = double.NaN;
+    public bool HasAnchor { get { return !double.IsNaN(AnchorTime); } }
+}
 public class StopEventData { public double Time; }
 public class StartEventData { public double Time; }
 
@@ -260,16 +395,6 @@ public class UIEventData
     public double Duration; 
 }
 
-public class LinearEventData 
-{
-    public string Action; 
-    public int LineNumber; 
-    public double StartTime;
-    public double Duration;
-    public double Value1; 
-    public double Value2; 
-}
-
 public class NoteData
 {
     public double HitTime;    
@@ -278,14 +403,6 @@ public class NoteData
     public bool IsHit;         
     public NoteData NextLongNote = null; 
     public bool isTimeLogged = true;
-
-    public bool IsFreeKey = false;
-    public int FreeKeyType = 0; 
-    public double Rotation = 0;
-    public string Direction = "Top"; 
-    public int LineNumber = 1; 
-    public double StartPos = 0;
-    public double TargetPos = 0;
 
     public bool IsRedNote = false;
     public int Width = 1; 
@@ -336,6 +453,8 @@ public static class NoteCellParser
     }
 
     // "11_3" -> type 11, width 3, red / "2" -> type 2, width 1, not red / "0" 또는 빈 값 -> false
+    // "1_3"  -> type 1, width 3, 일반 노트 (넓은 일반 노트: 영역 채보에서 RED 처럼 1~4칸 폭)
+    //  RED 여부는 종류 번호로 정함 (11 · 12 · 13 = RED). 예전 채보의 RED 는 모두 11~13 이라 그대로 읽힘
     public static bool TryParseToken(string token, out int type, out int width, out bool isRed)
     {
         type = 0; width = 1; isRed = false;
@@ -349,7 +468,8 @@ public static class NoteCellParser
             if (parts.Length < 2) return false;
             if (!int.TryParse(parts[0].Trim(), out type)) return false;
             if (!int.TryParse(parts[1].Trim(), out width)) return false;
-            isRed = true;
+            width = Math.Max(1, Math.Min(4, width));
+            isRed = type >= 11 && type <= 13;
             return type != 0;
         }
 

@@ -17,13 +17,6 @@ public class EditorNote
     public int Lane; public int Type; 
     public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0;
     public GameObject VisualObject;
-    
-    public bool IsFreeKey = false;
-    public double StartX = 0; 
-    public double TargetX = 0;
-    public double Rotation = 0;
-    public string Direction = "Top";
-    public int LineNumber = 1;
 
     public bool IsRedNote = false;
     public int Width = 1;
@@ -33,22 +26,22 @@ public class EditorNote
     public SpriteRenderer Sr;
 }
 
-public class EditorFreeKeyZone { public double StartBeat; public double EndBeat = double.MaxValue; }
+// 영역(Area): 이 박부터 Mask 레인이 영역 (Mask 0 = 영역 끝)  →  AREA, 마디, 분자, 분모, 1100
+public class EditorAreaEvent { public long Measure, Num, Den; public int Mask; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
+// 레인 접기 / 펼치기  →  FOLD (또는 UNFOLD), 마디, 분자, 분모, 초
+public class EditorFoldEvent { public long Measure, Num, Den; public bool Fold; public double Duration; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 // DeathArea : BPM 오차 보정용 구간(차트 시간 초 단위). 격자/노트 배치 금지.
 public class EditorDeathArea { public double Start; public double End; }
-public class EditorBpm { public long Measure, Num, Den; public double Bpm; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
+public class EditorBpm { public long Measure, Num, Den; public double Bpm; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0;
+    // TIMING 줄(osu! 빨간 줄): 이 박이 와야 하는 고정 시각(ms, 0박 기준). NaN = 일반 BPM 줄
+    public double AnchorMs = double.NaN;
+    public bool HasAnchor => !double.IsNaN(AnchorMs); }
 public class EditorSpeed { public long Measure, Num, Den; public double Multiplier; public int Layer = NoteLayer.Top;
     public bool ShowChange; // 게임에서 SPEED UP / DOWN 표시 (에디터에서 SPEED 표시를 우클릭해서 켜고 끔)
     public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 public class EditorStopEvent { public long Measure, Num, Den; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 public class EditorStartEvent { public long Measure, Num, Den; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 
-public class EditorLinearEvent { 
-    public double AbsoluteBeat;
-    public int LineId;
-    public string Action; 
-    public double Value1, Value2, Duration;
-}
 
 public class LongNoteBodyLink { public EditorNote Head; public EditorNote Tail; public GameObject BodyObj; public SpriteRenderer Sr; public float BaseAlpha = 1f; }
 
@@ -116,8 +109,14 @@ public class ChartEditorManager : MonoBehaviour
     public Sprite blueLongTail; public Sprite greenLongTail;
     public Sprite blueLongBody; public Sprite greenLongBody; 
 
-    [Header("프리키 에셋 연결")]
-    public Sprite freeKeyNormal; public Sprite freeKeySpace; public Sprite freeKeyDrag;   
+    [Header("영역 전용 에디터 (songs.json \"Area\" 곡)")]
+    [Tooltip("영역 전용 에디터 글꼴 (한글이 들어 있는 TMP 글꼴). 비우면 Resources/Fonts/AreaEditorFont → 이 에디터의 글꼴")]
+    public TMP_FontAsset areaEditorFont;
+    [Range(0.5f, 2f)] public float areaEditorFontScale = 1f;
+    [Tooltip("처음 열 때 한국어로 표시 (에디터 안에서 L 키로 바꿀 수 있고, 바꾼 값은 기억됨)")]
+    public bool areaEditorKorean = true;
+    [Tooltip("영역 전용 에디터에서 롱노트 끝 판정(꼬리)에도 탭음을 낼지 (에디터 안에서 F5 로 바꿀 수 있고, 바꾼 값은 기억됨)")]
+    public bool areaEditorLongNoteHitSound = true;
 
     [Header("채보 에디터 설정창 UI (신규)")]
     public CanvasGroup chartUIGroup;
@@ -158,13 +157,25 @@ public class ChartEditorManager : MonoBehaviour
     private List<EditorSpeed> speedChanges = new List<EditorSpeed>();
     private List<EditorStopEvent> stopEvents = new List<EditorStopEvent>();
     private List<EditorStartEvent> startEvents = new List<EditorStartEvent>();
-    private List<EditorFreeKeyZone> freeKeyZones = new List<EditorFreeKeyZone>();
+    private List<EditorAreaEvent> areaEvents = new List<EditorAreaEvent>();
+    private List<EditorFoldEvent> foldEvents = new List<EditorFoldEvent>();
+    // (영역 · 레인 접기 줄은 영역 전용 에디터(AreaChartEditor)에서 편집. 여기서는 지워지지 않게 읽고 그대로 저장만 함)
     private List<EditorDeathArea> deathAreas = new List<EditorDeathArea>();
-    private List<EditorLinearEvent> linearEvents = new List<EditorLinearEvent>();
     private List<string> originalOtherEvents = new List<string>();
     
+    // 차트 시계에서 음악이 시작되는 시각(초, 게임의 songStartOffset 과 같음) = -(MUSICOFFSET / 1000)
+    //  파일에는 MUSICOFFSET(ms, osu! 와 같은 부호)으로 저장한다. ChartOffset 참고.
     private double songStartOffset = 0.0;
     private double chartOffset = 0.0; 
+
+    // 재생 시계: 음악 위치 0 에 해당하는 dspTime (예약 재생 기준)
+    //  차트 시각 = EditorAudioStart + (dspTime - edDspAudioZero)
+    //  → 재생 중에 오프셋을 바꾸면 음악은 끊기지 않고 격자/노트만 움직인다 (osu! 에디터와 같은 방식)
+    private double edDspAudioZero = 0.0;
+    private bool edMusicScheduled = false;
+    private bool edWaitingAudio = false;   // 음악 데이터를 불러오는 중 (다 되면 그 시점부터 예약 재생)
+    // 설정의 AUDIO OFFSET 까지 반영한 음악 시작 시각 → 에디터에서도 게임과 같은 싱크로 들린다
+    private double EditorAudioStart { get { return chartOffset - SettingsStore.MusicLead; } }
     private Camera mainCam;
     private double currentBeat = 0;
     private bool isPlaying = false;
@@ -174,6 +185,8 @@ public class ChartEditorManager : MonoBehaviour
     private AudioSource bgmSource;
     private AudioSource sfxSource;
     private AudioClip hitSoundClip;
+    private double edHitCheckBeat;      // 탭음: 여기까지의 박은 이미 검사함
+    private double edPlayFromTime;      // 재생을 시작한 차트 시각 (예약 대기 동안 커서 고정용)
 
     private double playStartTime = 0;
     private bool isMusicPlaying = false;
@@ -202,15 +215,9 @@ public class ChartEditorManager : MonoBehaviour
     private int deathAreaInputStage = 0;            // 0: 시작 시간 입력 중, 1: 끝 시간 입력 중
     private double deathAreaPendingStart = 0;
     private double deathAreaCursorBeat = 0;
-    private bool IsSettingInputOpen { get { return isInputtingBpm || isInputtingSpeed || isInputtingDeathArea; } }
+    private bool isInputtingOffset = false;          // O : MUSICOFFSET 을 ms 로 직접 입력
+    private bool IsSettingInputOpen { get { return isInputtingBpm || isInputtingSpeed || isInputtingDeathArea || isInputtingOffset; } }
     private bool speedApplyBothLayers = false; // Shift+F 로 입력하면 1층/2층 모두에 적용
-    private int linearInputType = 0; 
-    private bool isAlternateAction = false;
-    private double targetBeatForLinear = 0;
-    
-    private bool isInputtingFreeKeyNote = false;
-    private int targetFreeKeyType = 0;
-
     private bool isRedNoteMode = false;
     private int editLayer = NoteLayer.Top; // 현재 편집 중인 층 (기본: 2층)
     private bool isDraggingRedNote = false;
@@ -218,8 +225,6 @@ public class ChartEditorManager : MonoBehaviour
 
     private string inputBuffer = "";
     private long targetMeasure = 1, targetNum = 0, targetDen = 4;
-
-    private EditorNote selectedFreeKeyNote = null;
 
     private Dictionary<Color, Texture2D> colorTexDict = new Dictionary<Color, Texture2D>();
     private Dictionary<Color, Texture2D> circleTexDict = new Dictionary<Color, Texture2D>();
@@ -305,6 +310,8 @@ public class ChartEditorManager : MonoBehaviour
         sfxSource.ignoreListenerPause = true;
         
         hitSoundClip = Resources.Load<AudioClip>("Audio/etc/hitsound");
+        // [버그 수정] 탭음 데이터를 미리 올려 둠 (첫 PlayOneShot 때 아직 안 올라와 있으면 첫 소리가 나지 않음)
+        if (hitSoundClip != null && hitSoundClip.loadState == AudioDataLoadState.Unloaded) hitSoundClip.LoadAudioData();
 
         if (selectPanelObj != null) selectPanelObj.SetActive(false);
         if (editorPanelObj != null) editorPanelObj.SetActive(true);
@@ -436,6 +443,31 @@ public class ChartEditorManager : MonoBehaviour
 
     private void StartEditorWithSong(int songId)
     {
+        // 영역(Area) 채보 (songs.json "Area": "deployed(INSANE)") → 이 에디터 대신 영역 전용 에디터(AreaChartEditor)로 연다
+        if (IsAreaEditorLevel(songId, editLevelId))
+        {
+            Debug.Log($"[Editor] {songId}_{editLevelId}: 영역 채보 → 영역 전용 에디터로 엽니다.");
+            if (chartUIGroup) chartUIGroup.gameObject.SetActive(false);
+            if (settingUIGroup) settingUIGroup.gameObject.SetActive(false);
+            if (editorPanelObj != null) editorPanelObj.SetActive(false);
+            if (selectPanelObj != null) selectPanelObj.SetActive(false);
+            if (bgmSource != null) bgmSource.Stop();
+            string title = (CoreManager.Instance != null && CoreManager.Instance.CurrentSongData != null && CoreManager.Instance.CurrentSongData.Id == songId)
+                ? CoreManager.Instance.CurrentSongData.Name : $"Song {songId}";
+            TMP_FontAsset areaFont = areaEditorFont;
+            if (areaFont == null && Resources.Load<TMP_FontAsset>("Fonts/AreaEditorFont") == null)
+            {
+                // 지정한 글꼴이 없으면 이 에디터 화면에서 쓰던 글꼴 (한글 표시가 되는 글꼴)
+                TextMeshProUGUI[] cands = { layerText, centerMessageText, modeText, settingSubText, songNameText };
+                foreach (var c in cands) if (c != null && c.font != null) { areaFont = c.font; break; }
+            }
+            AreaChartEditor areaEd = AreaChartEditor.Launch(gameObject.scene, songId, editLevelId, mainCam, title, areaFont, areaEditorFontScale, areaEditorKorean);
+            areaEd.SetAudioDefaults(musicVolume, hitSoundVolume, areaEditorLongNoteHitSound);   // 이 에디터의 음악 · 탭음 볼륨으로 시작
+            currentState = EditorState.Editing;
+            enabled = false;   // 이 에디터의 Update / OnGUI 를 멈춤
+            return;
+        }
+
         editSongId = songId;
         currentSongName = $"Song {songId}"; 
 
@@ -497,7 +529,12 @@ public class ChartEditorManager : MonoBehaviour
     private void LoadAudio(int songId)
     {
         AudioClip clip = Resources.Load<AudioClip>($"Audio/Full/{songId}");
-        if (clip != null) bgmSource.clip = clip;
+        if (clip != null)
+        {
+            bgmSource.clip = clip;
+            // 음악 데이터를 미리 메모리에 올림 (Load In Background 설정이면 Resources.Load 직후엔 아직 비어 있음)
+            if (clip.loadState != AudioDataLoadState.Loaded) clip.LoadAudioData();
+        }
     }
 
     // ===== DeathArea =====
@@ -513,6 +550,8 @@ public class ChartEditorManager : MonoBehaviour
 
     public bool IsDeathAreaBeat(double beat)
     {
+        foreach (var z in GetGapZones())
+            if (beat > z[0] + 1e-5 && beat < z[1] - 1e-5) return true;   // TIMING 앞 빈 박
         if (deathAreas.Count == 0) return false;
         return IsDeathAreaTime(GetTimeFromBeat(beat));
     }
@@ -569,13 +608,6 @@ public class ChartEditorManager : MonoBehaviour
         CloseSettingUI();
     }
 
-    public bool IsFreeKeyZone(double beat)
-    {
-        foreach (var z in freeKeyZones) {
-            if (beat >= z.StartBeat && beat <= z.EndBeat) return true;
-        }
-        return false;
-    }
 
     void Update()
     {
@@ -604,7 +636,7 @@ public class ChartEditorManager : MonoBehaviour
             return;
         }
 
-        bool isGUIOpen = linearInputType > 0 || isInputtingFreeKeyNote;
+        bool isGUIOpen = false;
         var mouse = Mouse.current;
         bool isPointerOverUI = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
         
@@ -617,17 +649,21 @@ public class ChartEditorManager : MonoBehaviour
             hoverSnapBeat = Math.Round(targetBeat / step) * step;
         }
 
-        double prevPlaybackTime = currentPlaybackTime;
 
         HandlePlaybackAndScroll();
 
         if (isPlaying)
         {
-            double prevBeat = GetBeatFromTime(prevPlaybackTime + hitSoundLatencyCorrection);
+            // [버그 수정] 첫 탭음이 안 들리던 문제
+            //  예전: 이번 프레임 구간을 (이전 시각 + 보정, 지금 시각 + 보정] 으로 잡아서
+            //        재생 시작 위치에 있는 노트(와 시작 직후 35ms 안의 노트)가 첫 프레임에 빠졌다.
+            //  지금: 재생 시작 때 '시작 박 바로 앞'부터 검사하고, 그 뒤로는 지난번 검사한 박부터 이어서 검사
+            double prevBeat = edHitCheckBeat;
             double curBeat = GetBeatFromTime(currentPlaybackTime + hitSoundLatencyCorrection);
 
             if (curBeat > prevBeat)
             {
+                edHitCheckBeat = curBeat;
                 var notesToProcess = editorNotes
                     .Where(n => n.AbsoluteBeat > prevBeat && n.AbsoluteBeat <= curBeat)
                     .OrderBy(n => n.AbsoluteBeat)
@@ -646,10 +682,10 @@ public class ChartEditorManager : MonoBehaviour
                 {
                     IncreaseCombo();
 
-                    if ((n.Type == 2 || n.Type == 12) && !n.IsFreeKey)
+                    if (n.Type == 2 || n.Type == 12)
                     {
                         var tail = editorNotes
-                            .Where(t => !t.IsFreeKey && t.Lane == n.Lane && t.Layer == n.Layer && t.IsRedNote == n.IsRedNote && (t.Type == 3 || t.Type == 13) && t.AbsoluteBeat > n.AbsoluteBeat)
+                            .Where(t => t.Lane == n.Lane && t.Layer == n.Layer && t.IsRedNote == n.IsRedNote && (t.Type == 3 || t.Type == 13) && t.AbsoluteBeat > n.AbsoluteBeat)
                             .OrderBy(t => t.AbsoluteBeat)
                             .FirstOrDefault();
                         if (tail != null) {
@@ -737,13 +773,19 @@ public class ChartEditorManager : MonoBehaviour
         if (isPlaying)
         {
             double exactTime = GetTimeFromBeat(currentBeat);
-            playStartTime = Time.realtimeSinceStartupAsDouble - exactTime;
-            currentPlaybackTime = exactTime;
+            edPlayFromTime = exactTime;
+            edHitCheckBeat = currentBeat - 1e-6;          // 시작 위치의 노트도 탭음이 나도록
             isMusicPlaying = false;
+            // 음악 예약에 필요한 아주 짧은 시간(약 0.1초)만큼 시계를 앞당겨 시작 → 시작 위치부터 음악이 빠짐없이 나옴
+            currentPlaybackTime = ScheduleEditorMusic(exactTime, true);
+            playStartTime = Time.realtimeSinceStartupAsDouble - currentPlaybackTime;
         }
         else
         {
-            if (bgmSource != null && bgmSource.isPlaying) bgmSource.Stop();
+            if (bgmSource != null) bgmSource.Stop();
+            edMusicScheduled = false;
+            edWaitingAudio = false;
+            isMusicPlaying = false;
             SnapCursorToBeat(currentBeat);
         }
     }
@@ -751,37 +793,40 @@ public class ChartEditorManager : MonoBehaviour
     private void HandlePlaybackAndScroll()
     {
         var kb = Keyboard.current;
-        bool isGUIOpen = linearInputType > 0 || isInputtingFreeKeyNote || IsSettingInputOpen;
+        bool isGUIOpen = IsSettingInputOpen;
         
         if (kb != null && kb[Key.Space].wasPressedThisFrame && !isGUIOpen) TogglePlayButton(); 
 
         if (isPlaying)
         {
-            currentPlaybackTime += Time.unscaledDeltaTime;
-            double audioStartTime = chartOffset; 
-            
-            if (bgmSource != null && bgmSource.clip != null)
+            // [버그 수정] 예전: 프레임 시간으로 흐르다가 bgmSource.time 과 50ms 넘게 벌어질 때만 순간 이동
+            //  → 에디터 화면이 음악과 최대 ±50ms 어긋난 채로 보여서, 그 상태로 맞춘 오프셋/노트가 게임에서 틀어졌다.
+            //  지금: 게임과 같이 예약 재생 + dspTime 시계 (프레임마다 부드럽게 따라감)
+            float dt = Mathf.Min(Time.unscaledDeltaTime, 0.05f);
+            double audioStartTime = EditorAudioStart;
+
+            if (edMusicScheduled && bgmSource != null && bgmSource.clip != null)
             {
-                if (currentPlaybackTime >= audioStartTime && !isMusicPlaying)
+                double target = audioStartTime + (AudioSettings.dspTime - edDspAudioZero);
+                double diff = target - currentPlaybackTime;
+                if (Math.Abs(diff) > 0.25) currentPlaybackTime = target;
+                else currentPlaybackTime += dt * Mathf.Clamp(1f + (float)(diff * 2.0), 0.8f, 1.2f);
+
+                isMusicPlaying = currentPlaybackTime >= audioStartTime;
+                if (currentPlaybackTime > audioStartTime + bgmSource.clip.length + 0.05)
                 {
-                    float targetTime = (float)(currentPlaybackTime - audioStartTime);
-                    if (targetTime >= 0 && targetTime < bgmSource.clip.length) { 
-                        bgmSource.time = targetTime; bgmSource.Play(); 
-                    }
-                    isMusicPlaying = true;
-                }
-                
-                if (isMusicPlaying && bgmSource.isPlaying)
-                {
-                    double expectedTime = audioStartTime + bgmSource.time;
-                    if (Math.Abs(currentPlaybackTime - expectedTime) > 0.05) currentPlaybackTime = expectedTime;
-                }
-                else if (isMusicPlaying && !bgmSource.isPlaying && currentPlaybackTime > audioStartTime + bgmSource.clip.length - 0.1f)
-                {
-                    TogglePlayButton();
+                    TogglePlayButton();   // 음악 끝
+                    return;
                 }
             }
-            currentBeat = GetBeatFromTime(currentPlaybackTime);
+            else
+            {
+                currentPlaybackTime += dt;
+                if (edWaitingAudio && bgmSource != null && bgmSource.clip != null && bgmSource.clip.loadState == AudioDataLoadState.Loaded)
+                    ScheduleEditorMusic(currentPlaybackTime);
+            }
+            // 예약 대기(시작 전 약 0.1초) 동안은 커서를 시작 위치에 둠
+            currentBeat = GetBeatFromTime(Math.Max(currentPlaybackTime, edPlayFromTime));
         }
         else
         {
@@ -825,12 +870,21 @@ public class ChartEditorManager : MonoBehaviour
         {
             if (isInputtingDeathArea) { ConfirmDeathAreaInput(); return; }
 
-            if (double.TryParse(inputBuffer, out double val))
+            if (double.TryParse(inputBuffer, NumberStyles.Float, CultureInfo.InvariantCulture, out double val))
             {
-                if (isInputtingBpm && val >= 0)
+                if (isInputtingOffset)
                 {
+                    // MUSICOFFSET 을 ms 로 직접 지정
+                    double delta = ChartOffset.ToMusicOffsetMs(songStartOffset) - val;   // AdjustOffset 은 '늘릴 양(초)'을 받음
+                    AdjustOffset(-delta / 1000.0);
+                }
+                else if (isInputtingBpm && val >= 0)
+                {
+                    // 같은 자리의 TIMING(고정 시각)은 BPM 값만 바꾸고 시각 고정은 유지
+                    var old = bpmChanges.FirstOrDefault(b => b.Measure == targetMeasure && b.Num == targetNum && b.Den == targetDen);
+                    double keepAnchor = old != null ? old.AnchorMs : double.NaN;
                     bpmChanges.RemoveAll(b => b.Measure == targetMeasure && b.Num == targetNum && b.Den == targetDen);
-                    bpmChanges.Add(new EditorBpm { Measure = targetMeasure, Num = targetNum, Den = targetDen, Bpm = val });
+                    bpmChanges.Add(new EditorBpm { Measure = targetMeasure, Num = targetNum, Den = targetDen, Bpm = val, AnchorMs = keepAnchor });
                     bpmChanges = bpmChanges.OrderBy(b => b.AbsoluteBeat).ToList();
                 }
                 else if (isInputtingSpeed)
@@ -888,6 +942,7 @@ public class ChartEditorManager : MonoBehaviour
         isInputtingSpeed = false;
         isInputtingDeathArea = false;
         deathAreaInputStage = 0;
+        isInputtingOffset = false;
         
         if (settingTransitionCoroutine != null) StopCoroutine(settingTransitionCoroutine);
         settingTransitionCoroutine = StartCoroutine(FadeUI(settingUIGroup, chartUIGroup));
@@ -946,7 +1001,15 @@ public class ChartEditorManager : MonoBehaviour
         bool minusHeld = kb[Key.Minus].isPressed || kb[Key.NumpadMinus].isPressed;
         bool plusHeld = kb[Key.Equals].isPressed || kb[Key.NumpadPlus].isPressed;
 
-        double baseAmount = 0.01; 
+        // + : MUSICOFFSET 증가 = 노트(격자)가 음악보다 늦어짐 (osu! 와 같은 방향)
+        //  기본 1ms 단위, SHIFT 를 누르고 있으면 10ms 단위.  O : 값을 ms 로 직접 입력
+        double baseAmount = (kb[Key.LeftShift].isPressed || kb[Key.RightShift].isPressed) ? 0.01 : 0.001; 
+        if (kb[Key.O].wasPressedThisFrame && !isPlaying)
+        {
+            isInputtingOffset = true;
+            inputBuffer = "";
+            OpenSettingUI("MUSIC OFFSET", $"음악 파일에서 첫 박이 나오는 시각을 ms 로 입력하세요. (지금 {ChartOffset.Display(songStartOffset)}, osu! Offset 과 같은 값)");
+        }
 
         if (minusPressed) { AdjustOffset(-baseAmount); offsetHoldTimer = 0.5f; offsetHoldCount = 0; }
         else if (plusPressed) { AdjustOffset(baseAmount); offsetHoldTimer = 0.5f; offsetHoldCount = 0; }
@@ -990,17 +1053,6 @@ public class ChartEditorManager : MonoBehaviour
         if (kb[Key.F6].wasPressedThisFrame) SetKeyMode(6);
         if (kb[Key.F8].wasPressedThisFrame) SetKeyMode(8);
 
-        if (selectedFreeKeyNote != null)
-        {
-            if (kb[Key.LeftArrow].wasPressedThisFrame) { selectedFreeKeyNote.StartX -= 1; selectedFreeKeyNote.TargetX -= 1; }
-            if (kb[Key.RightArrow].wasPressedThisFrame) { selectedFreeKeyNote.StartX += 1; selectedFreeKeyNote.TargetX += 1; }
-            
-            if (kb[Key.UpArrow].wasPressedThisFrame) selectedFreeKeyNote.TargetX -= 1;
-            if (kb[Key.DownArrow].wasPressedThisFrame) selectedFreeKeyNote.TargetX += 1;
-            
-            if (kb[Key.Escape].wasPressedThisFrame) selectedFreeKeyNote = null;
-        }
-        else
         {
             if (kb[Key.LeftArrow].wasPressedThisFrame) 
             {
@@ -1089,26 +1141,6 @@ public class ChartEditorManager : MonoBehaviour
             {
                 bool shift = kb[Key.LeftShift].isPressed || kb[Key.RightShift].isPressed;
 
-                if (kb[Key.Z].isPressed) {
-                    if (isRightDown) linearEvents.RemoveAll(e => (e.Action == "add" || e.Action == "del") && Math.Abs(e.AbsoluteBeat - hoverSnapBeat) < 0.02);
-                    else { linearInputType = 1; isAlternateAction = shift; targetBeatForLinear = hoverSnapBeat; inputBuffer = ""; }
-                    return;
-                }
-                if (kb[Key.X].isPressed) {
-                    if (isRightDown) linearEvents.RemoveAll(e => (e.Action == "exposure" || e.Action == "disappearance") && Math.Abs(e.AbsoluteBeat - hoverSnapBeat) < 0.02);
-                    else { linearInputType = 2; isAlternateAction = shift; targetBeatForLinear = hoverSnapBeat; inputBuffer = ""; }
-                    return;
-                }
-                if (kb[Key.V].isPressed) {
-                    if (isRightDown) linearEvents.RemoveAll(e => e.Action == "move" && Math.Abs(e.AbsoluteBeat - hoverSnapBeat) < 0.02);
-                    else { linearInputType = 3; isAlternateAction = false; targetBeatForLinear = hoverSnapBeat; inputBuffer = ""; }
-                    return;
-                }
-                if (kb[Key.B].isPressed) {
-                    if (isRightDown) linearEvents.RemoveAll(e => e.Action == "rotation" && Math.Abs(e.AbsoluteBeat - hoverSnapBeat) < 0.02);
-                    else { linearInputType = 4; isAlternateAction = false; targetBeatForLinear = hoverSnapBeat; inputBuffer = ""; }
-                    return;
-                }
 
                 if (kb[Key.G].isPressed) {
                     // G + 좌클릭 : DeathArea 추가(시작/끝 시간 입력), G + 우클릭 : 커서 위치의 DeathArea 삭제
@@ -1153,59 +1185,20 @@ public class ChartEditorManager : MonoBehaviour
                     if (!isRightDown) startEvents.Add(new EditorStartEvent { Measure = measure, Num = num, Den = den });
                     return;
                 }
-                else if (kb[Key.C].isPressed) {
-                    if (!isRightDown) {
-                        if (!IsFreeKeyZone(hoverSnapBeat)) {
-                            freeKeyZones.Add(new EditorFreeKeyZone { StartBeat = hoverSnapBeat });
-                            freeKeyZones = freeKeyZones.OrderBy(z => z.StartBeat).ToList();
-                        }
-                    } else {
-                        var zone = freeKeyZones.LastOrDefault(z => z.StartBeat <= hoverSnapBeat && hoverSnapBeat <= z.EndBeat);
-                        if (zone != null) {
-                            if (Math.Abs(zone.StartBeat - hoverSnapBeat) < 0.01) freeKeyZones.Remove(zone); 
-                            else zone.EndBeat = hoverSnapBeat; 
-                        }
-                    }
-                    return;
-                }
-            }
-
-            if (IsFreeKeyZone(hoverSnapBeat))
-            {
-                float screenW = mainCam.orthographicSize * 2f * mainCam.aspect;
-                float curXNormalized = ((worldPos.x + screenW/2f) / screenW) * 200f - 100f; 
-                int gridX = Mathf.Clamp(Mathf.RoundToInt(curXNormalized), -100, 100);
-
-                if (isRightDown) {
-                    var target = editorNotes.FirstOrDefault(n => n.IsFreeKey && Math.Abs(n.AbsoluteBeat - hoverSnapBeat) < 0.02f && Math.Abs(n.StartX - gridX) < 5f);
-                    if (target != null) { Destroy(target.VisualObject); editorNotes.Remove(target); }
-                    selectedFreeKeyNote = null; 
-                } else {
-                    var target = editorNotes.FirstOrDefault(n => n.IsFreeKey && Math.Abs(n.AbsoluteBeat - hoverSnapBeat) < 0.02f && Math.Abs(n.StartX - gridX) < 5f);
-                    if (target != null) { selectedFreeKeyNote = target; }
-                    else { 
-                        selectedFreeKeyNote = null; 
-                        isInputtingFreeKeyNote = !inDeathArea;
-                        targetMeasure = measure; targetNum = num; targetDen = den;
-                        targetFreeKeyType = currentNoteType - 1;
-                        inputBuffer = $"0, Top, 1, {gridX}, {gridX}";
-                    } 
-                }
             }
         }
 
-        if (!IsFreeKeyZone(hoverSnapBeat))
         {
             int hoverLane = Mathf.FloorToInt((worldPos.x - leftEdge) / laneWidth);
 
             if (isRightDown && hoverLane >= 0 && hoverLane < currentKeyCount) 
             {
-                var target = editorNotes.FirstOrDefault(n => !n.IsFreeKey && n.Layer == editLayer && n.Lane <= hoverLane && (n.Lane + (n.IsRedNote ? n.Width : 1) - 1) >= hoverLane && Math.Abs(n.AbsoluteBeat - hoverSnapBeat) < 0.02f);
+                var target = editorNotes.FirstOrDefault(n => n.Layer == editLayer && n.Lane <= hoverLane && (n.Lane + (n.IsRedNote ? n.Width : 1) - 1) >= hoverLane && Math.Abs(n.AbsoluteBeat - hoverSnapBeat) < 0.02f);
                 if (target != null) { Destroy(target.VisualObject); editorNotes.Remove(target); RefreshLongNoteBodies(); }
             } 
             else if (isLeftDown && !inDeathArea && hoverLane >= 0 && hoverLane < currentKeyCount) 
             {
-                var exist = editorNotes.FirstOrDefault(n => !n.IsFreeKey && n.Layer == editLayer && n.Lane <= hoverLane && (n.Lane + (n.IsRedNote ? n.Width : 1) - 1) >= hoverLane && Math.Abs(n.AbsoluteBeat - hoverSnapBeat) < 0.02f);
+                var exist = editorNotes.FirstOrDefault(n => n.Layer == editLayer && n.Lane <= hoverLane && (n.Lane + (n.IsRedNote ? n.Width : 1) - 1) >= hoverLane && Math.Abs(n.AbsoluteBeat - hoverSnapBeat) < 0.02f);
                 if (exist != null) { Destroy(exist.VisualObject); editorNotes.Remove(exist); }
                 
                 if (isRedNoteMode) {
@@ -1233,36 +1226,6 @@ public class ChartEditorManager : MonoBehaviour
                 draggedRedNote = null;
             }
         }
-    }
-
-    private void AddFreeKeyNoteToEditor(long measure, long num, long den, double startX, double targetX, int type, double rot = 0, string dir = "Top", int lineNum = 1)
-    {
-        EditorNote newNote = new EditorNote { 
-            Measure = measure, Num = num, Den = den, IsFreeKey = true, 
-            StartX = startX, TargetX = targetX, Type = type,
-            Rotation = rot, Direction = dir, LineNumber = lineNum 
-        };
-        GameObject obj = new GameObject($"FKNote_{measure}_{num}_{startX}");
-        SpriteRenderer sr = obj.AddComponent<SpriteRenderer>();
-        
-        EnsureGraphicsResources();
-        if (type == 0 && freeKeyNormal != null) sr.sprite = freeKeyNormal;
-        else if (type == 1 && freeKeySpace != null) sr.sprite = freeKeySpace;
-        else if (type == 2 && freeKeyDrag != null) sr.sprite = freeKeyDrag;
-
-        if (sr.sprite == null) {
-            sr.sprite = fallbackSprite;
-            Shader defaultShader = Shader.Find("Sprites/Default");
-            if (defaultShader != null) sr.material = new Material(defaultShader);
-            sr.color = Color.yellow; 
-            obj.transform.localScale = new Vector3(laneWidth * 0.8f, 0.3f, 1f);
-        } else {
-            obj.transform.localScale = new Vector3(noteScale, noteScale, 1f);
-        }
-
-        sr.sortingOrder = 5;
-        obj.transform.SetParent(this.transform);
-        newNote.VisualObject = obj; editorNotes.Add(newNote); selectedFreeKeyNote = newNote;
     }
 
     private EditorNote AddNoteToEditor(long measure, long num, long den, int lane, int type, bool isRed = false, int width = 1, int layer = NoteLayer.Top)
@@ -1338,7 +1301,7 @@ public class ChartEditorManager : MonoBehaviour
         else
         {
             bool isBlue = (note.Lane % 2 == 0);
-            if (note.Type == 1) sr.sprite = isBlue ? blueShort : greenShort;
+            if (note.Type == 1 || NoteTypes.IsArrow(note.Type)) sr.sprite = isBlue ? blueShort : greenShort;
             else if (note.Type == 2) sr.sprite = isBlue ? blueLongHead : greenLongHead;
             else if (note.Type == 3) sr.sprite = isBlue ? blueLongTail : greenLongTail;
             
@@ -1356,8 +1319,42 @@ public class ChartEditorManager : MonoBehaviour
 
         // 층별 렌더링 순서: 2층(Top)이 항상 1층(Bottom)보다 위. 마디선(Type 4)은 맨 아래.
         sr.sortingOrder = (!note.IsRedNote && note.Type == 4) ? 1 : NoteLayer.HeadOrder(note.Layer);
+        UpdateEditorArrow(note, sr);
         note.BaseAlpha = sr.color.a;
     }
+
+    // 화살표 노트(7: >>> 밝은 파랑 / 8: <<< 밝은 노랑): 노트 색을 물들이고 위에 화살표를 띄움
+    private void UpdateEditorArrow(EditorNote note, SpriteRenderer sr)
+    {
+        Transform arrowT = note.VisualObject.transform.Find("Arrow");
+        if (!NoteTypes.IsArrow(note.Type) || note.IsRedNote)
+        {
+            if (arrowT != null) arrowT.gameObject.SetActive(false);
+            return;
+        }
+        Color c = NoteArt.ArrowColor(note.Type);
+        sr.color = Color.Lerp(Color.white, c, 0.55f);
+        if (arrowT == null)
+        {
+            GameObject a = new GameObject("Arrow");
+            a.transform.SetParent(note.VisualObject.transform, false);
+            a.AddComponent<SpriteRenderer>();
+            arrowT = a.transform;
+        }
+        arrowT.gameObject.SetActive(true);
+        SpriteRenderer ar = arrowT.GetComponent<SpriteRenderer>();
+        ar.sprite = NoteArt.ArrowSprite;
+        ar.color = c;
+        ar.sortingOrder = sr.sortingOrder + 1;
+        Vector3 ps = note.VisualObject.transform.localScale;
+        float sx = Mathf.Max(0.0001f, Mathf.Abs(ps.x)), sy = Mathf.Max(0.0001f, Mathf.Abs(ps.y));
+        Vector2 asz = ar.sprite.bounds.size;
+        float dir = note.Type == NoteTypes.ArrowLeft ? -1f : 1f;
+        arrowT.localScale = new Vector3(dir * laneWidth * 0.7f / asz.x / sx, laneWidth * 0.27f / asz.y / sy, 1f);
+        arrowT.localPosition = new Vector3(0f, laneWidth * 0.32f / sy, 0f);
+    }
+
+
 
     // 편집 중이 아닌 층은 흐리게, 재생 중에는 모든 층을 또렷하게
     private void ApplyLayerAlpha(SpriteRenderer sr, int layer, float baseAlpha)
@@ -1383,12 +1380,7 @@ public class ChartEditorManager : MonoBehaviour
             {
                 float noteY = hitLineScreenOffsetY + (float)((note.AbsoluteBeat - currentBeat) * beatSpacing);
                 
-                if (note.IsFreeKey) {
-                    float objX = (float)((note.StartX + 100f) / 200f * screenW) - (screenW/2f);
-                    note.VisualObject.transform.position = new Vector3(objX, noteY, -1f);
-                    if (note == selectedFreeKeyNote) note.VisualObject.transform.localScale = new Vector3(noteScale * 1.5f, noteScale * 1.5f, 1f);
-                    else note.VisualObject.transform.localScale = new Vector3(noteScale, noteScale, 1f);
-                } else if (note.IsRedNote) {
+                if (note.IsRedNote) {
                     float startX = leftEdge + (note.Lane * laneWidth) + (laneWidth / 2f);
                     float endX = leftEdge + (Mathf.Min(note.Lane + note.Width - 1, currentKeyCount - 1) * laneWidth) + (laneWidth / 2f);
                     float centerX = (startX + endX) / 2f;
@@ -1403,7 +1395,7 @@ public class ChartEditorManager : MonoBehaviour
                 }
                 note.VisualObject.SetActive(isVisible && noteY > -1000f && noteY < 1000f);
 
-                if (!note.IsFreeKey && note.VisualObject.activeSelf) ApplyLayerAlpha(note.Sr, note.Layer, note.BaseAlpha);
+                if (note.VisualObject.activeSelf) ApplyLayerAlpha(note.Sr, note.Layer, note.BaseAlpha);
             }
         }
 
@@ -1503,7 +1495,7 @@ public class ChartEditorManager : MonoBehaviour
         {
             for (int lane = 0; lane < currentKeyCount; lane++) 
             {
-                var regularNotes = editorNotes.Where(n => !n.IsFreeKey && !n.IsRedNote && n.Layer == layer && n.Lane == lane).OrderBy(n => n.AbsoluteBeat).ToList();
+                var regularNotes = editorNotes.Where(n => !n.IsRedNote && n.Layer == layer && n.Lane == lane).OrderBy(n => n.AbsoluteBeat).ToList();
                 EditorNote head = null;
                 
                 foreach (var n in regularNotes)
@@ -1517,7 +1509,7 @@ public class ChartEditorManager : MonoBehaviour
                     else if (n.Type == 1 || n.Type == 4) head = null;
                 }
 
-                var redNotes = editorNotes.Where(n => !n.IsFreeKey && n.IsRedNote && n.Layer == layer && n.Lane == lane).OrderBy(n => n.AbsoluteBeat).ToList();
+                var redNotes = editorNotes.Where(n => n.IsRedNote && n.Layer == layer && n.Lane == lane).OrderBy(n => n.AbsoluteBeat).ToList();
                 EditorNote redHead = null;
                 
                 foreach (var n in redNotes)
@@ -1549,13 +1541,7 @@ public class ChartEditorManager : MonoBehaviour
         float gridZ = 1f; 
         float thickness = 0.02f; 
 
-        List<Vector2> fkYList = new List<Vector2>();
-        foreach (var z in freeKeyZones) {
-            float y1 = hitLineScreenOffsetY + (float)((z.StartBeat - currentBeat) * beatSpacing);
-            float y2 = z.EndBeat >= 1000000 ? 1000f : hitLineScreenOffsetY + (float)((z.EndBeat - currentBeat) * beatSpacing);
-            if (y1 > 1000f || y2 < -1000f) continue;
-            fkYList.Add(new Vector2(Mathf.Max(-1000f, y1), Mathf.Min(1000f, y2)));
-        }
+        List<Vector2> fkYList = new List<Vector2>();   // 레인 선을 끊을 구간 (DeathArea · TIMING 빈 박)
         // DeathArea : 레인 선을 끊고(격자 없음) 붉은 띠로 표시
         List<Vector2> deathBands = new List<Vector2>();
         List<double[]> deathBeatRanges = new List<double[]>();
@@ -1568,6 +1554,16 @@ public class ChartEditorManager : MonoBehaviour
             Vector2 seg = new Vector2(Mathf.Max(-1000f, dy1), Mathf.Min(1000f, dy2));
             fkYList.Add(seg);
             deathBands.Add(seg);
+        }
+        // TIMING 앞의 빈 박도 같은 붉은 띠로 (노트 배치 금지)
+        foreach (var z in GetGapZones()) {
+            deathBeatRanges.Add(new double[] { z[0], z[1] });
+            float gy1 = hitLineScreenOffsetY + (float)((z[0] - currentBeat) * beatSpacing);
+            float gy2 = hitLineScreenOffsetY + (float)((z[1] - currentBeat) * beatSpacing);
+            if (gy1 > 1000f || gy2 < -1000f) continue;
+            Vector2 gseg = new Vector2(Mathf.Max(-1000f, gy1), Mathf.Min(1000f, gy2));
+            fkYList.Add(gseg);
+            deathBands.Add(gseg);
         }
         fkYList = fkYList.OrderBy(v => v.x).ToList();
 
@@ -1609,18 +1605,18 @@ public class ChartEditorManager : MonoBehaviour
                 
                 if (y > -1000f && y < 1000f) {
                     Color c = (currentSnap >= 4 && b % (currentSnap / 4) == 0) ? new Color(0.6f, 0.6f, 0.6f, 0.8f) : new Color(0.3f, 0.3f, 0.3f, 0.4f);
-                    if (IsFreeKeyZone(beat)) DrawLine(new Vector3(0, y, gridZ), new Vector3(screenW, thickness, 1f), c);
-                    else DrawLine(new Vector3(leftEdge + totalWidth/2f, y, gridZ), new Vector3(totalWidth, thickness, 1f), c);
+                    DrawLine(new Vector3(leftEdge + totalWidth/2f, y, gridZ), new Vector3(totalWidth, thickness, 1f), c);
                 }
             }
         }
 
         Color hitLineColor = isPlaying ? new Color(0f, 1f, 0f, 0.4f) : new Color(1f, 0f, 0f, 0.4f);
         float hHeight = 0.08f; 
-        float width = IsFreeKeyZone(currentBeat) ? screenW : totalWidth + 0.4f;
-        float cx = IsFreeKeyZone(currentBeat) ? 0 : leftEdge + totalWidth/2f;
+        float width = totalWidth + 0.4f;
+        float cx = leftEdge + totalWidth/2f;
         
         DrawLine(new Vector3(cx, hitLineScreenOffsetY, 0f), new Vector3(width, hHeight * 2f, 1f), hitLineColor);
+
     }
 
     public void SetSnap(int snapDenominator)
@@ -1637,58 +1633,177 @@ public class ChartEditorManager : MonoBehaviour
         UpdateUITexts();
     }
 
+    // amount: MUSICOFFSET 변화량(초). + = 노트가 늦어짐 (osu! 타이밍 Offset 을 늘리는 것과 같음)
+    //  [부호 수정] 예전에는 + 를 누르면 '음악 시작 시각'이 늘어서 노트가 오히려 빨라졌다 (대중적인 리듬게임과 반대).
     public void AdjustOffset(double amount)
     {
-        songStartOffset += amount;
-        songStartOffset = Math.Round(songStartOffset, 3);
+        songStartOffset -= amount;
+        songStartOffset = Math.Round(songStartOffset, 6);   // 변환기의 소수 ms(예: 1234.5ms)도 보존
         chartOffset = songStartOffset; 
         
-        if (isPlaying && isMusicPlaying && bgmSource != null)
+        if (isPlaying)
         {
-            float targetTime = (float)(currentPlaybackTime - chartOffset);
-            if (targetTime >= 0 && targetTime < bgmSource.clip.length) {
-                bgmSource.time = targetTime;
-            } else {
-                bgmSource.Stop();
-                isMusicPlaying = false;
+            if (edMusicScheduled && bgmSource != null && bgmSource.clip != null && AudioSettings.dspTime >= edDspAudioZero)
+            {
+                // 음악은 그대로 두고 화면(차트 시각)만 즉시 옮긴다
+                currentPlaybackTime -= amount;
+                edPlayFromTime = Math.Min(edPlayFromTime, currentPlaybackTime);
+                currentBeat = GetBeatFromTime(currentPlaybackTime);
+                edHitCheckBeat = GetBeatFromTime(currentPlaybackTime + hitSoundLatencyCorrection);   // 옮긴 만큼 탭음이 몰려 나오지 않게
             }
+            else ScheduleEditorMusic(currentPlaybackTime); // 아직 음악이 시작 전이면 예약을 다시
         }
-        else if (!isPlaying)
+        else
         {
             currentPlaybackTime = GetTimeFromBeat(currentBeat);
         }
         UpdateUITexts();
     }
 
+    // fromTime(지금의 차트 시각)부터 음악이 이어지도록 예약 재생
+    //  preroll = false : 지금 시각이 fromTime (예약에 걸리는 약 0.1초 분량의 음악은 건너뜀 — 재생 도중 다시 예약할 때)
+    //  preroll = true  : fromTime 의 음악부터 빠짐없이 나오도록, 시계를 그 시간만큼 앞당긴 값을 돌려줌 (재생 시작할 때)
+    //  돌려주는 값 = 지금 이 순간의 차트 시각
+    private double ScheduleEditorMusic(double fromTime) { return ScheduleEditorMusic(fromTime, false); }
+
+    private double ScheduleEditorMusic(double fromTime, bool preroll)
+    {
+        edMusicScheduled = false;
+        isMusicPlaying = false;
+        if (bgmSource == null || bgmSource.clip == null) return fromTime;
+        AudioClip clip = bgmSource.clip;
+        // [버그 수정] 음악 데이터가 다 올라오기 전에 재생하면 앞부분(약 0.5초)이 소리 없이 지나가 버렸다
+        //  → 다 올라올 때까지 기다렸다가 그 시점의 위치로 예약한다 (HandlePlaybackAndScroll 에서 다시 부름)
+        if (clip.loadState != AudioDataLoadState.Loaded)
+        {
+            if (clip.loadState != AudioDataLoadState.Loading) clip.LoadAudioData();
+            edWaitingAudio = true;
+            return fromTime;
+        }
+        edWaitingAudio = false;
+
+        int bufLen, bufCount;
+        AudioSettings.GetDSPBufferSize(out bufLen, out bufCount);
+        int sr = AudioSettings.outputSampleRate > 0 ? AudioSettings.outputSampleRate : 48000;
+        double minLead = Math.Max(0.1, bufLen * (double)Math.Max(1, bufCount) / sr * 1.5 + 0.02);
+
+        double audioStart = EditorAudioStart;
+        // musicAt : 음악이 실제로 소리 나기 시작하는 차트 시각,  clockNow : 지금 이 순간의 차트 시각
+        double clockNow, musicAt;
+        if (preroll)
+        {
+            musicAt = Math.Max(audioStart, fromTime);
+            clockNow = Math.Min(fromTime, musicAt - minLead);
+        }
+        else
+        {
+            clockNow = fromTime;
+            musicAt = Math.Max(audioStart, fromTime + minLead);
+        }
+        double startPos = musicAt - audioStart;            // 음악 파일 안의 위치
+        if (startPos >= clip.length) return fromTime;
+
+        double startDsp = AudioSettings.dspTime + (musicAt - clockNow);
+        bgmSource.Stop();
+        bgmSource.pitch = 1f;
+        bgmSource.timeSamples = Mathf.Clamp((int)Math.Round(startPos * clip.frequency), 0, Mathf.Max(0, clip.samples - 1));
+        bgmSource.PlayScheduled(startDsp);
+        edDspAudioZero = startDsp - startPos;
+        edMusicScheduled = true;
+        return clockNow;
+    }
+
     long GCD(long a, long b) { return b == 0 ? (a == 0 ? 1 : a) : GCD(b, a % b); }
+
+    // ===== 박 ↔ 시각 =====
+    //  BPM 줄  : 앞에서부터 박 × BPM 누적
+    //  TIMING 줄: 그 박의 시각을 고정 (osu! 빨간 줄과 같음) → 누적 오차 없음
+    //   TIMING 앞쪽에 남는 '빈 박'(앞 구간이 시각상 이미 끝난 박)은 GapZones 로 표시하고 노트 배치를 막는다.
+    private struct TimingSeg { public double Beat, Time, Bpm; }
+    private List<TimingSeg> timingSegCache;
+    private double timingSegKey;
+
+    private List<TimingSeg> GetTimingSegs()
+    {
+        // bpmChanges 내용이 바뀌었을 때만 다시 계산 (간단한 체크섬, 할당 없음)
+        double key = bpmChanges.Count;
+        for (int i = 0; i < bpmChanges.Count; i++)
+        {
+            var b = bpmChanges[i];
+            key = key * 1.000003 + b.AbsoluteBeat * 7.13 + b.Bpm * 3.71 + (b.HasAnchor ? b.AnchorMs * 1.37 + 0.5 : 0.77) + i * 0.011;
+        }
+        if (timingSegCache != null && key == timingSegKey) return timingSegCache;
+
+        var sorted = bpmChanges.OrderBy(b => b.AbsoluteBeat).ToList();
+        var list = new List<TimingSeg>();
+        double bpm0 = sorted.Count > 0 ? sorted[0].Bpm : 120.0;
+        list.Add(new TimingSeg { Beat = 0, Time = 0, Bpm = bpm0 });
+        foreach (var b in sorted)
+        {
+            if (b.AbsoluteBeat <= 1e-9) { var f = list[0]; f.Bpm = b.Bpm; list[0] = f; continue; }
+            var p = list[list.Count - 1];
+            double t = b.HasAnchor ? b.AnchorMs / 1000.0 : p.Time + (b.AbsoluteBeat - p.Beat) * (60.0 / p.Bpm);
+            list.Add(new TimingSeg { Beat = b.AbsoluteBeat, Time = t, Bpm = b.Bpm });
+        }
+        timingSegCache = list; timingSegKey = key;
+        return list;
+    }
 
     private double GetTimeFromBeat(double targetBeat) 
     {
-        var sorted = bpmChanges.OrderBy(b => b.AbsoluteBeat).ToList();
-        double time = 0; 
-        if (targetBeat <= 0) { double initBpm = sorted.Count > 0 ? sorted[0].Bpm : 120.0; return time + targetBeat * (60.0 / initBpm); }
-        double curB = 0, curBpm = sorted.Count > 0 ? sorted[0].Bpm : 120.0;
-        foreach (var b in sorted) {
-            if (b.AbsoluteBeat > targetBeat) break;
-            time += (b.AbsoluteBeat - curB) * (60.0 / curBpm);
-            curB = b.AbsoluteBeat; curBpm = b.Bpm;
-        }
-        time += (targetBeat - curB) * (60.0 / curBpm);
-        return time;
+        var segs = GetTimingSegs();
+        if (targetBeat <= 0) return targetBeat * (60.0 / segs[0].Bpm);
+        TimingSeg s = segs[0];
+        for (int i = 1; i < segs.Count && segs[i].Beat <= targetBeat + 1e-9; i++) s = segs[i];
+        return s.Time + (targetBeat - s.Beat) * (60.0 / s.Bpm);
     }
 
     private double GetBeatFromTime(double time) 
     {
-        var sorted = bpmChanges.OrderBy(b => b.AbsoluteBeat).ToList();
-        if (sorted.Count == 0) return 0;
-        if (time < 0) return time / (60.0 / sorted[0].Bpm);
-        double t = 0, curB = 0, curBpm = sorted[0].Bpm;
-        foreach (var b in sorted) {
-            double nextTime = t + (b.AbsoluteBeat - curB) * (60.0 / curBpm);
-            if (nextTime > time) break;
-            t = nextTime; curB = b.AbsoluteBeat; curBpm = b.Bpm;
+        var segs = GetTimingSegs();
+        if (time < 0) return time / (60.0 / segs[0].Bpm);
+        int idx = 0;
+        for (int i = 1; i < segs.Count && segs[i].Time <= time + 1e-9; i++) idx = i;
+        double beat = segs[idx].Beat + (time - segs[idx].Time) / (60.0 / segs[idx].Bpm);
+        // 다음 TIMING 이 시각상 조금 늦게 오는 경우(빈 시간)에는 그 박에서 기다림
+        if (idx + 1 < segs.Count) beat = Math.Min(beat, segs[idx + 1].Beat);
+        return beat;
+    }
+
+    // TIMING 줄 바로 앞의 '빈 박' 구간 [시작 박, 끝 박] (노트 배치 금지, 붉은 띠로 표시)
+    private List<double[]> GetGapZones()
+    {
+        var segs = GetTimingSegs();
+        var zones = new List<double[]>();
+        for (int i = 1; i < segs.Count; i++)
+        {
+            var p = segs[i - 1];
+            double realEnd = p.Beat + (segs[i].Time - p.Time) / (60.0 / p.Bpm);
+            if (realEnd < segs[i].Beat - 1e-4) zones.Add(new double[] { Math.Max(p.Beat, realEnd), segs[i].Beat });
         }
-        return curB + (time - t) / (60.0 / curBpm);
+        return zones;
+    }
+
+    // 영역 전용 에디터로 열지: songs.json 의 "Area": "deployed(INSANE)" (이 곡 · 이 난이도)
+    private bool IsAreaEditorLevel(int songId, int levelId)
+    {
+        SongData song = null;
+        if (CoreManager.Instance != null && CoreManager.Instance.CurrentSongData != null && CoreManager.Instance.CurrentSongData.Id == songId)
+            song = CoreManager.Instance.CurrentSongData;
+        else
+        {
+            try
+            {
+                string jsonPath = Path.Combine(Application.streamingAssetsPath, "data", "songs.json");
+                if (File.Exists(jsonPath))
+                {
+                    SongData[] arr = JsonHelper.FromJson<SongData>(SongJson.Normalize(File.ReadAllText(jsonPath, System.Text.Encoding.UTF8)));
+                    if (arr != null) song = arr.FirstOrDefault(x => x.Id == songId);
+                }
+            }
+            catch (Exception) { }
+        }
+        return AreaHelper.IsAreaLevel(song, levelId);
     }
 
     private void LoadChartForEditor(int songId)
@@ -1699,9 +1814,12 @@ public class ChartEditorManager : MonoBehaviour
         foreach (var b in longNoteBodies) if (b.BodyObj) Destroy(b.BodyObj); longNoteBodies.Clear();
         
         bpmChanges.Clear(); speedChanges.Clear(); stopEvents.Clear(); startEvents.Clear();
-        freeKeyZones.Clear(); deathAreas.Clear(); linearEvents.Clear(); originalOtherEvents.Clear();
+        areaEvents.Clear(); foldEvents.Clear(); deathAreas.Clear(); originalOtherEvents.Clear();
+        isInputtingOffset = false;
         
         songStartOffset = 0.0; chartOffset = songStartOffset; currentKeyCount = 4;
+        bool hasMusicOffset = false;
+        edMusicScheduled = false;
         double initialBpm = 120.0; double initialSpeed = 1.0;
         
         currentBeat = 0; currentPlaybackTime = 0;
@@ -1709,9 +1827,7 @@ public class ChartEditorManager : MonoBehaviour
         editorCombo = 0; comboAnimTimer = 0f;
         isPlaying = false; isMusicPlaying = false;
         isInputtingBpm = false; isInputtingSpeed = false; isInputtingDeathArea = false; deathAreaInputStage = 0; 
-        linearInputType = 0; isInputtingFreeKeyNote = false;
         isRedNoteMode = false; isDraggingRedNote = false; draggedRedNote = null;
-        selectedFreeKeyNote = null;
         inputBuffer = "";
         escapePressCount = 0;
         escapePressTimer = 0f;
@@ -1735,11 +1851,23 @@ public class ChartEditorManager : MonoBehaviour
             string type = data[0].Trim().ToUpper();
             
             if (type == "BPM" && data.Length == 2) { initialBpm = double.Parse(data[1].Trim(), CultureInfo.InvariantCulture); }
-            else if (type == "OFFSET" || type == "SONGSTARTOFFSET") { songStartOffset = double.Parse(data[1].Trim(), CultureInfo.InvariantCulture); chartOffset = songStartOffset; }
+            else if (type == ChartOffset.Key || type == "OFFSET" || type == "SONGSTARTOFFSET") {
+                // MUSICOFFSET(ms) 이 우선, 없으면 예전 OFFSET(초, 반대 부호). 저장할 때는 MUSICOFFSET 으로 바뀐다
+                double start; bool isNew;
+                if (ChartOffset.TryParse(type, data, out start, out isNew) && (isNew || !hasMusicOffset)) {
+                    songStartOffset = start; chartOffset = songStartOffset;
+                    if (isNew) hasMusicOffset = true;
+                }
+            }
             else if (cleanLine.StartsWith("KeyMode:")) { currentKeyCount = int.Parse(cleanLine.Split(':')[1].Trim()); }
             else if (type == "SPEED" && data.Length == 2) { initialSpeed = double.Parse(data[1].Trim(), CultureInfo.InvariantCulture); }
             else if (cleanLine.StartsWith("NoteSpeed:", StringComparison.OrdinalIgnoreCase)) { initialSpeed = double.Parse(cleanLine.Split(':')[1].Trim(), CultureInfo.InvariantCulture); }
             else if (type == "BPM" && data.Length >= 5) { bpmChanges.Add(new EditorBpm { Measure = long.Parse(data[1]), Num = long.Parse(data[2]), Den = long.Parse(data[3]), Bpm = double.Parse(data[4], CultureInfo.InvariantCulture) }); }
+            else if (type == "TIMING" && data.Length >= 6) {
+                // TIMING, 마디, 분자, 분모, BPM, 시각ms : 시각 고정 BPM 줄 (osu! 빨간 줄)
+                bpmChanges.Add(new EditorBpm { Measure = long.Parse(data[1]), Num = long.Parse(data[2]), Den = long.Parse(data[3]),
+                    Bpm = double.Parse(data[4], CultureInfo.InvariantCulture), AnchorMs = double.Parse(data[5], CultureInfo.InvariantCulture) });
+            }
             else if (type == "SPEED" && data.Length >= 6) {
                 // 신형: SPEED, 마디, 분자, 분모, 층, 속도
                 // 7번째 칸이 SHOW 면 게임에서 SPEED UP / DOWN 표시. 층 0 = 두 층 모두
@@ -1780,7 +1908,7 @@ public class ChartEditorManager : MonoBehaviour
             string[] data = cleanLine.Split(',');
             string type = data[0].Trim().ToUpper();
 
-            if (type == "BPM" || type == "OFFSET" || type == "SONGSTARTOFFSET" || type == "SPEED" || cleanLine.StartsWith("KeyMode:") || cleanLine.StartsWith("NoteSpeed:", StringComparison.OrdinalIgnoreCase)) {
+            if (type == "BPM" || type == "TIMING" || type == ChartOffset.Key || type == "OFFSET" || type == "SONGSTARTOFFSET" || type == "SPEED" || cleanLine.StartsWith("KeyMode:") || cleanLine.StartsWith("NoteSpeed:", StringComparison.OrdinalIgnoreCase)) {
                 continue; // 1st Pass에서 이미 처리함
             }
             
@@ -1791,57 +1919,16 @@ public class ChartEditorManager : MonoBehaviour
             }
             else if (type == "STOP" && data.Length >= 4) { stopEvents.Add(new EditorStopEvent { Measure = long.Parse(data[1]), Num = long.Parse(data[2]), Den = long.Parse(data[3]) }); }
             else if (type == "START" && data.Length >= 4) { startEvents.Add(new EditorStartEvent { Measure = long.Parse(data[1]), Num = long.Parse(data[2]), Den = long.Parse(data[3]) }); }
-            else if (type == "FREEKEY" && data.Length >= 4 && data[1].Trim() == "Linear") { 
-                string actionOrId = data[2].Trim();
-                if (actionOrId == "add" || actionOrId == "del") {
-                    double t = data.Length >= 5 ? double.Parse(data[4].Trim(), CultureInfo.InvariantCulture) : 0;
-                    linearEvents.Add(new EditorLinearEvent { Action = actionOrId, LineId = int.Parse(data[3].Trim()), AbsoluteBeat = GetBeatFromTime(t) });
-                } else {
-                    int lineId = int.Parse(actionOrId);
-                    string action = data[3].Trim();
-                    EditorLinearEvent lin = new EditorLinearEvent { LineId = lineId, Action = action };
-                    if (action == "exposure" || action == "disappearance") {
-                        double t = double.Parse(data[4].Trim(), CultureInfo.InvariantCulture);
-                        lin.Duration = double.Parse(data[5].Trim(), CultureInfo.InvariantCulture);
-                        lin.AbsoluteBeat = GetBeatFromTime(t);
-                    } else if (action == "rotation") {
-                        lin.Value1 = double.Parse(data[4].Trim(), CultureInfo.InvariantCulture);
-                        double t = double.Parse(data[5].Trim(), CultureInfo.InvariantCulture);
-                        lin.Duration = double.Parse(data[6].Trim(), CultureInfo.InvariantCulture);
-                        lin.AbsoluteBeat = GetBeatFromTime(t);
-                    } else if (action == "move") {
-                        lin.Value1 = double.Parse(data[4].Trim(), CultureInfo.InvariantCulture);
-                        lin.Value2 = double.Parse(data[5].Trim(), CultureInfo.InvariantCulture);
-                        double t = double.Parse(data[6].Trim(), CultureInfo.InvariantCulture);
-                        lin.Duration = double.Parse(data[7].Trim(), CultureInfo.InvariantCulture);
-                        lin.AbsoluteBeat = GetBeatFromTime(t);
-                    }
-                    linearEvents.Add(lin);
-                }
+            else if (type == "FREEKEY") {
+                continue; // 프리키(FREE-KEY) 기능은 삭제됨 — 저장하면 지워진다
             }
-            else if (type == "FREEKEY" && data.Length >= 10 && data[1].Trim() != "Linear") {
-                int fkType = int.Parse(data[1].Trim());
-                double rot = double.Parse(data[2].Trim(), CultureInfo.InvariantCulture);
-                string dir = data[3].Trim();
-                int lineNum = int.Parse(data[4].Trim());
-                double startX = double.Parse(data[5].Trim(), CultureInfo.InvariantCulture);
-                double targetX = double.Parse(data[6].Trim(), CultureInfo.InvariantCulture);
-                long m = long.Parse(data[7].Trim());
-                long num = long.Parse(data[8].Trim());
-                long den = long.Parse(data[9].Trim());
-                AddFreeKeyNoteToEditor(m, num, den, startX, targetX, fkType, rot, dir, lineNum);
+            else if (type == "AREA" && data.Length >= 5) {
+                areaEvents.Add(new EditorAreaEvent { Measure = long.Parse(data[1].Trim()), Num = long.Parse(data[2].Trim()), Den = long.Parse(data[3].Trim()), Mask = AreaMask.Parse(data[4]) });
             }
-            else if (type == "FREEKEY" && data.Length >= 9 && data[1].Trim() != "Linear") {
-                int fkType = int.Parse(data[1].Trim());
-                double rot = double.Parse(data[2].Trim(), CultureInfo.InvariantCulture);
-                string dir = data[3].Trim();
-                int lineNum = 1;
-                double startX = double.Parse(data[4].Trim(), CultureInfo.InvariantCulture);
-                double targetX = double.Parse(data[5].Trim(), CultureInfo.InvariantCulture);
-                long m = long.Parse(data[6].Trim());
-                long num = long.Parse(data[7].Trim());
-                long den = long.Parse(data[8].Trim());
-                AddFreeKeyNoteToEditor(m, num, den, startX, targetX, fkType, rot, dir, lineNum);
+            else if ((type == "FOLD" || type == "UNFOLD") && data.Length >= 5) {
+                double dur;
+                if (!double.TryParse(data[4].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out dur)) dur = 0.5;
+                foldEvents.Add(new EditorFoldEvent { Measure = long.Parse(data[1].Trim()), Num = long.Parse(data[2].Trim()), Den = long.Parse(data[3].Trim()), Fold = type == "FOLD", Duration = dur });
             }
             else if (type == "NOTE" && data.Length >= 5) {
                 long m = long.Parse(data[1]), num = long.Parse(data[2]), den = long.Parse(data[3]);
@@ -1868,14 +1955,8 @@ public class ChartEditorManager : MonoBehaviour
             else if (type == "UI" && data.Length >= 4)
             {
                 string targetUI = data[1].Trim();
-                if (targetUI == "FREEKEYUI") {
-                    double t = double.Parse(data[3].Trim(), CultureInfo.InvariantCulture);
-                    double b = GetBeatFromTime(t);
-                    if (data[2].Trim() == "exposure") freeKeyZones.Add(new EditorFreeKeyZone { StartBeat = b });
-                    else if (data[2].Trim() == "disappearance") { var zone = freeKeyZones.LastOrDefault(z => z.EndBeat == double.MaxValue); if (zone != null) zone.EndBeat = b; }
-                    continue; 
-                }
-                if (targetUI == "BasicUI") continue; 
+                // 프리키 구간용 UI 줄(FREEKEYUI / BasicUI)은 기능 삭제와 함께 버림
+                if (targetUI == "FREEKEYUI" || targetUI == "BasicUI") continue; 
                 originalOtherEvents.Add(cleanLine);
             }
             else { originalOtherEvents.Add(cleanLine); }
@@ -1896,11 +1977,15 @@ public class ChartEditorManager : MonoBehaviour
         double initialSpeedValue = baseSpeedEvent != null ? baseSpeedEvent.Multiplier : 1.0;
 
         output.Add($"BPM, {initialBpm.ToString("0.######", CultureInfo.InvariantCulture)}");
-        output.Add($"OFFSET, {songStartOffset.ToString("0.000", CultureInfo.InvariantCulture)}");
+        output.Add(ChartOffset.Line(songStartOffset));   // MUSICOFFSET, ms (osu! 와 같은 부호)
         output.Add($"KeyMode: {currentKeyCount}");
         output.Add($"SPEED, {initialSpeedValue.ToString("0.00", CultureInfo.InvariantCulture)}");
 
-        foreach (var b in bpmChanges.Skip(1)) output.Add($"BPM, {b.Measure}, {b.Num}, {b.Den}, {b.Bpm.ToString(CultureInfo.InvariantCulture)}");
+        foreach (var b in bpmChanges.Skip(1))
+        {
+            if (b.HasAnchor) output.Add($"TIMING, {b.Measure}, {b.Num}, {b.Den}, {b.Bpm.ToString(CultureInfo.InvariantCulture)}, {b.AnchorMs.ToString("0.######", CultureInfo.InvariantCulture)}");
+            else output.Add($"BPM, {b.Measure}, {b.Num}, {b.Den}, {b.Bpm.ToString(CultureInfo.InvariantCulture)}");
+        }
         
         // 변속 저장: 같은 위치/같은 값이 두 층에 모두 있으면 구형(층 생략) 한 줄로, 아니면 층 지정 형식으로 기록
         foreach (var grp in speedChanges.GroupBy(s => new { s.Measure, s.Num, s.Den }).OrderBy(g => g.First().AbsoluteBeat))
@@ -1939,35 +2024,15 @@ public class ChartEditorManager : MonoBehaviour
         foreach (var a in deathAreas.OrderBy(x => x.Start))
             output.Add($"DEATHAREA, {a.Start.ToString("0.0000", CultureInfo.InvariantCulture)}, {a.End.ToString("0.0000", CultureInfo.InvariantCulture)}");
         
-        foreach(var z in freeKeyZones.OrderBy(x => x.StartBeat))
-        {
-            double st = GetTimeFromBeat(z.StartBeat);
-            output.Add($"UI, BasicUI, disappearance, {st.ToString("0.0000", CultureInfo.InvariantCulture)}, 0.5");
-            output.Add($"UI, FREEKEYUI, exposure, {st.ToString("0.0000", CultureInfo.InvariantCulture)}, 0.5");
-            if (z.EndBeat != double.MaxValue)
-            {
-                double et = GetTimeFromBeat(z.EndBeat);
-                output.Add($"UI, FREEKEYUI, disappearance, {et.ToString("0.0000", CultureInfo.InvariantCulture)}, 0.5");
-                output.Add($"UI, BasicUI, exposure, {et.ToString("0.0000", CultureInfo.InvariantCulture)}, 0.5");
-            }
-        }
-        
-        foreach (var ev in linearEvents.OrderBy(e => e.AbsoluteBeat)) {
-            double st = GetTimeFromBeat(ev.AbsoluteBeat);
-            if (ev.Action == "add" || ev.Action == "del") {
-                output.Add($"FREEKEY, Linear, {ev.Action}, {ev.LineId}, {st.ToString("0.0000", CultureInfo.InvariantCulture)}");
-            } else if (ev.Action == "exposure" || ev.Action == "disappearance") {
-                output.Add($"FREEKEY, Linear, {ev.LineId}, {ev.Action}, {st.ToString("0.0000", CultureInfo.InvariantCulture)}, {ev.Duration.ToString("0.0000", CultureInfo.InvariantCulture)}");
-            } else if (ev.Action == "rotation") {
-                output.Add($"FREEKEY, Linear, {ev.LineId}, {ev.Action}, {ev.Value1.ToString(CultureInfo.InvariantCulture)}, {st.ToString("0.0000", CultureInfo.InvariantCulture)}, {ev.Duration.ToString("0.0000", CultureInfo.InvariantCulture)}");
-            } else if (ev.Action == "move") {
-                output.Add($"FREEKEY, Linear, {ev.LineId}, {ev.Action}, {ev.Value1.ToString(CultureInfo.InvariantCulture)}, {ev.Value2.ToString(CultureInfo.InvariantCulture)}, {st.ToString("0.0000", CultureInfo.InvariantCulture)}, {ev.Duration.ToString("0.0000", CultureInfo.InvariantCulture)}");
-            }
-        }
+        // 영역 · 레인 접기 (영역 전용 에디터)
+        foreach (var a in areaEvents.OrderBy(x => x.AbsoluteBeat))
+            output.Add($"AREA, {a.Measure}, {a.Num}, {a.Den}, {AreaMask.Format(a.Mask)}");
+        foreach (var f in foldEvents.OrderBy(x => x.AbsoluteBeat))
+            output.Add($"{(f.Fold ? "FOLD" : "UNFOLD")}, {f.Measure}, {f.Num}, {f.Den}, {f.Duration.ToString("0.###", CultureInfo.InvariantCulture)}");
 
         output.AddRange(originalOtherEvents);
 
-        var groupedNotes = editorNotes.Where(n => !n.IsFreeKey).GroupBy(n => new { n.Measure, n.Num, n.Den }).OrderBy(g => g.Key.Measure).ThenBy(g => (double)g.Key.Num / g.Key.Den);
+        var groupedNotes = editorNotes.GroupBy(n => new { n.Measure, n.Num, n.Den }).OrderBy(g => g.Key.Measure).ThenBy(g => (double)g.Key.Num / g.Key.Den);
         foreach (var group in groupedNotes)
         {
             string[] topStrs = new string[currentKeyCount];
@@ -1990,11 +2055,6 @@ public class ChartEditorManager : MonoBehaviour
             output.Add($"NOTE, {group.Key.Measure}, {group.Key.Num}, {group.Key.Den}, {saveStr}");
         }
 
-        var groupedFreeKeys = editorNotes.Where(n => n.IsFreeKey).OrderBy(n => n.Measure).ThenBy(n => (double)n.Num / n.Den);
-        foreach (var fk in groupedFreeKeys)
-        {
-            output.Add($"FREEKEY, {fk.Type}, {fk.Rotation.ToString(CultureInfo.InvariantCulture)}, {fk.Direction}, {fk.LineNumber}, {fk.StartX.ToString(CultureInfo.InvariantCulture)}, {fk.TargetX.ToString(CultureInfo.InvariantCulture)}, {fk.Measure}, {fk.Num}, {fk.Den}");
-        }
 
         File.WriteAllLines(path, output, System.Text.Encoding.UTF8);
         Debug.Log("채보가 성공적으로 저장되었습니다!");
@@ -2053,14 +2113,16 @@ public class ChartEditorManager : MonoBehaviour
         if (selectedSnapText != null) selectedSnapText.text = $"1/{(currentSnap / 4)}";
         UpdateLayerText();
         
-        string baseMode = IsFreeKeyZone(currentBeat) ? "FREE-KEY" : $"{currentKeyCount}B";
+        string baseMode = $"{currentKeyCount}B";
         if (modeText != null) modeText.text = baseMode;
         if (modeText != null) modeText.color = isRedNoteMode ? Color.red : Color.white;
         
         if (timeText != null) timeText.text = $"{currentPlaybackTime:F4}s";
         
-        if (offsetText != null) offsetText.text = $"{Math.Abs(songStartOffset):F3}s";
-        if (offsetSignText != null) offsetSignText.text = songStartOffset >= 0 ? "PLUS(+)" : "MINUS(-)";
+        // MUSICOFFSET (ms): 음악 파일에서 0박이 나오는 시각. osu! 타이밍 Offset 과 같은 값 · 같은 부호
+        double musicOffsetMs = ChartOffset.ToMusicOffsetMs(songStartOffset);
+        if (offsetText != null) offsetText.text = Math.Abs(musicOffsetMs).ToString("0.#", CultureInfo.InvariantCulture) + " ms";
+        if (offsetSignText != null) offsetSignText.text = musicOffsetMs >= 0 ? "PLUS(+)" : "MINUS(-)";
 
         if (songNameText != null) {
             if (!string.IsNullOrEmpty(currentSongName)) songNameText.text = currentSongName;
@@ -2080,7 +2142,7 @@ public class ChartEditorManager : MonoBehaviour
         }
 
         if (centerMessageText != null) {
-            centerMessageText.text = selectedFreeKeyNote != null ? $"선택 노트 (시작X: {selectedFreeKeyNote.StartX}, 도착X: {selectedFreeKeyNote.TargetX})" : (IsDeathAreaBeat(currentBeat) ? "DEATH AREA (노트 배치 불가)" : "");
+            centerMessageText.text = IsDeathAreaBeat(currentBeat) ? "DEATH AREA (노트 배치 불가)" : "";
         }
 
         if (editorComboText != null && editorComboTitleText != null)
@@ -2164,7 +2226,7 @@ public class ChartEditorManager : MonoBehaviour
     private bool HasCustomMeasureLineAt(double beat)
     {
         foreach (var n in editorNotes)
-            if (n.Type == 4 && !n.IsFreeKey && Math.Abs(n.AbsoluteBeat - beat) < 1e-6) return true;
+            if (n.Type == 4 && Math.Abs(n.AbsoluteBeat - beat) < 1e-6) return true;
         return false;
     }
 
@@ -2174,126 +2236,6 @@ public class ChartEditorManager : MonoBehaviour
         GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
         float invScale = 1f / scale;
 
-        if (linearInputType > 0 || isInputtingFreeKeyNote)
-        {
-            Event e = Event.current;
-            if (e.type == EventType.KeyDown)
-            {
-                if (e.keyCode == KeyCode.Backspace && inputBuffer.Length > 0) { inputBuffer = inputBuffer.Substring(0, inputBuffer.Length - 1); e.Use(); }
-                else if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter) {
-                    if (linearInputType > 0) {
-                        try {
-                            string[] parts = inputBuffer.Split(',');
-                            if (linearInputType == 1 && parts.Length >= 1) { 
-                                int id = int.Parse(parts[0].Trim());
-                                linearEvents.Add(new EditorLinearEvent { Action = isAlternateAction ? "del" : "add", LineId = id, AbsoluteBeat = targetBeatForLinear });
-                            }
-                            else if (linearInputType == 2 && parts.Length >= 2) { 
-                                int id = int.Parse(parts[0].Trim()); double dur = double.Parse(parts[1].Trim(), CultureInfo.InvariantCulture);
-                                linearEvents.Add(new EditorLinearEvent { Action = isAlternateAction ? "disappearance" : "exposure", LineId = id, Duration = dur, AbsoluteBeat = targetBeatForLinear });
-                            }
-                            else if (linearInputType == 3 && parts.Length >= 4) { 
-                                int id = int.Parse(parts[0].Trim()); double tx = double.Parse(parts[1].Trim(), CultureInfo.InvariantCulture); 
-                                double ty = double.Parse(parts[2].Trim(), CultureInfo.InvariantCulture); double dur = double.Parse(parts[3].Trim(), CultureInfo.InvariantCulture);
-                                linearEvents.Add(new EditorLinearEvent { Action = "move", LineId = id, Value1 = tx, Value2 = ty, Duration = dur, AbsoluteBeat = targetBeatForLinear });
-                            }
-                            else if (linearInputType == 4 && parts.Length >= 3) { 
-                                int id = int.Parse(parts[0].Trim()); double angle = double.Parse(parts[1].Trim(), CultureInfo.InvariantCulture); double dur = double.Parse(parts[2].Trim(), CultureInfo.InvariantCulture);
-                                linearEvents.Add(new EditorLinearEvent { Action = "rotation", LineId = id, Value1 = angle, Duration = dur, AbsoluteBeat = targetBeatForLinear });
-                            }
-                        } catch { }
-                    }
-                    else if (isInputtingFreeKeyNote) {
-                        try {
-                            string[] parts = inputBuffer.Split(',');
-                            if (parts.Length >= 5) {
-                                double rot = double.Parse(parts[0].Trim(), CultureInfo.InvariantCulture);
-                                string dir = parts[1].Trim();
-                                int line = int.Parse(parts[2].Trim());
-                                double start = double.Parse(parts[3].Trim(), CultureInfo.InvariantCulture);
-                                double target = double.Parse(parts[4].Trim(), CultureInfo.InvariantCulture);
-                                AddFreeKeyNoteToEditor(targetMeasure, targetNum, targetDen, start, target, targetFreeKeyType, rot, dir, line);
-                            }
-                        } catch { }
-                    }
-                    linearInputType = 0; isInputtingFreeKeyNote = false; e.Use();
-                }
-                else if (e.keyCode == KeyCode.Escape) { linearInputType = 0; isInputtingFreeKeyNote = false; e.Use(); }
-                else if (e.character != 0) { 
-                    if (char.IsLetterOrDigit(e.character) || e.character == '.' || e.character == ',' || e.character == '-' || e.character == ' ') { 
-                        inputBuffer += e.character; e.Use(); 
-                    } 
-                }
-            }
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                float winW = 600f;
-                float winH = 200f;
-                float winX = (Screen.width * invScale - winW) / 2f;
-                float winY = (Screen.height * invScale - winH) / 2f;
-
-                GUI.color = new Color(0.1f, 0.1f, 0.15f, 0.95f);
-                GUI.DrawTexture(new Rect(winX, winY, winW, winH), Texture2D.whiteTexture);
-                
-                GUI.color = new Color(0.3f, 0.5f, 0.9f, 1f);
-                GUI.DrawTexture(new Rect(winX, winY, winW, 5f), Texture2D.whiteTexture);
-                GUI.DrawTexture(new Rect(winX, winY + winH - 5f, winW, 5f), Texture2D.whiteTexture);
-                GUI.DrawTexture(new Rect(winX, winY, 5f, winH), Texture2D.whiteTexture);
-                GUI.DrawTexture(new Rect(winX + winW - 5f, winY, 5f, winH), Texture2D.whiteTexture);
-                GUI.color = Color.white;
-
-                GUIStyle titleStyle = new GUIStyle();
-                if (customGuiFont != null) titleStyle.font = customGuiFont;
-                titleStyle.fontSize = 24;
-                titleStyle.normal.textColor = new Color(0.4f, 0.8f, 1f);
-                titleStyle.alignment = TextAnchor.MiddleCenter;
-
-                GUIStyle guideStyle = new GUIStyle();
-                if (customGuiFont != null) guideStyle.font = customGuiFont;
-                guideStyle.fontSize = 16;
-                guideStyle.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
-                guideStyle.alignment = TextAnchor.MiddleCenter;
-                
-                GUIStyle inputStyle = new GUIStyle();
-                if (customGuiFont != null) inputStyle.font = customGuiFont;
-                inputStyle.fontSize = 20;
-                inputStyle.normal.textColor = Color.white;
-                inputStyle.alignment = TextAnchor.MiddleCenter;
-
-                string title = isInputtingFreeKeyNote ? "FREE-KEY NOTE INPUT" : "LINEAR EVENT INPUT";
-                
-                string guide = "";
-                if (isInputtingFreeKeyNote) {
-                    guide = "형식: 회전각도, 방향, 판정선번호, 시작X, 도착X (예: 0, Top, 1, -50, 50)";
-                } else {
-                    if (linearInputType == 1) guide = "생성/제거 - 형식: 판정선번호 (예: 1)";
-                    else if (linearInputType == 2) guide = "노출/숨김 - 형식: 판정선번호, 시간 (예: 1, 0.5)";
-                    else if (linearInputType == 3) guide = "이동 - 형식: 판정선번호, 목표X, 목표Y, 시간 (예: 1, 0, 2.75, 1.0)";
-                    else if (linearInputType == 4) guide = "회전 - 형식: 판정선번호, 목표각도, 시간 (예: 1, 90, 0.5)";
-                    else guide = "콤마(,)로 구분하여 값을 입력하세요. (취소: ESC, 입력: Enter)";
-                }
-
-                GUI.Label(new Rect(winX, winY + 20, winW, 30), title, titleStyle);
-                GUI.Label(new Rect(winX, winY + 60, winW, 30), guide, guideStyle);
-
-                GUI.color = new Color(0f, 0f, 0f, 0.5f);
-                GUI.DrawTexture(new Rect(winX + 30, winY + 110, winW - 60, 50), Texture2D.whiteTexture);
-                GUI.color = Color.white;
-
-                float blinkAlpha = Mathf.PingPong(Time.time * 2f, 1f);
-                Color cursorColor = new Color(1f, 1f, 1f, blinkAlpha);
-                
-                GUI.Label(new Rect(winX + 30, winY + 110, winW - 60, 50), inputBuffer, inputStyle);
-                
-                Vector2 textSize = inputStyle.CalcSize(new GUIContent(inputBuffer));
-                float cursorX = winX + 30 + (winW - 60) / 2f + textSize.x / 2f + 2f;
-                
-                GUI.color = cursorColor;
-                GUI.DrawTexture(new Rect(cursorX, winY + 120, 2f, 30f), Texture2D.whiteTexture);
-                GUI.color = Color.white;
-            }
-        }
 
         bool isVisible = !IsSettingInputOpen;
         if (Event.current.type == EventType.Repaint) speedPillHits.Clear(); // 다시 그릴 때마다 우클릭 영역 갱신
@@ -2314,7 +2256,7 @@ public class ChartEditorManager : MonoBehaviour
                 if (HasCustomMeasureLineAt(beat)) continue;
                 if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
                     Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
-                    uiEvents.Add(new UIDrawEvent { beat = beat, y = (Screen.height - sp.y) * invScale, text = $"M: {m}", shortText = $"{m}", color = new Color(1f, 0.2f, 0.2f), isWide = IsFreeKeyZone(beat) });
+                    uiEvents.Add(new UIDrawEvent { beat = beat, y = (Screen.height - sp.y) * invScale, text = $"M: {m}", shortText = $"{m}", color = new Color(1f, 0.2f, 0.2f), isWide = false });
                 }
             }
 
@@ -2323,7 +2265,7 @@ public class ChartEditorManager : MonoBehaviour
                 float y = hitLineScreenOffsetY + (float)((ev.AbsoluteBeat - currentBeat) * beatSpacing);
                 if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
                     Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
-                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale, text = $"BPM: {ev.Bpm:F0}", shortText = $"{ev.Bpm:F0}", color = new Color(1f, 0.7f, 0.2f), isWide = IsFreeKeyZone(ev.AbsoluteBeat) });
+                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale, text = ev.HasAnchor ? $"BPM: {ev.Bpm:0.##} @ {ev.AnchorMs / 1000.0:F3}s" : $"BPM: {ev.Bpm:F0}", shortText = $"{ev.Bpm:F0}", color = new Color(1f, 0.7f, 0.2f), isWide = false });
                 }
             }
             foreach (var ev in speedChanges) {
@@ -2341,37 +2283,43 @@ public class ChartEditorManager : MonoBehaviour
                     // SPEED UP / DOWN 표시가 켜진 변속: 글자 뒤에 [SHOW], 더 밝은 분홍
                     uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale,
                         text = $"{layerTag}SPEED: {ev.Multiplier:F2}x" + (show ? "  [SHOW]" : ""), shortText = $"{layerTag}{ev.Multiplier:F2}" + (show ? "*" : ""),
-                        color = show ? new Color(1f, 0.35f, 0.75f) : new Color(0.8f, 0.4f, 1f), isWide = IsFreeKeyZone(ev.AbsoluteBeat), speeds = spList });
+                        color = show ? new Color(1f, 0.35f, 0.75f) : new Color(0.8f, 0.4f, 1f), isWide = false, speeds = spList });
                 }
             }
             foreach (var ev in stopEvents) {
                 float y = hitLineScreenOffsetY + (float)((ev.AbsoluteBeat - currentBeat) * beatSpacing);
                 if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
                     Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
-                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale, text = "STOP", shortText = "STP", color = new Color(1f, 0.2f, 0.2f), isWide = IsFreeKeyZone(ev.AbsoluteBeat) });
+                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale, text = "STOP", shortText = "STP", color = new Color(1f, 0.2f, 0.2f), isWide = false });
                 }
             }
             foreach (var ev in startEvents) {
                 float y = hitLineScreenOffsetY + (float)((ev.AbsoluteBeat - currentBeat) * beatSpacing);
                 if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
                     Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
-                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale, text = "START", shortText = "STR", color = new Color(0.2f, 0.8f, 0.4f), isWide = IsFreeKeyZone(ev.AbsoluteBeat) });
+                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale, text = "START", shortText = "STR", color = new Color(0.2f, 0.8f, 0.4f), isWide = false });
                 }
             }
             
-            foreach (var ev in linearEvents) {
+            // 영역 · 레인 접기 표시
+            foreach (var ev in areaEvents) {
                 float y = hitLineScreenOffsetY + (float)((ev.AbsoluteBeat - currentBeat) * beatSpacing);
                 if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
                     Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
-                    string txt = ""; string stxt = ""; Color c = Color.white;
-                    if (ev.Action == "add") { txt = $"판정선 {ev.LineId}: 생성됨"; stxt = $"L{ev.LineId} Add"; c = new Color(0.2f, 0.8f, 0.2f); }
-                    else if (ev.Action == "del") { txt = $"판정선 {ev.LineId}: 제거됨"; stxt = $"L{ev.LineId} Del"; c = new Color(0.2f, 0.8f, 0.2f); }
-                    else if (ev.Action == "exposure") { txt = $"판정선 {ev.LineId}: 드러남"; stxt = $"L{ev.LineId} Exp"; c = new Color(0.6f, 0.2f, 0.8f); }
-                    else if (ev.Action == "disappearance") { txt = $"판정선 {ev.LineId}: 숨겨짐"; stxt = $"L{ev.LineId} Dis"; c = new Color(0.6f, 0.2f, 0.8f); }
-                    else if (ev.Action == "move") { txt = $"판정선 {ev.LineId}: ({ev.Value1},{ev.Value2})로 이동"; stxt = $"L{ev.LineId} Mov"; c = new Color(0.7f, 0.5f, 1f); }
-                    else if (ev.Action == "rotation") { txt = $"판정선 {ev.LineId}: {ev.Value1}도로 회전"; stxt = $"L{ev.LineId} Rot"; c = new Color(0.9f, 0.4f, 0.8f); }
-                    
-                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale, text = txt, shortText = stxt, color = c, isWide = IsFreeKeyZone(ev.AbsoluteBeat) });
+                    bool end = ev.Mask == 0;
+                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale,
+                        text = end ? "AREA END" : $"AREA {AreaMask.Format(ev.Mask)}", shortText = end ? "A-E" : "AREA",
+                        color = end ? new Color(0.55f, 0.65f, 0.8f) : new Color(0.45f, 0.85f, 1f), isWide = false });
+                }
+            }
+            foreach (var ev in foldEvents) {
+                float y = hitLineScreenOffsetY + (float)((ev.AbsoluteBeat - currentBeat) * beatSpacing);
+                if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
+                    Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
+                    string dur = ev.Duration.ToString("0.###", CultureInfo.InvariantCulture);
+                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale,
+                        text = (ev.Fold ? "FOLD " : "UNFOLD ") + dur + "s", shortText = ev.Fold ? "FLD" : "UFD",
+                        color = ev.Fold ? new Color(1f, 0.6f, 0.3f) : new Color(0.5f, 1f, 0.6f), isWide = false });
                 }
             }
 
@@ -2451,25 +2399,6 @@ public class ChartEditorManager : MonoBehaviour
                 }
             }
 
-            foreach (var note in editorNotes) {
-                if (note.IsFreeKey && note.VisualObject != null && note.VisualObject.activeSelf) {
-                    Vector3 sp = mainCam.WorldToScreenPoint(note.VisualObject.transform.position);
-                    float sx = sp.x * invScale;
-                    float sy = (Screen.height - sp.y) * invScale;
-                    GUIStyle ns = new GUIStyle();
-                    if (customGuiFont != null) ns.font = customGuiFont;
-                    ns.fontSize = 13; ns.normal.textColor = Color.white; ns.alignment = TextAnchor.MiddleCenter;
-                    
-                    string line1 = $"{note.Direction[0]}, R:{note.Rotation} L:{note.LineNumber}";
-                    string line2 = $"{note.StartX} to {note.TargetX}";
-                    
-                    GUI.color = new Color(0f, 0f, 0f, 0.7f);
-                    GUI.DrawTexture(new Rect(sx - 55, sy + 15, 110, 36), Texture2D.whiteTexture);
-                    GUI.color = Color.white;
-                    GUI.Label(new Rect(sx - 55, sy + 15, 110, 18), line1, ns);
-                    GUI.Label(new Rect(sx - 55, sy + 33, 110, 18), line2, ns);
-                }
-            }
         }
     }
     

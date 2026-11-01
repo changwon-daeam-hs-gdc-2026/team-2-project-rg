@@ -18,6 +18,7 @@ Shader "Hidden/4BTunes/DiverseSprite"
         [HideInInspector] _DivProj ("", Vector) = (1,1,0,0)
         [HideInInspector] _DivFade ("", Vector) = (100,101,0,0)
         [HideInInspector] _DivClip ("", Vector) = (-100,0,0,0)
+        [HideInInspector] _DivFold ("", Vector) = (1,1,0,0)
     }
     SubShader
     {

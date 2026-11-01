@@ -12,7 +12,11 @@ using K = SettingsUIKit;
 // ============================================================
 // 설정창 (씬에 아무것도 배치할 필요 없음 — 코드로 화면을 만든다)
 //  - SettingsWindow.Open() / Close() 로 열고 닫는다. 곡 선택창에서는 ESC.
-//  - 탭: SOUND / OFFSET / GAMEPLAY / DISPLAY / CONTROLS
+//  - 탭: 사운드 / 오프셋 / 게임플레이 / 화면 / 조작  (한국어)
+//  - 글꼴: 강조(굵은) 글자 / 일반 글자를 따로 지정 → SetFonts(일반, 강조)
+//          (곡 선택 인스펙터 Settings Font / Settings Bold Font, 또는 Resources/Fonts/SettingsFont · SettingsFontBold)
+//  - 각 탭 내용은 스크롤됨 (마우스 휠 · 방향키로 고르면 고른 줄이 보이도록 자동 이동)
+//  - 색: 검정 + 흰색 계열
 //  - 조작: 마우스, 또는 방향키 + Enter. TAB(Shift+TAB) 탭 전환, ESC 닫기
 //  - 씬이 바뀌어도 유지된다 (DontDestroyOnLoad). 처음 열 때 한 번만 만든다.
 // ============================================================
@@ -31,6 +35,35 @@ public class SettingsWindow : MonoBehaviour
 
     public static void Open() { Ensure().Show(); }
 
+    // ===== 글꼴 (한글이 들어 있는 TMP 글꼴) =====
+    //  regular: 일반 글자 (설명 · 값 · 안내),  bold: 강조 글자 (제목 · 항목 이름 · 버튼 · 탭)
+    //  bold 를 따로 주면 그 글꼴로 그리고 가짜 굵게(Bold 스타일)는 끈다
+    public static TMP_FontAsset RegularFont, BoldFont;
+    public static void SetFonts(TMP_FontAsset regular, TMP_FontAsset bold)
+    {
+        if (regular != null) RegularFont = regular;
+        if (bold != null) BoldFont = bold;
+        if (Instance != null && Instance.root != null) Instance.ApplyFonts();
+    }
+
+    private void ApplyFonts()
+    {
+        if (RegularFont == null) RegularFont = Resources.Load<TMP_FontAsset>("Fonts/SettingsFont");
+        if (BoldFont == null) BoldFont = Resources.Load<TMP_FontAsset>("Fonts/SettingsFontBold");
+        foreach (var t in root.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            bool bold = (t.fontStyle & FontStyles.Bold) != 0 || t.name == "BoldText";
+            if (bold && BoldFont != null)
+            {
+                t.font = BoldFont;
+                t.fontStyle &= ~FontStyles.Bold;
+                t.name = "BoldText";            // 다시 적용할 때도 강조 글자로 알아보도록
+            }
+            else if (!bold && RegularFont != null) t.font = RegularFont;
+            else if (bold && RegularFont != null) t.font = RegularFont;   // 강조 글꼴이 없으면 일반 글꼴 + 굵게
+        }
+    }
+
     // 처음 ESC 를 누를 때 화면을 만드느라 멈칫하지 않도록 미리 만들어 둔다 (숨긴 채)
     public static void Prewarm() { Ensure(); }
     public static void Close() { if (Instance != null) Instance.Hide(); }
@@ -48,22 +81,25 @@ public class SettingsWindow : MonoBehaviour
     }
 
     // ===== 내부 =====
-    private static readonly string[] TabNames = { "SOUND", "OFFSET", "GAMEPLAY", "DISPLAY", "CONTROLS" };
+    private static readonly string[] TabNames = { "사운드", "오프셋", "게임플레이", "화면", "조작" };
     private static readonly string[] TabHints =
     {
-        "Volume settings are applied immediately.",
-        "Offsets: run SOUND TEST first, then VISUAL TEST if notes feel off.",
-        "GAME UI and scroll speed apply from the next play. Speed: F1 / F2 in song select.",
-        "Screen mode and resolution are applied in builds only (not in the editor).",
-        "Click a lane, then press the key you want. ESC cancels."
+        "볼륨은 바로 적용됩니다.",
+        "오프셋: + = 노트가 빨라짐, - = 노트가 늦어짐 (osu! 와 같은 방향). 먼저 소리 테스트를 해 보세요.",
+        "게임 화면과 배속은 다음 플레이부터 적용됩니다. 곡 선택에서 F1 / F2 로도 배속을 바꿀 수 있습니다.",
+        "화면 모드와 해상도는 빌드된 게임에서만 적용됩니다 (에디터에서는 적용 안 됨).",
+        "레인을 누른 뒤 원하는 키를 누르세요. ESC 는 취소."
     };
-    private static readonly string[] ScreenModeNames = { "FULLSCREEN", "BORDERLESS", "WINDOWED" };
+    private static readonly string[] ScreenModeNames = { "전체 화면", "테두리 없는 창", "창 모드" };
 
     private GameObject root;
     private RectTransform panel;
     private readonly List<Button> tabButtons = new List<Button>();
     private readonly List<TextMeshProUGUI> tabLabels = new List<TextMeshProUGUI>();
     private readonly List<GameObject> pages = new List<GameObject>();
+    private readonly List<ScrollRect> pageScrolls = new List<ScrollRect>();      // 탭마다 스크롤
+    private readonly List<RectTransform> pageContents = new List<RectTransform>();
+    private GameObject lastAutoScrollTarget;
     private readonly List<Action> refreshers = new List<Action>();
     private int currentTab;
     private TextMeshProUGUI statusText;
@@ -172,7 +208,7 @@ public class SettingsWindow : MonoBehaviour
         if (resetArmedUntil > 0f && Time.unscaledTime > resetArmedUntil)
         {
             resetArmedUntil = -1f;
-            if (resetText != null) resetText.text = "RESET TAB";
+            if (resetText != null) resetText.text = "탭 초기화";
         }
 
         if (rebindLane >= 0) { UpdateRebind(kb); return; }
@@ -186,6 +222,8 @@ public class SettingsWindow : MonoBehaviour
         }
 
         if (calibrator != null && calibrator.IsActive) return;
+
+        AutoScrollToSelected();
 
         if (kb.tabKey.wasPressedThisFrame)
         {
@@ -225,11 +263,18 @@ public class SettingsWindow : MonoBehaviour
         Image topLine = K.Img("TopLine", panel, K.Accent);
         K.Place(topLine.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, -4f), Vector2.zero);
 
-        TextMeshProUGUI title = K.Txt("Title", panel, "SETTINGS", 44, TextAlignmentOptions.Left, K.TextMain, FontStyles.Bold);
+        TextMeshProUGUI title = K.Txt("Title", panel, "설정", 44, TextAlignmentOptions.Left, K.TextMain, FontStyles.Bold);
         K.Place(title.rectTransform, new Vector2(0f, 1f), new Vector2(0.5f, 1f), new Vector2(40f, -90f), new Vector2(0f, -24f));
 
-        TextMeshProUGUI keysHint = K.Txt("KeysHint", panel, "TAB  NEXT TAB      ESC  CLOSE", 18, TextAlignmentOptions.Right, K.TextSub);
-        K.Place(keysHint.rectTransform, new Vector2(0.5f, 1f), new Vector2(1f, 1f), new Vector2(0f, -80f), new Vector2(-40f, -34f));
+        // 조작 안내 (오른쪽 위, 키캡 디자인) — 글꼴은 아래 ApplyFonts 에서 설정창 글꼴로 바뀜
+        RectTransform keysHint = KeyHintUI.Build(panel, K.Font, K.Font, new[]
+        {
+            new KeyHintUI.Item("다음 탭", "TAB"),
+            new KeyHintUI.Item("선택", "^UP", "^DOWN"),
+            new KeyHintUI.Item("닫기", "ESC"),
+        }, 17f, 1);
+        keysHint.anchorMin = keysHint.anchorMax = new Vector2(1f, 1f);
+        keysHint.anchoredPosition = new Vector2(-40f, -57f);
 
         // 왼쪽 탭 목록
         RectTransform tabs = K.Rect("Tabs", panel);
@@ -250,33 +295,21 @@ public class SettingsWindow : MonoBehaviour
         // 오른쪽 내용
         RectTransform content = K.Rect("Content", panel);
         K.Place(content, Vector2.zero, Vector2.one, new Vector2(300f, 110f), new Vector2(-40f, -110f));
-        for (int i = 0; i < TabNames.Length; i++)
-        {
-            RectTransform page = K.Rect("Page_" + TabNames[i], content);
-            K.Stretch(page);
-            VerticalLayoutGroup v = page.gameObject.AddComponent<VerticalLayoutGroup>();
-            v.spacing = 12f;
-            v.childAlignment = TextAnchor.UpperLeft;
-            v.childControlWidth = true;
-            v.childControlHeight = true;
-            v.childForceExpandWidth = true;
-            v.childForceExpandHeight = false;
-            pages.Add(page.gameObject);
-        }
-        BuildSoundPage(pages[0].transform);
-        BuildOffsetPage(pages[1].transform);
-        BuildGameplayPage(pages[2].transform);
-        BuildDisplayPage(pages[3].transform);
-        BuildControlsPage(pages[4].transform);
+        for (int i = 0; i < TabNames.Length; i++) BuildScrollPage(content, i);
+        BuildSoundPage(pageContents[0]);
+        BuildOffsetPage(pageContents[1]);
+        BuildGameplayPage(pageContents[2]);
+        BuildDisplayPage(pageContents[3]);
+        BuildControlsPage(pageContents[4]);
 
         // 아래쪽
         statusText = K.Txt("Status", panel, "", 18, TextAlignmentOptions.Left, K.TextSub);
         K.Place(statusText.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(300f, 32f), new Vector2(-420f, 86f));
 
-        Button reset = K.Btn(panel, "RESET TAB", 22, OnResetClicked, out resetText);
+        Button reset = K.Btn(panel, "탭 초기화", 22, OnResetClicked, out resetText);
         K.Place((RectTransform)reset.transform, new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(-400f, 32f), new Vector2(-226f, 86f));
         TextMeshProUGUI closeText;
-        Button close = K.Btn(panel, "CLOSE", 22, Hide, out closeText);
+        Button close = K.Btn(panel, "닫기", 22, Hide, out closeText);
         K.Place((RectTransform)close.transform, new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(-210f, 32f), new Vector2(-40f, 86f));
         K.SetButtonColor(close, K.AccentDark);
 
@@ -288,7 +321,108 @@ public class SettingsWindow : MonoBehaviour
         sfxPreview.playOnAwake = false;
         hitClip = Resources.Load<AudioClip>("Audio/etc/hitsound");
 
+        ApplyFonts();
         root.SetActive(false);
+    }
+
+    // =====================================================================
+    //  스크롤 되는 탭 내용
+    //   [페이지] ─ [보이는 영역(잘라내기)] ─ [내용(세로로 쌓임, 길이 자동)]   + 오른쪽 가는 스크롤 막대
+    // =====================================================================
+    private void BuildScrollPage(RectTransform content, int index)
+    {
+        RectTransform page = K.Rect("Page_" + index, content);
+        K.Stretch(page);
+        ScrollRect sr = page.gameObject.AddComponent<ScrollRect>();
+
+        RectTransform viewport = K.Rect("Viewport", page);
+        K.Place(viewport, Vector2.zero, Vector2.one, Vector2.zero, new Vector2(-18f, 0f));
+        viewport.gameObject.AddComponent<RectMask2D>();                        // 영역 밖은 가려짐
+        Image hit = viewport.gameObject.AddComponent<Image>();
+        hit.color = new Color(0f, 0f, 0f, 0f);                                 // 빈 곳에서도 휠이 먹도록
+        hit.raycastTarget = true;
+
+        RectTransform inner = K.Rect("Inner", viewport);
+        inner.anchorMin = new Vector2(0f, 1f);
+        inner.anchorMax = new Vector2(1f, 1f);
+        inner.pivot = new Vector2(0.5f, 1f);
+        inner.offsetMin = Vector2.zero;
+        inner.offsetMax = Vector2.zero;
+        VerticalLayoutGroup v = inner.gameObject.AddComponent<VerticalLayoutGroup>();
+        v.spacing = 12f;
+        v.padding = new RectOffset(0, 0, 0, 12);
+        v.childAlignment = TextAnchor.UpperLeft;
+        v.childControlWidth = true;
+        v.childControlHeight = true;
+        v.childForceExpandWidth = true;
+        v.childForceExpandHeight = false;
+        ContentSizeFitter fit = inner.gameObject.AddComponent<ContentSizeFitter>();
+        fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        // 스크롤 막대 (내용이 넘칠 때만 보임)
+        RectTransform barRt = K.Rect("Scrollbar", page);
+        K.Place(barRt, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(-6f, 0f), Vector2.zero);
+        Image barBg = barRt.gameObject.AddComponent<Image>();
+        barBg.color = new Color(1f, 1f, 1f, 0.06f);
+        Scrollbar bar = barRt.gameObject.AddComponent<Scrollbar>();
+        bar.direction = Scrollbar.Direction.BottomToTop;
+        RectTransform slide = K.Rect("Sliding Area", barRt);
+        K.Stretch(slide);
+        Image handle = K.Img("Handle", slide, new Color(1f, 1f, 1f, 0.55f), true);
+        handle.rectTransform.sizeDelta = Vector2.zero;
+        bar.handleRect = handle.rectTransform;
+        bar.targetGraphic = handle;
+        Navigation nav = bar.navigation; nav.mode = Navigation.Mode.None; bar.navigation = nav;   // 방향키 선택에서 제외
+
+        sr.viewport = viewport;
+        sr.content = inner;
+        sr.horizontal = false;
+        sr.vertical = true;
+        sr.movementType = ScrollRect.MovementType.Clamped;
+        sr.inertia = true;
+        sr.decelerationRate = 0.12f;
+        sr.scrollSensitivity = 45f;
+        sr.verticalScrollbar = bar;
+        sr.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+
+        pages.Add(page.gameObject);
+        pageScrolls.Add(sr);
+        pageContents.Add(inner);
+    }
+
+    // 방향키로 고른 버튼 · 슬라이더가 보이는 영역 밖이면 그 줄이 보이도록 스크롤
+    private void AutoScrollToSelected()
+    {
+        if (EventSystem.current == null || currentTab >= pageScrolls.Count) return;
+        GameObject sel = EventSystem.current.currentSelectedGameObject;
+        if (sel == lastAutoScrollTarget) return;
+        lastAutoScrollTarget = sel;
+        if (sel == null) return;
+        RectTransform inner = pageContents[currentTab];
+        if (!sel.transform.IsChildOf(inner)) return;
+
+        // 고른 것을 품고 있는 줄(내용의 바로 아래 자식)
+        Transform row = sel.transform;
+        while (row.parent != null && row.parent != inner) row = row.parent;
+        RectTransform target = row as RectTransform;
+        if (target == null) return;
+
+        ScrollRect sr = pageScrolls[currentTab];
+        RectTransform viewport = sr.viewport;
+        Canvas.ForceUpdateCanvases();
+        Vector3[] c = new Vector3[4];
+        target.GetWorldCorners(c);
+        Vector3 min = viewport.InverseTransformPoint(c[0]), max = viewport.InverseTransformPoint(c[2]);
+        Rect vr = viewport.rect;
+        float dy = 0f;
+        if (max.y > vr.yMax) dy = max.y - vr.yMax + 8f;          // 위로 벗어남 → 내용을 아래로
+        else if (min.y < vr.yMin) dy = min.y - vr.yMin - 8f;     // 아래로 벗어남 → 내용을 위로
+        if (Mathf.Abs(dy) < 0.5f) return;
+        float maxY = Mathf.Max(0f, inner.rect.height - vr.height);
+        Vector2 p = inner.anchoredPosition;
+        p.y = Mathf.Clamp(p.y - dy, 0f, maxY);
+        inner.anchoredPosition = p;
+        sr.velocity = Vector2.zero;
     }
 
     private void SelectTab(int index)
@@ -304,8 +438,9 @@ public class SettingsWindow : MonoBehaviour
             tabLabels[i].color = on ? K.TextOnAccent : K.TextSub;
         }
         resetArmedUntil = -1f;
-        if (resetText != null) resetText.text = "RESET TAB";
+        if (resetText != null) resetText.text = "탭 초기화";
         SetStatus(TabHints[currentTab]);
+        if (currentTab < pageScrolls.Count) { pageScrolls[currentTab].verticalNormalizedPosition = 1f; pageScrolls[currentTab].velocity = Vector2.zero; }
     }
 
     private void SetStatus(string msg) { if (statusText != null) statusText.text = msg; }
@@ -326,21 +461,21 @@ public class SettingsWindow : MonoBehaviour
     // =====================================================================
     private void BuildSoundPage(Transform page)
     {
-        SliderRow(page, "MASTER VOLUME", "All sounds",
+        SliderRow(page, "전체 볼륨", "모든 소리",
             () => S.MasterVolume * 100f,
             v => { S.MasterVolume = v / 100f; SettingsStore.ApplyAudio(); SettingsStore.MarkDirty(); },
             v => Mathf.RoundToInt(v) + "%");
 
-        SliderRow(page, "MUSIC VOLUME", "In-game music and song preview",
+        SliderRow(page, "음악 볼륨", "게임 음악 · 곡 선택 미리듣기",
             () => S.MusicVolume * 100f,
             v => { S.MusicVolume = v / 100f; SettingsStore.MarkDirty(); },
             v => Mathf.RoundToInt(v) + "%");
 
-        SwitchRow(page, "HIT SOUND", "Sound when you press a lane key",
+        SwitchRow(page, "탭음", "레인 키를 누를 때 나는 소리",
             () => S.HitSoundOn,
             on => { S.HitSoundOn = on; Changed(); if (on) PreviewHitSound(true); });
 
-        SliderRow(page, "HIT SOUND VOLUME", null,
+        SliderRow(page, "탭음 볼륨", null,
             () => S.HitSoundVolume * 100f,
             v => { S.HitSoundVolume = v / 100f; SettingsStore.MarkDirty(); PreviewHitSound(false); },
             v => Mathf.RoundToInt(v) + "%");
@@ -348,29 +483,29 @@ public class SettingsWindow : MonoBehaviour
 
     private void BuildOffsetPage(Transform page)
     {
-        StepperRow(page, "AUDIO OFFSET", "+ if the music sounds LATE (Bluetooth, TV)",
+        StepperRow(page, "오디오 오프셋", "음악이 늦게 들리면 - (블루투스 · TV)",
             new[] { "-10", "-1" }, new[] { -10, -1 }, new[] { "+1", "+10" }, new[] { 1, 10 },
             () => K.Ms(S.AudioOffset),
             d => { S.AudioOffset = Clamp(Math.Round(S.AudioOffset * 1000.0 + d) / 1000.0, -1.0, 1.0); Changed(); });
 
-        StepperRow(page, "JUDGE OFFSET", "+ if you get many SLOW,  - if many FAST",
+        StepperRow(page, "판정 오프셋", "SLOW 가 많으면 -,  FAST 가 많으면 +",
             new[] { "-10", "-1" }, new[] { -10, -1 }, new[] { "+1", "+10" }, new[] { 1, 10 },
             () => K.Ms(S.JudgeOffset),
             d => { S.JudgeOffset = Clamp(Math.Round(S.JudgeOffset * 1000.0 + d) / 1000.0, -0.3, 0.3); Changed(); });
 
         // 자동 측정
-        RectTransform area = Row(page, "AUTO MEASURE", "Tap along to measure your offset", 84f);
+        RectTransform area = Row(page, "자동 측정", "박자에 맞춰 눌러서 오프셋 측정", 84f);
         TextMeshProUGUI t;
-        Button sound = K.Btn(area, "SOUND TEST", 22, () => calibrator.Begin(OffsetCalibrator.Mode.Sound), out t);
+        Button sound = K.Btn(area, "소리 테스트", 22, () => calibrator.Begin(OffsetCalibrator.Mode.Sound), out t);
         K.Place((RectTransform)sound.transform, new Vector2(0f, 0f), new Vector2(0.49f, 1f), Vector2.zero, Vector2.zero);
-        Button visual = K.Btn(area, "VISUAL TEST", 22, () => calibrator.Begin(OffsetCalibrator.Mode.Visual), out t);
+        Button visual = K.Btn(area, "화면 테스트", 22, () => calibrator.Begin(OffsetCalibrator.Mode.Visual), out t);
         K.Place((RectTransform)visual.transform, new Vector2(0.51f, 0f), new Vector2(1f, 1f), Vector2.zero, Vector2.zero);
 
         // 마지막 플레이 결과로 보정
         TextMeshProUGUI lastInfo = null;
-        RectTransform lastArea = Row(page, "FROM LAST PLAY", null, 84f, d => lastInfo = d);
+        RectTransform lastArea = Row(page, "마지막 플레이로 보정", null, 84f, d => lastInfo = d);
         TextMeshProUGUI applyText;
-        Button apply = K.Btn(lastArea, "APPLY", 22, ApplyLastPlay, out applyText);
+        Button apply = K.Btn(lastArea, "적용", 22, ApplyLastPlay, out applyText);
         K.Place((RectTransform)apply.transform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(-180f, 0f), Vector2.zero);
         TextMeshProUGUI lastValue = K.Txt("Value", lastArea, "", 24, TextAlignmentOptions.Left, K.TextMain, FontStyles.Bold);
         K.Place(lastValue.rectTransform, Vector2.zero, Vector2.one, Vector2.zero, new Vector2(-196f, 0f));
@@ -381,62 +516,86 @@ public class SettingsWindow : MonoBehaviour
             if (r == null)
             {
                 lastValue.text = "-";
-                if (lastInfo != null) lastInfo.text = "Play a song (not AUTO) to use this";
+                if (lastInfo != null) lastInfo.text = "곡을 한 번 플레이하면 (AUTO 제외) 쓸 수 있습니다";
             }
             else
             {
                 lastValue.text = K.Ms(r.AverageErrorMs / 1000.0) + (r.AverageErrorMs > 0 ? "  SLOW" : r.AverageErrorMs < 0 ? "  FAST" : "");
                 lastValue.color = r.AverageErrorMs > 0 ? K.SlowColor : r.AverageErrorMs < 0 ? K.FastColor : K.TextMain;
-                if (lastInfo != null) lastInfo.text = "Avg. error of " + r.ErrorSampleCount + " notes → adds to JUDGE OFFSET";
+                if (lastInfo != null) lastInfo.text = "노트 " + r.ErrorSampleCount + "개 평균 오차 → 판정 오프셋 " + K.Ms(-r.AverageErrorMs / 1000.0) + " 만큼 바꿈";
             }
         });
 
         InfoText(page,
-            "AUDIO OFFSET moves the music against the notes. JUDGE OFFSET moves only the judgement.\n" +
-            "SOUND TEST sets AUDIO OFFSET. VISUAL TEST then splits it so notes, music and judgement all line up.", 96f);
+            "+ 는 노트(와 판정)를 빠르게, - 는 늦게 합니다 — osu! 와 같은 방향입니다.\n" +
+            "오디오 오프셋은 음악에 대해 노트 + 판정을 함께 옮기고, 판정 오프셋은 판정만 옮깁니다.\n" +
+            "소리 테스트로 오디오 오프셋을 맞춘 뒤, 화면 테스트로 노트 · 음악 · 판정을 모두 맞춥니다.", 120f);
     }
 
     private void BuildGameplayPage(Transform page)
     {
-        ChoiceRow(page, "GAME UI", "In-game screen design (lanes, notes, HUD)",
+        ChoiceRow(page, "게임 화면", "게임 화면 디자인 (레인 · 노트 · HUD)",
             () => GameSkins.Names[Mathf.Clamp(S.GameSkin, 0, GameSkins.Names.Length - 1)],
             d => { S.GameSkin = (S.GameSkin + d + GameSkins.Names.Length) % GameSkins.Names.Length; Changed(); });
 
-        SliderRow(page, "LANE OPACITY", "SIMPLE UI lane background (0% = see-through)",
+        SliderRow(page, "레인 불투명도", "SIMPLE 레인 배경 (0% = 완전 투명)",
             () => S.LaneOpacity * 100f,
             v => { S.LaneOpacity = v / 100f; SettingsStore.MarkDirty(); },
             v => Mathf.RoundToInt(v) + "%");
 
-        SwitchRow(page, "INFORMATION UI", "Song info, difficulty, time, score, speed (all GAME UI)",
+        SwitchRow(page, "정보 표시", "곡 정보 · 난이도 · 시간 · 점수 · 배속 (모든 게임 화면)",
             () => S.ShowInfoUI, on => { S.ShowInfoUI = on; Changed(); });
 
-        StepperRow(page, "SCROLL SPEED", "Note speed (F1 / F2 in song select)",
+        SwitchRow(page, "레인 구분선", "SIMPLE 레인 사이 구분선 3개",
+            () => S.LaneLines, on => { S.LaneLines = on; Changed(); });
+
+        SwitchRow(page, "키 자리 표시", "SIMPLE 판정선 위 노트 모양 표시",
+            () => S.ShowKeyMarkers, on => { S.ShowKeyMarkers = on; Changed(); });
+
+        StepperRow(page, "배속", "노트 속도 (곡 선택에서 F1 / F2)",
             new[] { "-1", "-0.1" }, new[] { -10, -1 }, new[] { "+0.1", "+1" }, new[] { 1, 10 },
             () => S.SettingSpeed.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture),
             d => { S.SettingSpeed = Clamp(Math.Round(S.SettingSpeed * 10.0 + d) / 10.0, 1.0, 12.0); Changed(); });
 
-        SwitchRow(page, "FAST / SLOW", "Show FAST / SLOW and ms under the judgement",
+        SwitchRow(page, "FAST / SLOW 표시", "판정 아래 오차 표시 (빠르면 -ms, 늦으면 +ms)",
             () => S.ShowFastSlow, on => { S.ShowFastSlow = on; Changed(); });
 
-        StepperRow(page, "FAST / SLOW THRESHOLD", "Show only when the error is at least this",
+        ChoiceRow(page, "히트 이펙트", "낮음 = 가벼운 이펙트 (렉이 있으면 낮음으로)",
+            () => S.EffectQuality > 0 ? "높음" : "낮음",
+            d => { S.EffectQuality = S.EffectQuality > 0 ? 0 : 1; Changed(); });
+
+        SwitchRow(page, "JUST PERFECT 표시", "±15ms 안의 PERFECT 를 JUST PERFECT 로 표시 (끄면 PERFECT)",
+            () => S.ShowJustPerfect, on => { S.ShowJustPerfect = on; Changed(); });
+
+        SwitchRow(page, "판정 그래프", "화면 아래에 칠 때마다 오차를 눈금으로 표시 (osu! 처럼, 다음 플레이부터)",
+            () => S.ShowHitErrorBar, on => { S.ShowHitErrorBar = on; Changed(); });
+
+        StepperRow(page, "FAST / SLOW 기준", "오차가 이 값 이상일 때만 표시",
             new[] { "-5", "-1" }, new[] { -5, -1 }, new[] { "+1", "+5" }, new[] { 1, 5 },
             () => S.judgeoverrange + " ms",
             d => { S.judgeoverrange = Mathf.Clamp(S.judgeoverrange + d, 0, 120); Changed(); });
+
+        // 시작 타임 조정: 0.1초 단위. 값 = 음악 위치(초). 0 = OFF (처음부터)
+        StepperRow(page, "시작 시간", "곡을 이 시간부터 시작 (처음 2초 안의 노트는 빠짐)",
+            new[] { "-10", "-1", "-0.1" }, new[] { -100, -10, -1 }, new[] { "+0.1", "+1", "+10" }, new[] { 1, 10, 100 },
+            () => S.StartTime <= 0.0 ? "끔" : S.StartTime.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " 초",
+            d => { S.StartTime = Clamp(Math.Round(S.StartTime * 10.0 + d) / 10.0, 0.0, 3600.0); Changed(); },
+            56f);   // [버그 수정] 버튼이 양쪽 3개씩이라 기본 폭(76)이면 가운데 값 칸이 거의 0이 되어 시간이 안 보였다 → 버튼을 좁게
     }
 
     private void BuildDisplayPage(Transform page)
     {
-        ChoiceRow(page, "SCREEN MODE", null,
+        ChoiceRow(page, "화면 모드", null,
             () => ScreenModeNames[CurrentScreenMode()],
             d =>
             {
                 S.ScreenMode = (CurrentScreenMode() + d + 3) % 3;
                 SettingsStore.ApplyScreen();
                 Changed();
-                if (Application.isEditor) SetStatus("Screen mode is applied in builds only.");
+                if (Application.isEditor) SetStatus("화면 모드는 빌드된 게임에서만 적용됩니다.");
             });
 
-        ChoiceRow(page, "RESOLUTION", null,
+        ChoiceRow(page, "해상도", null,
             () => { Vector2Int r = CurrentResolution(); return r.x + " x " + r.y; },
             d =>
             {
@@ -449,17 +608,17 @@ public class SettingsWindow : MonoBehaviour
                 S.ResolutionHeight = list[idx].y;
                 SettingsStore.ApplyScreen();
                 Changed();
-                if (Application.isEditor) SetStatus("Resolution is applied in builds only.");
+                if (Application.isEditor) SetStatus("해상도는 빌드된 게임에서만 적용됩니다.");
             });
 
-        SwitchRow(page, "VSYNC", "Sync to monitor refresh (ignores FRAME LIMIT)",
+        SwitchRow(page, "수직 동기화", "모니터 주사율에 맞춤 (프레임 제한 무시)",
             () => S.VSync, on => { S.VSync = on; SettingsStore.ApplyFrameRate(); Changed(); });
 
-        ChoiceRow(page, "FRAME LIMIT", "Higher = smoother input timing",
+        ChoiceRow(page, "프레임 제한", "높을수록 입력 타이밍이 정확",
             () =>
             {
-                string v = S.FrameLimit > 0 ? S.FrameLimit + " FPS" : "UNLIMITED";
-                return S.VSync ? v + "  (VSYNC)" : v;
+                string v = S.FrameLimit > 0 ? S.FrameLimit + " FPS" : "제한 없음";
+                return S.VSync ? v + "  (수직 동기화)" : v;
             },
             d =>
             {
@@ -471,13 +630,13 @@ public class SettingsWindow : MonoBehaviour
                 Changed();
             });
 
-        SwitchRow(page, "SHOW FPS", "Frame rate in the top-right corner",
+        SwitchRow(page, "FPS 표시", "오른쪽 위에 프레임 수 표시",
             () => S.ShowFps, on => { S.ShowFps = on; FpsOverlay.SetVisible(on); Changed(); });
     }
 
     private void BuildControlsPage(Transform page)
     {
-        RectTransform area = Row(page, "LANE KEYS", "Lane 1 · 2 · 3 · 4", 104f);
+        RectTransform area = Row(page, "레인 키", "1 · 2 · 3 · 4 번 레인", 104f);
         for (int i = 0; i < 4; i++)
         {
             int lane = i;
@@ -489,26 +648,26 @@ public class SettingsWindow : MonoBehaviour
             {
                 Key[] keys = SettingsStore.GetLaneKeys();
                 bool waiting = rebindLane == lane;
-                label.text = waiting ? "PRESS..." : SettingsStore.KeyDisplayName(keys[lane]);
+                label.text = waiting ? "키 입력..." : SettingsStore.KeyDisplayName(keys[lane]);
                 label.fontSize = waiting ? 22 : 34;
                 label.color = waiting ? K.TextOnAccent : K.TextMain;
                 K.SetButtonColor(b, waiting ? K.Accent : K.ButtonColor);
             });
         }
 
-        RectTransform resetArea = Row(page, "DEFAULT KEYS", null, 76f);
+        RectTransform resetArea = Row(page, "기본 키", null, 76f);
         TextMeshProUGUI t;
         Button reset = K.Btn(resetArea, "D  F  J  K", 24, () =>
         {
             CancelRebind();
             S.LaneKeys = (string[])SettingsStore.DefaultLaneKeys.Clone();
             Changed();
-            SetStatus("Lane keys reset to D F J K.");
+            SetStatus("레인 키를 D F J K 로 되돌렸습니다.");
         }, out t);
         K.Place((RectTransform)reset.transform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(-260f, 0f), Vector2.zero);
 
-        InfoText(page, "SPACE (free-key space notes) and ESC (pause) are fixed and can't be used as lane keys.\n" +
-                       "Choosing a key that another lane already uses swaps the two.", 80f);
+        InfoText(page, "SPACE 와 ESC(일시정지)는 고정 키라 레인 키로 쓸 수 없습니다.\n" +
+                       "다른 레인이 이미 쓰는 키를 고르면 두 레인의 키가 서로 바뀝니다.", 80f);
     }
 
     // =====================================================================
@@ -561,7 +720,7 @@ public class SettingsWindow : MonoBehaviour
         refreshers.Add(() =>
         {
             bool on = get();
-            t.text = on ? "ON" : "OFF";
+            t.text = on ? "켬" : "끔";
             t.color = on ? K.TextOnAccent : K.TextSub;
             K.SetButtonColor(b, on ? K.Accent : K.ButtonColor);
         });
@@ -570,10 +729,10 @@ public class SettingsWindow : MonoBehaviour
     // [-10][-1]  값  [+1][+10]
     private void StepperRow(Transform page, string label, string desc,
                             string[] leftLabels, int[] leftDeltas, string[] rightLabels, int[] rightDeltas,
-                            Func<string> getText, Action<int> onDelta)
+                            Func<string> getText, Action<int> onDelta, float bw = 76f)
     {
         RectTransform area = Row(page, label, desc);
-        const float bw = 76f, gap = 8f;
+        float gap = bw < 76f ? 6f : 8f;
         TextMeshProUGUI t;
 
         float x = 0f;
@@ -625,23 +784,24 @@ public class SettingsWindow : MonoBehaviour
     // =====================================================================
     //  오프셋
     // =====================================================================
-    // 측정 결과를 적용했을 때의 새 값
+    // 측정 결과를 적용했을 때의 새 값 (measured: + = 늦게 침)
+    //  오프셋 부호: + = 노트·판정이 빨라짐 (osu! 방향) → 늦게 치는 만큼 '-' 로 맞춘다
     //  - SOUND  : 소리에 맞춰 친 평균 오차 M = 음악 지연 + 입력 지연
-    //             → AUDIO + JUDGE 의 합이 M 이 되도록 AUDIO 를 맞춘다
+    //             → AUDIO + JUDGE 의 합이 -M 이 되도록 AUDIO 를 맞춘다
     //  - VISUAL : 화면에 맞춰 친 평균 오차 E = 화면 지연 + 입력 지연
-    //             → JUDGE = E, 합(AUDIO + JUDGE)은 그대로 유지
+    //             → JUDGE = -E, 합(AUDIO + JUDGE)은 그대로 유지
     public void ComputeCalibration(OffsetCalibrator.Mode mode, double measured, out double audio, out double judge)
     {
         if (mode == OffsetCalibrator.Mode.Sound)
         {
             judge = S.JudgeOffset;
-            audio = measured - judge;
+            audio = -measured - judge;
         }
         else
         {
             double total = S.AudioOffset + S.JudgeOffset;
-            judge = measured;
-            audio = total - measured;
+            judge = -measured;
+            audio = total + measured;
         }
         audio = Clamp(Math.Round(audio * 1000.0) / 1000.0, -1.0, 1.0);
         judge = Clamp(Math.Round(judge * 1000.0) / 1000.0, -0.3, 0.3);
@@ -651,8 +811,8 @@ public class SettingsWindow : MonoBehaviour
     {
         double a, j;
         ComputeCalibration(mode, measured, out a, out j);
-        return "AUDIO OFFSET   " + K.Ms(S.AudioOffset) + "  →  " + K.Ms(a) + "\n" +
-               "JUDGE OFFSET   " + K.Ms(S.JudgeOffset) + "  →  " + K.Ms(j);
+        return "오디오 오프셋   " + K.Ms(S.AudioOffset) + "  →  " + K.Ms(a) + "\n" +
+               "판정 오프셋   " + K.Ms(S.JudgeOffset) + "  →  " + K.Ms(j);
     }
 
     public void ApplyCalibration(OffsetCalibrator.Mode mode, double measured)
@@ -662,7 +822,7 @@ public class SettingsWindow : MonoBehaviour
         S.AudioOffset = a;
         S.JudgeOffset = j;
         Changed();
-        SetStatus("Applied: AUDIO " + K.Ms(a) + ", JUDGE " + K.Ms(j));
+        SetStatus("적용됨: 오디오 " + K.Ms(a) + ", 판정 " + K.Ms(j));
         FocusCurrentTab();
     }
 
@@ -674,16 +834,16 @@ public class SettingsWindow : MonoBehaviour
         return r;
     }
 
-    // 결과창의 평균 오차(+ = SLOW)만큼 판정 오프셋을 옮긴다
+    // 결과창의 평균 오차(+ = SLOW)만큼 판정 오프셋을 옮긴다 (SLOW 면 - 방향)
     private void ApplyLastPlay()
     {
         ResultData r = GetUsableLastResult();
         if (r == null) return;
-        S.JudgeOffset = Clamp(Math.Round(S.JudgeOffset * 1000.0 + r.AverageErrorMs) / 1000.0, -0.3, 0.3);
+        S.JudgeOffset = Clamp(Math.Round(S.JudgeOffset * 1000.0 - r.AverageErrorMs) / 1000.0, -0.3, 0.3);
         r.AverageErrorMs = 0.0; // 같은 결과를 두 번 반영하지 않도록
         r.ErrorSampleCount = 0;
         Changed();
-        SetStatus("JUDGE OFFSET is now " + K.Ms(S.JudgeOffset) + ".");
+        SetStatus("판정 오프셋이 " + K.Ms(S.JudgeOffset) + " 이 되었습니다.");
     }
 
     // =====================================================================
@@ -722,7 +882,7 @@ public class SettingsWindow : MonoBehaviour
         rebindArmFrame = Time.frameCount; // 버튼을 누른 그 프레임의 키 입력은 무시
         Select(null);                      // Enter/Space 가 버튼을 다시 누르지 않도록 선택 해제
         RefreshAll();
-        SetStatus("Press a key for lane " + (lane + 1) + ".  ESC to cancel.");
+        SetStatus((lane + 1) + "번 레인에 쓸 키를 누르세요.  ESC = 취소");
     }
 
     private void CancelRebind()
@@ -740,7 +900,7 @@ public class SettingsWindow : MonoBehaviour
         {
             int lane = rebindLane;
             CancelRebind();
-            SetStatus("Cancelled.");
+            SetStatus("취소했습니다.");
             SelectNextFrame(laneButtons[lane].gameObject);
             return;
         }
@@ -751,7 +911,7 @@ public class SettingsWindow : MonoBehaviour
             Key key = control.keyCode;
             if (SettingsStore.ReservedKeys.Contains(key))
             {
-                SetStatus(SettingsStore.KeyDisplayName(key) + " can't be used as a lane key.");
+                SetStatus(SettingsStore.KeyDisplayName(key) + " 는 레인 키로 쓸 수 없습니다.");
                 return;
             }
 
@@ -764,8 +924,8 @@ public class SettingsWindow : MonoBehaviour
 
             rebindLane = -1;
             Changed();
-            SetStatus("Lane " + (lane + 1) + " = " + SettingsStore.KeyDisplayName(key) +
-                      (other >= 0 && other != lane ? "  (swapped with lane " + (other + 1) + ")" : ""));
+            SetStatus((lane + 1) + "번 레인 = " + SettingsStore.KeyDisplayName(key) +
+                      (other >= 0 && other != lane ? "  (" + (other + 1) + "번 레인과 서로 바뀜)" : ""));
             SelectNextFrame(laneButtons[lane].gameObject);
             return;
         }
@@ -779,13 +939,13 @@ public class SettingsWindow : MonoBehaviour
         if (resetArmedUntil < 0f)
         {
             resetArmedUntil = Time.unscaledTime + 3f;
-            resetText.text = "CONFIRM?";
-            SetStatus("Press again to reset the " + TabNames[currentTab] + " tab to defaults.");
+            resetText.text = "한 번 더";
+            SetStatus("한 번 더 누르면 [" + TabNames[currentTab] + "] 탭을 기본값으로 되돌립니다.");
             return;
         }
 
         resetArmedUntil = -1f;
-        resetText.text = "RESET TAB";
+        resetText.text = "탭 초기화";
         var d = new SettingsData();
         switch (currentTab)
         {
@@ -800,6 +960,7 @@ public class SettingsWindow : MonoBehaviour
             case 2:
                 S.SettingSpeed = d.SettingSpeed; S.ShowFastSlow = d.ShowFastSlow; S.judgeoverrange = d.judgeoverrange;
                 S.GameSkin = d.GameSkin; S.LaneOpacity = d.LaneOpacity; S.ShowInfoUI = d.ShowInfoUI;
+                S.StartTime = d.StartTime; S.LaneLines = d.LaneLines; S.ShowKeyMarkers = d.ShowKeyMarkers; S.ShowHitErrorBar = d.ShowHitErrorBar; S.EffectQuality = d.EffectQuality; S.ShowJustPerfect = d.ShowJustPerfect;
                 break;
             case 3:
                 S.VSync = d.VSync; S.FrameLimit = d.FrameLimit; S.ShowFps = d.ShowFps;
@@ -812,7 +973,7 @@ public class SettingsWindow : MonoBehaviour
                 break;
         }
         Changed();
-        SetStatus(TabNames[currentTab] + " reset to defaults.");
+        SetStatus("[" + TabNames[currentTab] + "] 탭을 기본값으로 되돌렸습니다.");
     }
 
     private static double Clamp(double v, double min, double max) { return v < min ? min : (v > max ? max : v); }

@@ -56,7 +56,11 @@ public static class SettingsStore
         string basePath = Path.Combine(Application.streamingAssetsPath, "data", "settings.json");
         try
         {
-            if (File.Exists(basePath)) JsonUtility.FromJsonOverwrite(File.ReadAllText(basePath, Encoding.UTF8), s);
+            if (File.Exists(basePath))
+            {
+                JsonUtility.FromJsonOverwrite(File.ReadAllText(basePath, Encoding.UTF8), s);
+                MigrateOffsetSign(s, "settings.json");
+            }
         }
         catch (Exception e) { Debug.LogWarning("[Settings] settings.json 을 읽지 못했습니다: " + e.Message); }
 
@@ -66,15 +70,38 @@ public static class SettingsStore
             {
                 var user = new SettingsData();
                 JsonUtility.FromJsonOverwrite(File.ReadAllText(UserFilePath, Encoding.UTF8), user);
+                if (MigrateOffsetSign(user, UserFileName)) dirty = true; // 바뀐 부호로 다시 저장
                 CopyUserFields(user, s);
             }
         }
         catch (Exception e) { Debug.LogWarning("[Settings] user_settings.json 을 읽지 못했습니다: " + e.Message); }
 
+        s.OffsetConvention = CurrentOffsetConvention;
         Sanitize(s);
         Debug.Log($"[Settings] Audio {s.AudioOffset * 1000:0}ms, Judge {s.JudgeOffset * 1000:0}ms, Speed {s.SettingSpeed:0.0}, Mode {s.Mode}");
         return s;
     }
+
+    // ===== 오프셋 부호 =====
+    //  예전 버전: AUDIO + = 음악을 일찍 재생(노트가 늦어짐), JUDGE + = 판정을 늦춤
+    //  지금(osu! 와 같음): + = 노트 · 판정이 빨라짐, - = 늦어짐  → 저장된 예전 값은 부호를 뒤집어 그대로의 효과를 유지
+    public const int CurrentOffsetConvention = 1;
+
+    private static bool MigrateOffsetSign(SettingsData d, string source)
+    {
+        if (d == null || d.OffsetConvention >= CurrentOffsetConvention) return false;
+        d.AudioOffset = -d.AudioOffset;
+        d.JudgeOffset = -d.JudgeOffset;
+        d.OffsetConvention = CurrentOffsetConvention;
+        Debug.Log($"[Settings] {source}: 오프셋 부호 규칙을 새 방식(osu! 방향)으로 바꿨습니다. Audio {d.AudioOffset * 1000:0}ms, Judge {d.JudgeOffset * 1000:0}ms");
+        return true;
+    }
+
+    // 게임 내부에서 쓰는 값 (부호 변환은 여기 한 군데에서만)
+    //  MusicLead  : 음악을 노트보다 몇 초 '먼저' 재생할지 (음악이 늦게 들리면 +)
+    //  JudgeDelay : 판정 기준을 몇 초 '늦출지' (늦게 치는 사람이면 +)
+    public static double MusicLead { get { return -Current.AudioOffset; } }
+    public static double JudgeDelay { get { return -Current.JudgeOffset; } }
 
     public static void Save()
     {
@@ -103,6 +130,7 @@ public static class SettingsStore
     {
         to.AudioOffset = from.AudioOffset;
         to.JudgeOffset = from.JudgeOffset;
+        to.OffsetConvention = from.OffsetConvention;
         to.SettingSpeed = from.SettingSpeed;
         to.judgeoverrange = from.judgeoverrange;
         to.ShowFastSlow = from.ShowFastSlow;

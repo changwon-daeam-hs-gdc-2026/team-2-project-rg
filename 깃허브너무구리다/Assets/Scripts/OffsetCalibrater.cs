@@ -16,8 +16,9 @@ using K = SettingsUIKit;
 //
 //  - 처음 4박은 준비(카운트인)라 세지 않는다. 16번 탭하면 끝난다.
 //  - 빗나간 탭(박자에서 ±180ms 이상)은 버리고, 남은 16개 중 위아래 3개씩 잘라낸 평균을 쓴다(트림 평균).
-//  - 시계는 GameManager 와 같은 방식(프레임마다 dspTime 에 부드럽게 맞춤, 프레임 단위 입력)으로 재서
-//    측정값이 실제 플레이와 같은 기준이 되도록 했다.
+//  - 시계는 GameManager 와 같은 방식(PlayScheduled 로 정확히 예약 재생 + 프레임마다 dspTime 에 부드럽게 맞춤)이고,
+//    탭 시각도 게임과 같이 '키를 실제로 누른 시각'(InputTiming)으로 재서 측정값이 실제 플레이와 같은 기준이 되도록 했다.
+//  - 결과는 + = 늦게 침. 오프셋에는 부호를 뒤집어 들어간다 (+ = 노트가 빨라짐, osu! 방향).
 // ============================================================
 public class OffsetCalibrator : MonoBehaviour
 {
@@ -110,14 +111,14 @@ public class OffsetCalibrator : MonoBehaviour
         K.Place(statsText.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(40f, 104f), new Vector2(-40f, 190f));
 
         TextMeshProUGUI t;
-        btnBack = K.Btn(bg.rectTransform, "BACK", 22, Back, out t);
+        btnBack = K.Btn(bg.rectTransform, "뒤로", 22, Back, out t);
         PlaceBottom(btnBack, 0);
-        btnRetry = K.Btn(bg.rectTransform, "RETRY", 22, StartRun, out retryText);
+        btnRetry = K.Btn(bg.rectTransform, "다시", 22, StartRun, out retryText);
         PlaceBottom(btnRetry, 1);
-        btnStart = K.Btn(bg.rectTransform, "START", 22, StartRun, out t);
+        btnStart = K.Btn(bg.rectTransform, "시작", 22, StartRun, out t);
         PlaceBottom(btnStart, 2);
         K.SetButtonColor(btnStart, K.AccentDark);
-        btnApply = K.Btn(bg.rectTransform, "APPLY", 22, Apply, out t);
+        btnApply = K.Btn(bg.rectTransform, "적용", 22, Apply, out t);
         PlaceBottom(btnApply, 2);
         K.SetButtonColor(btnApply, K.AccentDark);
 
@@ -176,17 +177,17 @@ public class OffsetCalibrator : MonoBehaviour
         errors.Clear();
 
         bool sound = mode == Mode.Sound;
-        titleText.text = sound ? "SOUND TEST" : "VISUAL TEST";
+        titleText.text = sound ? "소리 테스트" : "화면 테스트";
         infoText.text = sound
-            ? "You will hear a click every beat. Tap any lane key or SPACE exactly on each click.\n" +
-              "The first 4 clicks are a count-in. 16 taps are needed. Use your ears only — don't follow anything on screen.\n" +
-              "Wear the headphones / speakers you normally play with."
-            : "No sound. A bar falls every beat — tap any lane key or SPACE exactly when it touches the line.\n" +
-              "The first 4 bars (dim) are a count-in. 16 taps are needed.\n" +
-              "Run SOUND TEST first; this test only moves offset between AUDIO and JUDGE.";
-        bigText.text = sound ? "READY" : "";
+            ? "박자마다 '딱' 소리가 납니다. 소리에 정확히 맞춰 레인 키나 SPACE 를 누르세요.\n" +
+              "처음 4번은 준비 박자이고, 16번 눌러야 합니다. 화면은 보지 말고 귀로만 맞추세요.\n" +
+              "평소 플레이할 때 쓰는 이어폰 / 스피커로 하세요."
+            : "소리 없이 박자마다 막대가 내려옵니다. 막대가 선에 닿는 순간 레인 키나 SPACE 를 누르세요.\n" +
+              "처음 4개(흐린 막대)는 준비 박자이고, 16번 눌러야 합니다.\n" +
+              "먼저 소리 테스트를 하세요. 이 테스트는 오디오 · 판정 오프셋 사이만 나눠 맞춥니다.";
+        bigText.text = sound ? "준비" : "";
         bigText.color = K.TextMain;
-        statsText.text = "Press START";
+        statsText.text = "시작 을 누르세요";
         tapText.text = "";
         lane.gameObject.SetActive(!sound);
         HideNotes();
@@ -201,6 +202,7 @@ public class OffsetCalibrator : MonoBehaviour
     private void StartRun()
     {
         tapKeys = SettingsStore.GetLaneKeys().Concat(new[] { Key.Space }).ToArray();
+        InputTiming.Watch(tapKeys);
         errors.Clear();
         tapText.text = "";
         state = State.Running;
@@ -208,7 +210,7 @@ public class OffsetCalibrator : MonoBehaviour
         btnStart.gameObject.SetActive(false);
         btnApply.gameObject.SetActive(false);
         btnRetry.gameObject.SetActive(true);
-        retryText.text = "RESTART";
+        retryText.text = "처음부터";
         btnBack.gameObject.SetActive(true);
         // Space 로 탭할 때 선택된 버튼이 눌리지 않도록 선택 해제
         if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
@@ -219,9 +221,13 @@ public class OffsetCalibrator : MonoBehaviour
             if (clickClip == null) clickClip = CreateClickClip(out interval);
             clickSource.clip = clickClip;
             clickSource.volume = 0.9f;
+            // 0.6초 뒤 정확한 dspTime 에 첫 클릭이 나도록 예약 (Play() 는 다음 오디오 버퍼까지 밀려 측정값이 흔들렸다)
+            clickSource.timeSamples = 0;
+            dspStart = AudioSettings.dspTime + 0.6;
+            clickSource.PlayScheduled(dspStart);
             clock = -0.6;
-            audioStarted = false;
-            bigText.text = "LISTEN";
+            audioStarted = true;
+            bigText.text = "듣기";
             lane.gameObject.SetActive(false);
         }
         else
@@ -247,38 +253,26 @@ public class OffsetCalibrator : MonoBehaviour
             UpdateNotes();
         }
 
-        if (mode == Mode.Sound) bigText.text = clock < (CountInBeats - 0.5) * interval ? "LISTEN" : "TAP";
+        if (mode == Mode.Sound) bigText.text = clock < (CountInBeats - 0.5) * interval ? "듣기" : "누르기";
 
         var kb = Keyboard.current;
         if (kb != null)
         {
             for (int i = 0; i < tapKeys.Length; i++)
             {
-                if (kb[tapKeys[i]].wasPressedThisFrame) { RegisterTap(clock); break; }
+                if (kb[tapKeys[i]].wasPressedThisFrame) { RegisterTap(clock - InputTiming.PressAge(tapKeys[i])); break; }
             }
         }
 
         if (errors.Count >= RequiredTaps) Finish();
     }
 
-    // GameManager 와 같은 방식: 재생 시작 시각을 dspTime 으로 잡고, 매 프레임 시계를 dspTime 에 부드럽게 맞춘다
+    // GameManager 와 같은 방식: 예약한 재생 시작 시각(dspStart) 기준으로, 매 프레임 시계를 dspTime 에 부드럽게 맞춘다
     private void AdvanceAudioClock(float dt)
     {
-        if (!audioStarted)
-        {
-            clock += dt;
-            if (clock >= 0.0)
-            {
-                double over = clock;
-                clickSource.timeSamples = Mathf.Clamp((int)(over * clickClip.frequency), 0, clickClip.samples - 1);
-                clickSource.Play();
-                dspStart = AudioSettings.dspTime - over;
-                audioStarted = true;
-            }
-            return;
-        }
+        if (!audioStarted) { clock += dt; return; }
 
-        double target = AudioSettings.dspTime - dspStart;
+        double target = AudioSettings.dspTime - dspStart;   // 예약 시각 전에는 음수
         double diff = target - clock;
         if (Math.Abs(diff) > 0.1) clock = target;
         else clock += dt * Mathf.Clamp(1f + (float)(diff * 2.0), 0.5f, 1.5f);
@@ -290,13 +284,13 @@ public class OffsetCalibrator : MonoBehaviour
         int k = (int)Math.Round(t / interval);
         if (k < CountInBeats)
         {
-            ShowTap("WAIT", K.TextSub);
+            ShowTap("기다리세요", K.TextSub);
             return;
         }
         double err = t - k * interval; // + = 늦게 침
         if (Math.Abs(err) > RejectWindow)
         {
-            ShowTap("MISS", K.TextSub);
+            ShowTap("빗나감", K.TextSub);
             return;
         }
         errors.Add(err);
@@ -316,7 +310,7 @@ public class OffsetCalibrator : MonoBehaviour
     private void UpdateStats()
     {
         if (errors.Count == 0) { statsText.text = "0 / " + RequiredTaps; return; }
-        statsText.text = errors.Count + " / " + RequiredTaps + "      AVG " + K.Ms(errors.Average());
+        statsText.text = errors.Count + " / " + RequiredTaps + "      평균 " + K.Ms(errors.Average());
     }
 
     private void Finish()
@@ -335,19 +329,19 @@ public class OffsetCalibrator : MonoBehaviour
         spread = Math.Sqrt(errors.Sum(e => (e - mean) * (e - mean)) / errors.Count);
 
         int spreadMs = (int)Math.Round(spread * 1000.0);
-        string quality = spreadMs <= 15 ? "STABLE" : (spreadMs <= 30 ? "OK" : "UNSTABLE — retry recommended");
+        string quality = spreadMs <= 15 ? "안정적" : (spreadMs <= 30 ? "보통" : "불안정 — 다시 측정을 권장");
 
         bigText.text = K.Ms(result);
         bigText.color = result > 0.0005 ? K.SlowColor : (result < -0.0005 ? K.FastColor : K.TextMain);
         tapText.text = "";
-        statsText.text = "Spread ±" + spreadMs + " ms  ·  " + quality;
-        infoText.text = "You tapped " + K.Ms(result) +
-                        (result >= 0 ? " late on average.\n" : " early on average.\n") +
+        statsText.text = "흔들림 ±" + spreadMs + " ms  ·  " + quality;
+        infoText.text = "평균적으로 " + K.Ms(result) +
+                        (result >= 0 ? " 늦게 눌렀습니다.\n" : " 빠르게 눌렀습니다.\n") +
                         owner.DescribeCalibration(mode, result);
 
         btnApply.gameObject.SetActive(true);
         btnRetry.gameObject.SetActive(true);
-        retryText.text = "RETRY";
+        retryText.text = "다시";
         btnBack.gameObject.SetActive(true);
         owner.SelectNextFrame(btnApply.gameObject);
     }
@@ -390,7 +384,7 @@ public class OffsetCalibrator : MonoBehaviour
     // =====================================================================
     private void StopAudio()
     {
-        if (clickSource != null && clickSource.isPlaying) clickSource.Stop();
+        if (clickSource != null) clickSource.Stop(); // 예약만 된 상태(아직 소리 전)도 취소
         audioStarted = false;
     }
 

@@ -8,7 +8,8 @@ using System.Linq;
 // 채보 파일의 전체 노트 수 계산 (= 풀콤보 시 MAX COMBO)
 //  - 에디터에서 저장할 때 호출되어 songs.json 의 NoteCount_EASY / HARD / INSANE 에 기록된다.
 //  - GameManager.LoadChart 와 같은 규칙으로 읽는다:
-//      노트   : 일반(1, 11) 1개, 롱노트 머리(2, 12) 1개 + 연결된 꼬리 1개, 프리키 노트 1개
+//      노트   : 탭(1, 11) · 화살표(7, 8) 1개, 롱노트 머리(2, 12) 1개 + 연결된 꼬리 1개
+//      BPM    : BPM 줄은 누적, TIMING 줄은 그 박의 시각을 고정 (게임과 같음)
 //      롱노트 : (레인, 층) 단위로 머리-꼬리를 연결 (빨간 노트는 기준 레인에서만, 빨강끼리만)
 //      틱     : LongNoteTickRule (BPM 에 따라 간격이 달라짐)
 // ============================================================
@@ -23,9 +24,9 @@ public static class ChartNoteCounter
         public int Total { get { return Notes + Ticks; } }
     }
 
-    private class Bpm { public double Beats, Time, Value; }
+    private class Bpm { public double Beats, Time, Value; public double Anchor = double.NaN; }
     private class Raw { public string Type; public long Measure, Num, Den; public string Value; }
-    private class Note { public double Time; public int Lane, Type, Layer, Width = 1; public bool IsRed, IsFreeKey; public Note Next; }
+    private class Note { public double Time; public int Lane, Type, Layer, Width = 1; public bool IsRed; public Note Next; }
 
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
@@ -55,20 +56,12 @@ public static class ChartNoteCounter
             if (type == "SPEED" && data.Length == 2) continue;
             if (line.StartsWith("NoteSpeed:", StringComparison.OrdinalIgnoreCase)) continue;
             if (type == "BPM" && data.Length == 2) { initialBpm = double.Parse(data[1].Trim(), Inv); continue; }
-            if (type == "FREEKEY" && data.Length >= 4 && data[1].Trim() == "Linear") continue;
+            if (type == "FREEKEY" || type == "MUSICOFFSET" || type == "PREVIEW") continue;   // 프리키는 삭제된 기능
 
             if (data.Length >= 5)
             {
-                if (type == "FREEKEY")
-                {
-                    if (data.Length >= 10) raws.Add(new Raw { Type = "FREEKEY", Measure = L(data[7]), Num = L(data[8]), Den = L(data[9]) });
-                    else if (data.Length >= 9) raws.Add(new Raw { Type = "FREEKEY", Measure = L(data[6]), Num = L(data[7]), Den = L(data[8]) });
-                }
-                else
-                {
-                    string val = string.Join(",", data.Skip(4).Select(s => s.Trim()));
-                    raws.Add(new Raw { Type = type, Measure = L(data[1]), Num = L(data[2]), Den = L(data[3]), Value = val });
-                }
+                string val = string.Join(",", data.Skip(4).Select(s => s.Trim()));
+                raws.Add(new Raw { Type = type, Measure = L(data[1]), Num = L(data[2]), Den = L(data[3]), Value = val });
             }
             else if (data.Length >= 4)
             {
@@ -78,16 +71,22 @@ public static class ChartNoteCounter
 
         // ---- 2) BPM 표 ----
         var bpms = new List<Bpm> { new Bpm { Beats = 0, Time = 0, Value = initialBpm } };
-        foreach (var b in raws.Where(e => e.Type == "BPM").OrderBy(e => Beats(e)))
-            bpms.Add(new Bpm { Beats = Beats(b), Value = double.Parse(b.Value, Inv) });
+        foreach (var b in raws.Where(e => e.Type == "BPM" || e.Type == "TIMING").OrderBy(e => Beats(e)))
+        {
+            string[] v = b.Value.Split(',');
+            var nb = new Bpm { Beats = Beats(b), Value = double.Parse(v[0].Trim(), Inv) };
+            if (b.Type == "TIMING" && v.Length >= 2) nb.Anchor = double.Parse(v[1].Trim(), Inv) / 1000.0;
+            if (nb.Beats <= 1e-9) { bpms[0].Value = nb.Value; continue; }
+            bpms.Add(nb);
+        }
 
-        double curTime = 0, curBeats = 0, curBpm = initialBpm;
+        double curTime = 0, curBeats = 0, curBpm = bpms[0].Value;
         for (int i = 1; i < bpms.Count; i++)
         {
-            bpms[i].Time = curTime + (bpms[i].Beats - curBeats) * (60.0 / curBpm);
+            bpms[i].Time = !double.IsNaN(bpms[i].Anchor) ? bpms[i].Anchor : curTime + (bpms[i].Beats - curBeats) * (60.0 / curBpm);
             curTime = bpms[i].Time; curBeats = bpms[i].Beats; curBpm = bpms[i].Value;
         }
-        bpms = bpms.OrderBy(b => b.Time).ToList();
+        bpms = bpms.OrderBy(b => b.Beats).ToList();
 
         Func<double, double> exactTime = beats =>
         {
@@ -105,14 +104,10 @@ public static class ChartNoteCounter
         var byLane = new List<Note>[4];
         for (int i = 0; i < 4; i++) byLane[i] = new List<Note>();
 
-        foreach (var e in raws.Where(e => e.Type != "BPM"))
+        foreach (var e in raws.Where(e => e.Type != "BPM" && e.Type != "TIMING"))
         {
             double t = exactTime(Beats(e));
-            if (e.Type == "FREEKEY")
-            {
-                notes.Add(new Note { Time = t, IsFreeKey = true, Layer = NoteLayer.Top });
-            }
-            else if (e.Type == "NOTE")
+            if (e.Type == "NOTE")
             {
                 string[] lanes = e.Value.Split(',');
                 if (lanes.Length == 1 && !lanes[0].Contains("_") && !lanes[0].Contains("("))
@@ -147,7 +142,7 @@ public static class ChartNoteCounter
             Note[] last = new Note[3];
             foreach (var n in sorted)
             {
-                if (n.IsRed && n.Lane != lane) continue;
+                if (n.Lane != lane) continue;          // 넓은 노트(RED · 넓은 일반)는 기준 레인에서만 연결
                 int ly = Math.Max(1, Math.Min(2, n.Layer));
                 if (n.Type == 2 || n.Type == 12) last[ly] = n;
                 else if ((n.Type == 3 || n.Type == 13) && last[ly] != null)
@@ -162,7 +157,7 @@ public static class ChartNoteCounter
         var r = new Result { Ok = true };
         foreach (var n in notes)
         {
-            if (n.IsFreeKey || n.Type == 1 || n.Type == 11) r.Notes++;
+            if (NoteTypes.IsTapLike(n.Type)) r.Notes++;
             else if (n.Type == 2 || n.Type == 12)
             {
                 r.Notes += n.Next != null ? 2 : 1;
@@ -175,10 +170,9 @@ public static class ChartNoteCounter
     private static void AddToken(string token, int lane, double t, int layer, List<Note> notes, List<Note>[] byLane)
     {
         if (!NoteCellParser.TryParseToken(token, out int type, out int width, out bool isRed)) return;
-        var n = new Note { Time = t, Lane = lane, Type = type, Layer = layer, IsRed = isRed, Width = isRed ? width : 1 };
+        var n = new Note { Time = t, Lane = lane, Type = type, Layer = layer, IsRed = isRed, Width = width };
         notes.Add(n);
-        if (isRed) { for (int w = 0; w < width; w++) if (lane + w < 4) byLane[lane + w].Add(n); }
-        else byLane[lane].Add(n);
+        for (int w = 0; w < width; w++) if (lane + w < 4) byLane[lane + w].Add(n);
     }
 
     private static double Beats(Raw e) { return ((e.Measure - 1) * 4.0) + ((double)e.Num / Math.Max(1, e.Den)) * 4.0; }
