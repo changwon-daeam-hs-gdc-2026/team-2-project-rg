@@ -19,6 +19,11 @@ public class NoteObject : MonoBehaviour
     private const float ArrowWidth = 0.62f;     // 화살표 폭
     private const float ArrowHeight = 0.24f;
 
+    // 드래그 노트(9 · 10): 연한 노란 얇은 노트 + 가운데 이중 마름모 보석(맥박) + 위쪽으로 남는 혜성 꼬리빛
+    private SpriteRenderer dragGemRenderer, dragTrailRenderer;
+    private const float DragGemSize = 0.25f;     // 보석 크기 (월드 유닛)
+    private const float DragTrailLength = 0.62f; // 꼬리빛 길이
+
     // 놓친 롱노트: 흘러가며 서서히 투명해짐
     private float missFade = -1f;               // < 0 = 사라지는 중 아님, 0 ~ 1 = 진행도
     private const float MissFadeSeconds = 0.45f;
@@ -161,14 +166,14 @@ public class NoteObject : MonoBehaviour
         else
         {
             bool isBlue = (myData.Lane == 0 || myData.Lane == 3);
-            if (myData.Type == 1 || NoteTypes.IsArrow(myData.Type)) spriteRenderer.sprite = isBlue ? blueShort : greenShort;
-            else if (myData.Type == 2) spriteRenderer.sprite = isBlue ? blueLongHead : greenLongHead;
+            if (myData.Type == 1 || NoteTypes.IsArrow(myData.Type) || myData.Type == NoteTypes.Drag) spriteRenderer.sprite = isBlue ? blueShort : greenShort;
+            else if (myData.Type == 2 || myData.Type == NoteTypes.DragLongHead) spriteRenderer.sprite = isBlue ? blueLongHead : greenLongHead;
             else if (myData.Type == 3) spriteRenderer.sprite = isBlue ? blueLongTail : greenLongTail;
             transform.rotation = Quaternion.identity;
             
             transform.localScale = originalScale; 
 
-            if (myData.Type == 2 && myData.NextLongNote != null)
+            if ((myData.Type == 2 || myData.Type == NoteTypes.DragLongHead) && myData.NextLongNote != null)
             {
                 if (myLongBody == null) {
                     myLongBody = new GameObject("LongBody");
@@ -193,6 +198,7 @@ public class NoteObject : MonoBehaviour
         if (SimpleGameSkin.Active != null && myData.Type != 4) ApplySimpleStyle();
 
         SetupArrow();
+        SetupDrag();
 
 
         // 판정선 아래로는 그리지 않음 (GameManager 의 NoteClipMask)
@@ -201,6 +207,8 @@ public class NoteObject : MonoBehaviour
         if (bodyRenderer != null) bodyRenderer.maskInteraction = clip;
         if (arrowRenderer != null) arrowRenderer.maskInteraction = clip;
         if (arrowGlowRenderer != null) arrowGlowRenderer.maskInteraction = clip;
+        if (dragGemRenderer != null) dragGemRenderer.maskInteraction = clip;
+        if (dragTrailRenderer != null) dragTrailRenderer.maskInteraction = clip;
 
         // SIMPLE-DIVERSE: 레인 노트는 원근 재질(판정선 아래 자르기 포함), 그 밖에는 원래 재질 (풀링 재사용 대비 매번 지정)
         if (baseMaterial == null) baseMaterial = spriteRenderer.sharedMaterial;
@@ -214,6 +222,8 @@ public class NoteObject : MonoBehaviour
             if (bodyRenderer != null) pf.Apply(bodyRenderer, true, fold);
             if (arrowRenderer != null) pf.Apply(arrowRenderer, true, fold);
             if (arrowGlowRenderer != null) pf.Apply(arrowGlowRenderer, true, fold);
+            if (dragGemRenderer != null) pf.Apply(dragGemRenderer, true, fold);
+            if (dragTrailRenderer != null) pf.Apply(dragTrailRenderer, true, fold);
         }
         else
         {
@@ -226,21 +236,31 @@ public class NoteObject : MonoBehaviour
         // 층별 스크롤 속도: 노트가 속한 층의 변속 기준으로 위치를 계산한다 (롱노트 머리/꼬리는 항상 같은 층)
         myTargetDist = GameManager.Instance.GetScrollDistance(myData.HitTime, myData.Layer);
         if (myData.NextLongNote != null) myNextTargetDist = GameManager.Instance.GetScrollDistance(myData.NextLongNote.HitTime, myData.Layer);
+        myScrollVersion = GameManager.ScrollVersion;
 
-        myTailTime = ((myData.Type == 2 || myData.Type == 12) && myData.NextLongNote != null) ? myData.NextLongNote.HitTime : myData.HitTime;
+        myTailTime = (NoteTypes.IsLongHead(myData.Type) && myData.NextLongNote != null) ? myData.NextLongNote.HitTime : myData.HitTime;
 
         UpdateTransform();
     }
 
+    private int myScrollVersion;
+
     private void UpdateTransform()
     {
+        // GAME SETTING 에서 노트 속도를 바꾸면: 이미 내려오는 노트도 새 속도 기준 위치로 다시 계산
+        if (myScrollVersion != GameManager.ScrollVersion)
+        {
+            myScrollVersion = GameManager.ScrollVersion;
+            myTargetDist = GameManager.Instance.GetScrollDistance(myData.HitTime, myData.Layer);
+            if (myData.NextLongNote != null) myNextTargetDist = GameManager.Instance.GetScrollDistance(myData.NextLongNote.HitTime, myData.Layer);
+        }
         double currentDist = GameManager.Instance.GetCurrentScrollDist(myData.Layer);
         double currentTime = GameManager.Instance.currentPlayTime;
 
         bool isHidden = GameManager.Instance.IsNoteHiddenByFutureReverseScroll(currentTime, myData.HitTime, myData.Layer);
 
         {
-            bool isLongNote = (myData.Type == 2 || myData.Type == 12) && (myData.NextLongNote != null);
+            bool isLongNote = NoteTypes.IsLongHead(myData.Type) && (myData.NextLongNote != null);
 
             if (isHidden)
             {
@@ -366,7 +386,7 @@ public class NoteObject : MonoBehaviour
                 GameManager.Instance.ReturnNoteToPool(this); 
                 return;
             }
-            else if ((myData.Type == 2 || myData.Type == 12) && spriteRenderer.enabled) 
+            else if (NoteTypes.IsLongHead(myData.Type) && spriteRenderer.enabled) 
             {
                 spriteRenderer.enabled = false; 
             }
@@ -381,6 +401,7 @@ public class NoteObject : MonoBehaviour
         ApplyEndAlpha();
         UpdateHeldBody();
         UpdateArrow();
+        UpdateDrag();
 
         double currentTime = GameManager.Instance.currentPlayTime;
         // 자동 MISS 는 '판정 기준 시각'(JUDGE OFFSET 반영)으로 판단
@@ -395,7 +416,7 @@ public class NoteObject : MonoBehaviour
                 GameManager.Instance.ProcessHit("MISS");
                 DimNote(); 
             }
-            else if (myData.Type == 2 || myData.Type == 12) 
+            else if (NoteTypes.IsLongHead(myData.Type)) 
             {
                 GameManager.Instance.MissLongNoteHead(myData); 
             }
@@ -428,6 +449,7 @@ public class NoteObject : MonoBehaviour
         float h = myData.IsRedNote
             ? (isTail ? SimpleGameSkin.RedTailHeight : SimpleGameSkin.RedNoteHeight)  // 빨간 노트는 조금 더 두껍게
             : (isTail ? SimpleGameSkin.TailHeight : SimpleGameSkin.NoteHeight);
+        if (NoteTypes.IsDrag(myData.Type)) h *= NoteArt.DragHeightRatio;            // 드래그 노트: 얇은 레일 모양
         if (myData.IsRedNote && skin.RedNoteSprite != null)
         {
             // 고급 RED 노트: 색이 스프라이트에 들어 있으므로 흰색으로, 바깥 빛 여백만큼 크게 그림
@@ -478,7 +500,9 @@ public class NoteObject : MonoBehaviour
                 //   → Sliced: 좌우 테두리는 그대로, 가운데는 늘어나서 하이라이트가 항상 정가운데 (세로로는 무늬가 없어 늘려도 같음)
                 bodyRenderer.sprite = NoteArt.LongBodySprite;
                 bodyRenderer.drawMode = SpriteDrawMode.Sliced;
-                bodyRenderer.color = new Color(c.r, c.g, c.b, 1f);
+                // 드래그로 시작하는 롱노트(10)도 몸통은 일반 롱노트 색 (레인 색)
+                Color bc = NoteTypes.IsDrag(myData.Type) ? SimpleGameSkin.LaneColor(myData.Lane) : c;
+                bodyRenderer.color = new Color(bc.r, bc.g, bc.b, 1f);
             }
         }
     }
@@ -506,7 +530,7 @@ public class NoteObject : MonoBehaviour
     {
         if (bodyRenderer == null || SimpleGameSkin.Active == null || isMissed) return;
         if (bodyRenderer.sprite != NoteArt.LongBodySprite) return;
-        if (!myData.IsHit || (myData.Type != 2 && myData.Type != 12)) return;
+        if (!myData.IsHit || !NoteTypes.IsLongHead(myData.Type)) return;
         float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 14f);
         Color lit = Color.Lerp(bodyBaseColor, Color.white, 0.30f + 0.20f * pulse);
         bodyRenderer.color = new Color(lit.r, lit.g, lit.b, Mathf.Min(1f, bodyBaseColor.a * 1.15f) * appliedEndAlpha);
@@ -517,6 +541,8 @@ public class NoteObject : MonoBehaviour
         if (bodyRenderer) bodyRenderer.enabled = false;
         if (arrowRenderer) arrowRenderer.enabled = false;
         if (arrowGlowRenderer) arrowGlowRenderer.enabled = false;
+        if (dragGemRenderer) dragGemRenderer.enabled = false;
+        if (dragTrailRenderer) dragTrailRenderer.enabled = false;
     }
 
     // 놓친 롱노트(머리를 놓침 / 중간에 끊김): 색은 그대로 두고, 판정선에 붙어 있지 않고 레인을 따라 흘러가며
@@ -598,6 +624,82 @@ public class NoteObject : MonoBehaviour
         Color c = NoteArt.ArrowColor(myData.Type);
         arrowRenderer.color = new Color(c.r, c.g, c.b, a);
         arrowGlowRenderer.color = new Color(c.r, c.g, c.b, 0.55f * a * pulse);
+    }
+
+    // =====================================================================
+    //  드래그 노트 (9: 드래그, 10: 드래그로 시작하는 롱노트)
+    // =====================================================================
+    private void SetupDrag()
+    {
+        bool isDrag = NoteTypes.IsDrag(myData.Type);
+        if (!isDrag)
+        {
+            if (dragGemRenderer != null) dragGemRenderer.gameObject.SetActive(false);
+            if (dragTrailRenderer != null) dragTrailRenderer.gameObject.SetActive(false);
+            return;
+        }
+        if (dragGemRenderer == null)
+        {
+            GameObject g = new GameObject("DragGem");
+            g.transform.SetParent(transform, false);
+            dragGemRenderer = g.AddComponent<SpriteRenderer>();
+            GameObject tr = new GameObject("DragTrail");
+            tr.transform.SetParent(transform, false);
+            dragTrailRenderer = tr.AddComponent<SpriteRenderer>();
+        }
+        dragGemRenderer.gameObject.SetActive(true);
+        dragTrailRenderer.gameObject.SetActive(true);
+        dragGemRenderer.sprite = NoteArt.DragGemSprite;
+        dragTrailRenderer.sprite = NoteArt.DragTrailSprite;
+        dragGemRenderer.enabled = dragTrailRenderer.enabled = true;
+        dragGemRenderer.sortingOrder = spriteRenderer.sortingOrder + 1;        // 노트 위
+        dragTrailRenderer.sortingOrder = spriteRenderer.sortingOrder - 1;      // 노트 뒤 (위쪽으로 뻗음)
+        if (SimpleGameSkin.Active == null)
+        {
+            // 기본 스킨: 노트 그림에 연한 노랑을 입히고 조금 얇게
+            spriteRenderer.color = Color.Lerp(Color.white, NoteArt.DragColor, 0.75f);
+            transform.localScale = new Vector3(originalScale.x, originalScale.y * NoteArt.DragHeightRatio, originalScale.z);
+        }
+        RememberBaseColors();
+    }
+
+    private void UpdateDrag()
+    {
+        if (dragGemRenderer == null || !dragGemRenderer.gameObject.activeSelf) return;
+        bool show = spriteRenderer.enabled;
+        dragGemRenderer.enabled = dragTrailRenderer.enabled = show;
+        if (!show) return;
+
+        Vector3 ps = transform.lossyScale;
+        float sx = Mathf.Max(0.0001f, Mathf.Abs(ps.x)), sy = Mathf.Max(0.0001f, Mathf.Abs(ps.y));
+        float yScale = SimpleGameSkin.Active != null ? SimpleGameSkin.Active.NoteScaleY : 1f;
+        float t = Time.time;
+        // 노트마다 박자가 조금씩 다르게 (모든 드래그 노트가 똑같이 깜빡이지 않도록)
+        float phase = (float)(myData.HitTime * 3.1 % 6.283);
+        float pulse = 0.5f + 0.5f * Mathf.Sin(t * 9f + phase);
+
+        // 보석: 맥박처럼 커졌다 작아지고, 반짝일 때 흰빛이 강해짐
+        Vector2 gsz = dragGemRenderer.sprite.bounds.size;
+        float gs = DragGemSize * (0.88f + 0.18f * pulse);
+        dragGemRenderer.transform.position = transform.position;
+        dragGemRenderer.transform.localScale = new Vector3(gs / gsz.x / sx, gs * yScale / gsz.y / sy, 1f);
+        dragGemRenderer.transform.rotation = Quaternion.identity;
+
+        // 꼬리빛: 노트 위쪽으로 길게 (노트 폭의 70%), 보석과 같은 박자로 살짝 길어짐
+        float laneW = 0.8f;
+        float w = ((Mathf.Max(1, myData.Width) - 1) * laneW + laneW * 0.95f) * 0.7f;
+        Vector2 tsz = dragTrailRenderer.sprite.bounds.size;
+        float len = DragTrailLength * (0.9f + 0.15f * pulse) * yScale;
+        dragTrailRenderer.transform.position = transform.position;
+        dragTrailRenderer.transform.localScale = new Vector3(w / tsz.x / sx, len / tsz.y / sy, 1f);
+
+        // 곡 종료 페이드 · 놓친 노트 페이드를 같이 따라감
+        float a = spriteRenderer.color.a / Mathf.Max(0.001f, headBaseColor.a);
+        if (isMissed && missFade < 0f) a *= 0.35f;
+        Color c = NoteArt.DragColor;
+        Color gem = Color.Lerp(c, Color.white, 0.45f + 0.45f * pulse);
+        dragGemRenderer.color = new Color(gem.r, gem.g, gem.b, a);
+        dragTrailRenderer.color = new Color(c.r, c.g, c.b, (0.30f + 0.12f * pulse) * a);
     }
 
     public void DimNote() {

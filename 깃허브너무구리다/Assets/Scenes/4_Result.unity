@@ -786,8 +786,8 @@ MonoBehaviour:
   fonts:
     title: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
     info: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
-    number: {fileID: 0}
-    label: {fileID: 11400000, guid: 37201a8606bb46c48945159c44758367, type: 2}
+    number: {fileID: 11400000, guid: 8cb3b49c0bbd8fa4898740848360a934, type: 2}
+    label: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
     status: {fileID: 11400000, guid: 8cb3b49c0bbd8fa4898740848360a934, type: 2}
     rank: {fileID: 11400000, guid: 0a8c7609c1af5ae45a7a4abed63ef745, type: 2}
   backgroundDim: 0.3
@@ -795,6 +795,9 @@ MonoBehaviour:
   fadeInSeconds: 0.6
   fadeOutSeconds: 0.5
   monospaceNumbers: 1
+  labelHeightScale: 1.05
+  numberHeightScale: 1.05
+  otherHeightScale: 1.05
 --- !u!4 &921088796
 Transform:
   m_ObjectHideFlags: 0

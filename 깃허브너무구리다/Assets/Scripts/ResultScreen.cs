@@ -14,7 +14,9 @@ using UnityEngine.UI;
 public class ResultFonts
 {
     [Tooltip("곡 제목")] public TMP_FontAsset title;
-    [Tooltip("작곡가 · 난이도 · 버튼")] public TMP_FontAsset info;
+    [Tooltip("버튼 · 기본 정보 글자 (아래 난이도 · 작곡가 칸을 비우면 이 글꼴)")] public TMP_FontAsset info;
+    [Tooltip("왼쪽 난이도 줄 (예: INSANE 16). 비우면 Info")] public TMP_FontAsset difficulty;
+    [Tooltip("왼쪽 곡 정보: 작곡가 줄. 비우면 Info")] public TMP_FontAsset composer;
     [Tooltip("숫자: 점수 · 정확도 · 콤보 · 판정 개수")] public TMP_FontAsset number;
     [Tooltip("작은 라벨: RESULT · SCORE · ACCURACY · 판정 이름 등")] public TMP_FontAsset label;
     [Tooltip("클리어 상태: ALL PERFECT / FULL COMBO / CLEAR / FAILED")] public TMP_FontAsset status;
@@ -54,6 +56,14 @@ public class ResultScreen : MonoBehaviour
     public float fadeOutSeconds = 0.5f;
     [Tooltip("숫자가 올라갈 때 글자 폭이 흔들리지 않도록 고정 폭으로 표시")]
     public bool monospaceNumbers = true;
+
+    [Header("글자 세로 늘이기 (1 = 그대로, 클수록 길쭉하게)")]
+    [Tooltip("작은 라벨 글자: RESULT · SCORE · BEST · TP · MAX COMBO · PERFECT~MISS · FAST/SLOW/AVG 등 (글꼴 = Fonts > Label)")]
+    [Range(0.7f, 1.8f)] public float labelHeightScale = 1.15f;
+    [Tooltip("숫자 글자: 점수 · 콤보 · 판정 개수 등 (글꼴 = Fonts > Number)")]
+    [Range(0.7f, 1.8f)] public float numberHeightScale = 1f;
+    [Tooltip("나머지 글자: 곡명 · 작곡가 · 난이도 · 클리어 상태 · 버튼")]
+    [Range(0.7f, 1.8f)] public float otherHeightScale = 1f;
 
 
     // ----- 색 (흰색 단계만) -----
@@ -114,6 +124,7 @@ public class ResultScreen : MonoBehaviour
         judgeValues[0] = r.Excellent; judgeValues[1] = r.Great; judgeValues[2] = r.Good; judgeValues[3] = r.Bad; judgeValues[4] = r.Miss;
 
         SettingsUIKit.EnsureFont();
+        groupGapEm = numberGroupGap;
         roundSprite = MakeRoundSprite();
         Build();
         Animate(0f);
@@ -150,10 +161,11 @@ public class ResultScreen : MonoBehaviour
         stage.anchorMin = stage.anchorMax = stage.pivot = new Vector2(0.5f, 0.5f);
         stage.sizeDelta = new Vector2(1920f, 1080f);
 
-        BuildHeader();
+        // (위쪽 RESULT · SPEED · START 줄은 표시하지 않음)
         BuildLeft();
         BuildRight();
         BuildFooter();
+        ApplyTextStretch();
 
         Image ov = SettingsUIKit.Img("BlackOverlay", root, Color.black);
         SettingsUIKit.Stretch(ov.rectTransform);
@@ -215,18 +227,26 @@ public class ResultScreen : MonoBehaviour
         else jacket.color = new Color(0.12f, 0.13f, 0.17f, 1f);
         if (clearKind == 0) jacket.color = new Color(0.6f, 0.6f, 0.6f, 1f); // FAILED: 어둡게
 
-        // 난이도 (이름만 난이도 색)
+        // 난이도 (이름만 난이도 색)  + PRACTICE 모드면 바로 옆에 [⟳ PRACTICE]
         Color dc = DifficultyHelper.GetColor(r.LevelId);
         string diff = string.IsNullOrEmpty(r.DifficultyName) ? DifficultyHelper.GetName(r.LevelId) : r.DifficultyName;
-        TextMeshProUGUI dt = T(g, "<color=#" + ColorUtility.ToHtmlStringRGB(dc) + ">" + diff + "</color>  " + SongRowUI.FormatDifficulty(r.DifficultyValue),
-                               20, TextAlignmentOptions.MidlineLeft, TextMain, fonts.info, FontStyles.Bold);
+        string diffStr = "<color=#" + ColorUtility.ToHtmlStringRGB(dc) + ">" + diff + "</color>  " + SongRowUI.FormatDifficulty(r.DifficultyValue);
+        TextMeshProUGUI dt = T(g, diffStr, 20, TextAlignmentOptions.MidlineLeft, TextMain, fonts.difficulty != null ? fonts.difficulty : fonts.info, FontStyles.Bold);
         dt.characterSpacing = 4f;
         Box(dt.rectTransform, 160, 712, 480, 30);
+        if (r.IsMidStart)
+        {
+            float dw = dt.GetPreferredValues(diffStr).x;
+            RectTransform pb = PracticeBadge.Practice(g, 26f, fonts.label);
+            pb.anchorMin = pb.anchorMax = new Vector2(0f, 1f);
+            pb.pivot = new Vector2(0f, 0.5f);
+            pb.anchoredPosition = new Vector2(160f + dw + 14f, -(712f + 15f));
+        }
 
         TextMeshProUGUI title = T(g, (r.SongName ?? "") + (r.SubName ?? ""), 40, TextAlignmentOptions.MidlineLeft, TextMain, fonts.title, FontStyles.Bold);
         Box(title.rectTransform, 160, 748, 480, 56);
         Shrink(title, 0.55f);
-        TextMeshProUGUI comp = T(g, r.Composer ?? "", 22, TextAlignmentOptions.MidlineLeft, TextSub, fonts.info, FontStyles.Normal);
+        TextMeshProUGUI comp = T(g, r.Composer ?? "", 22, TextAlignmentOptions.MidlineLeft, TextSub, fonts.composer != null ? fonts.composer : fonts.info, FontStyles.Normal);
         Box(comp.rectTransform, 160, 804, 480, 32);
         Shrink(comp, 0.7f);
     }
@@ -234,6 +254,21 @@ public class ResultScreen : MonoBehaviour
     private void BuildRight()
     {
         const float X = 760f, W = 1000f;
+
+        // AUTO PLAY: 오른쪽(클리어 상태 · 점수 · 판정)은 아무것도 보여 주지 않고, 그 범위 전체를 반투명한 검은 사각형으로 덮고 안내 문구만
+        if (r.IsAutoPlay)
+        {
+            RectTransform ga = Group("AutoPlayCover", 0.3f, 0.5f, new Vector2(30f, 0f));
+            Image cover = SettingsUIKit.Img("Cover", ga, new Color(0f, 0f, 0f, 0.55f));
+            cover.sprite = roundSprite; cover.type = Image.Type.Sliced; cover.pixelsPerUnitMultiplier = 32f / 18f;
+            Box(cover.rectTransform, X - 40, 180, W + 80, 680);
+            // 한글이 있는 글꼴 (설정창 글꼴 → Resources/Fonts/SettingsFont → 기본)
+            TMP_FontAsset kf = SettingsWindow.RegularFont != null ? SettingsWindow.RegularFont : Resources.Load<TMP_FontAsset>("Fonts/SettingsFont");
+            if (kf == null) kf = SettingsUIKit.Font;
+            TextMeshProUGUI msg = T(cover.rectTransform, "AUTO PLAY에서는 판정 결과를 제공하지 않습니다.", 30, TextAlignmentOptions.Center, TextSub, kf, FontStyles.Normal);
+            SettingsUIKit.Stretch(msg.rectTransform);
+            return;
+        }
 
         // ---- 클리어 상태 ----
         RectTransform st = SettingsUIKit.Rect("Status", stage);
@@ -254,6 +289,15 @@ public class ResultScreen : MonoBehaviour
         Box(sl.rectTransform, X, 268, 120, 24);
         scoreText = T(g1, Mono("0"), 110, TextAlignmentOptions.MidlineLeft, TextMain, fonts.number, FontStyles.Bold);
         Box(scoreText.rectTransform, X - 6, 290, W - BestW - 40, 124);
+        if (r.IsMidStart)
+        {
+            // PRACTICE 모드: 점수는 0 (GameManager 가 0 으로 넘김), SCORE 글자 옆에 [⊘ NOT SAVED]
+            float sw = sl.GetPreferredValues("SCORE").x;
+            RectTransform ns = PracticeBadge.NotSaved(g1, 24f, fonts.label);
+            ns.anchorMin = ns.anchorMax = new Vector2(0f, 1f);
+            ns.pivot = new Vector2(0f, 0.5f);
+            ns.anchoredPosition = new Vector2(X + sw + 16f, -(268f + 12f));
+        }
 
         // 최고 점수 묶음 (오른쪽): 세로 구분선 · BEST · 이전 최고 점수 · 이번 점수와의 차이 / NEW BEST
         RectTransform bs = SettingsUIKit.Rect("Best", stage);
@@ -266,7 +310,7 @@ public class ResultScreen : MonoBehaviour
         Box(bl.rectTransform, 0, 0, BestW, 24);
 
         bool hasBest = before != null && !r.IsAutoPlay;
-        string bestStr = hasBest ? before.BestScore.ToString("N0", CultureInfo.InvariantCulture) : "-";
+        string bestStr = hasBest ? Num(before.BestScore) : "-";
         TextMeshProUGUI bv = T(bs, Mono(bestStr), 52, TextAlignmentOptions.MidlineLeft, hasBest ? TextMain : TextDim, fonts.number, FontStyles.Bold);
         Box(bv.rectTransform, -2, 28, BestW, 66);
         Shrink(bv, 0.6f);
@@ -274,7 +318,7 @@ public class ResultScreen : MonoBehaviour
         if (isNewRecord)
         {
             // NEW BEST: 흰 알약 + 검정 글자, 옆에 올라간 점수
-            string up = before != null ? "+" + (r.Score - before.BestScore).ToString("N0", CultureInfo.InvariantCulture) : "FIRST PLAY";
+            string up = before != null ? "+" + Num(r.Score - before.BestScore) : "FIRST PLAY";
             TextMeshProUGUI pillText = T(bs, "NEW BEST", 15, TextAlignmentOptions.Center, new Color(0.05f, 0.05f, 0.05f, 1f), fonts.label, FontStyles.Bold);
             pillText.characterSpacing = 6f;
             float pw = pillText.GetPreferredValues("NEW BEST").x + 28f;
@@ -295,7 +339,7 @@ public class ResultScreen : MonoBehaviour
             else
             {
                 int d = r.Score - before.BestScore;
-                note = (d >= 0 ? "+" : "-") + Mathf.Abs(d).ToString("N0", CultureInfo.InvariantCulture);
+                note = (d >= 0 ? "+" : "-") + Num(Mathf.Abs(d));
             }
             TextMeshProUGUI nt = T(bs, note, 22, TextAlignmentOptions.MidlineLeft, TextSub, fonts.number, FontStyles.Bold);
             if (r.IsAutoPlay || r.IsMidStart) { nt.fontSize = 15; nt.characterSpacing = 6f; nt.font = fonts.label != null ? fonts.label : nt.font; }
@@ -306,9 +350,20 @@ public class ResultScreen : MonoBehaviour
         RectTransform g2 = Group("Stats", 0.45f, 0.5f, new Vector2(30f, 0f));
         Line(g2, X, 440, W);
 
-        // ---- ACCURACY / MAX COMBO (최고 점수는 위 점수 옆으로 옮김) ----
-        accText = Stat(g2, "TP", X, 466);
-        comboText = Stat(g2, "MAX COMBO", X + 420, 466);
+        // ---- TP / MAX COMBO ----
+        //  FAILED · PRACTICE 판은 TP 를 아예 표시하지 않고, MAX COMBO 를 TP 자리(왼쪽)로 당김
+        bool noTp = r.IsMidStart || r.IsFailed;
+        if (!noTp)
+        {
+            accText = Stat(g2, "TP", X, 466);
+            comboText = Stat(g2, "MAX COMBO", X + 420, 466);
+        }
+        else
+        {
+            accText = T(g2, "", 10, TextAlignmentOptions.MidlineLeft, TextMain, fonts.number, FontStyles.Bold);
+            accText.gameObject.SetActive(false);                        // (숫자 올라가는 연출용 자리만, 보이지 않음)
+            comboText = Stat(g2, "MAX COMBO", X, 466);
+        }
 
         Line(g2, X, 580, W);
 
@@ -325,7 +380,7 @@ public class ResultScreen : MonoBehaviour
             if (k == 0)
             {
                 // PERFECT 중 JUST PERFECT 수 (±15ms, 롱노트 중간 판정 포함)
-                TextMeshProUGUI js = T(g3, "JUST  " + r.JustPerfect.ToString("N0", CultureInfo.InvariantCulture), 14, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
+                TextMeshProUGUI js = T(g3, "JUST  " + Num(r.JustPerfect), 14, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
                 js.characterSpacing = 4f;
                 Box(js.rectTransform, X + 436, y, 140, 44);
             }
@@ -480,17 +535,19 @@ public class ResultScreen : MonoBehaviour
             rv.rt.anchoredPosition = rv.offset * (1f - p);
         }
 
+        if (r.IsAutoPlay) return;   // AUTO PLAY: 오른쪽 숫자 · 상태 없음
+
         // 숫자 카운트 업
         float sp = EaseOut((t - 0.4f) / 1.1f);
-        scoreText.text = Mono(Mathf.RoundToInt(r.Score * sp).ToString("N0", CultureInfo.InvariantCulture));
+        scoreText.text = Mono(Num(Mathf.RoundToInt(r.Score * sp)));
         float ap = EaseOut((t - 0.5f) / 1.0f);
         accText.text = Mono((r.Accuracy * ap).ToString("F2", CultureInfo.InvariantCulture)) + "<size=60%>%</size>";
-        comboText.text = Mono(Mathf.RoundToInt(r.MaxCombo * ap).ToString("N0", CultureInfo.InvariantCulture))
-                       + "<size=50%><color=#FFFFFF52>  / " + total.ToString("N0", CultureInfo.InvariantCulture) + "</color></size>";
+        comboText.text = Mono(Num(Mathf.RoundToInt(r.MaxCombo * ap)))
+                       + "<size=50%><color=#FFFFFF52>  / " + Num(total) + "</color></size>";
         for (int k = 0; k < 5; k++)
         {
             float jp = EaseOut((t - 0.6f - k * 0.05f) / 0.9f);
-            judgeCounts[k].text = Mono(Mathf.RoundToInt(judgeValues[k] * jp).ToString("N0", CultureInfo.InvariantCulture));
+            judgeCounts[k].text = Mono(Num(Mathf.RoundToInt(judgeValues[k] * jp)));
             judgeCounts[k].color = judgeValues[k] == 0 ? TextDim : TextMain;
         }
 
@@ -535,6 +592,9 @@ public class ResultScreen : MonoBehaviour
         TextMeshProUGUI t = SettingsUIKit.Txt("T", parent, text, size, align, color, style);
         if (font != null) t.font = font;
         t.richText = true;
+        // [버그 수정] 다른 글꼴은 줄 높이(위아래 여백)가 커서 글자가 칸 높이를 넘으면 '…' 처리로 통째로 사라졌다 (점수가 안 보임)
+        //  → 칸을 넘어도 그대로 그림 (Shrink 를 쓰는 곡명 · 작곡가는 그 안에서 다시 줄여 맞춤)
+        t.overflowMode = TextOverflowModes.Overflow;
         return t;
     }
 
@@ -544,6 +604,53 @@ public class ResultScreen : MonoBehaviour
         t.enableAutoSizing = true;
         t.fontSizeMax = s;
         t.fontSizeMin = s * minRatio;
+    }
+
+    // 글자 세로 늘이기: 글꼴이 납작해 보일 때 인스펙터 값만큼 세로로 늘림 (글자 칸의 가운데를 기준으로)
+    //  라벨(fonts.label) · 숫자(fonts.number) · 나머지 따로. (라벨 · 숫자 글꼴을 안 넣었으면 '나머지' 값을 씀)
+    private void ApplyTextStretch()
+    {
+        foreach (var t in stage.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            float k;
+            if (fonts.label != null && t.font == fonts.label) k = labelHeightScale;
+            else if (fonts.number != null && t.font == fonts.number) k = numberHeightScale;
+            else k = otherHeightScale;
+            if (Mathf.Abs(k - 1f) < 0.001f) continue;
+            RectTransform rt = t.rectTransform;
+            float h = rt.rect.height;
+            Vector3 sc = rt.localScale;
+            rt.localScale = new Vector3(sc.x, sc.y * k, sc.z);
+            // 피벗 기준으로 늘어나므로, 글자 칸의 가운데가 제자리에 있도록 되돌림
+            float delta = (0.5f - rt.pivot.y) * h * (k - 1f);
+            rt.anchoredPosition -= new Vector2(0f, delta);
+        }
+    }
+
+    // 한글이 있는 글꼴 (설정창 글꼴 → Resources/Fonts/SettingsFont → 기본)
+    private static TMP_FontAsset KoreanFont()
+    {
+        TMP_FontAsset f = SettingsWindow.RegularFont != null ? SettingsWindow.RegularFont : Resources.Load<TMP_FontAsset>("Fonts/SettingsFont");
+        return f != null ? f : SettingsUIKit.Font;
+    }
+
+    // 큰 숫자 표기: 쉼표 대신 띄어쓰기 (1 000 000) — 글꼴에 쉼표가 없어도 보이도록
+    //  띄어쓰기는 글자가 아니라 <space> 간격으로 → 고정 폭 숫자(mspace)에서도 숫자 한 칸만큼 벌어지지 않고 좁게
+    [Tooltip("점수 등 큰 숫자의 세 자리 묶음 사이 간격 (글자 크기 비율, 0.25 = 글자 크기의 25%)")]
+    [Range(0f, 0.6f)] public float numberGroupGap = 0.22f;
+    private static float groupGapEm = 0.22f;
+    private static string Num(long v)
+    {
+        string d = Math.Abs(v).ToString(CultureInfo.InvariantCulture);
+        string gap = "<space=" + groupGapEm.ToString("0.###", CultureInfo.InvariantCulture) + "em>";
+        var sb = new System.Text.StringBuilder(d.Length * 2 + 16);
+        if (v < 0) sb.Append('-');
+        for (int i = 0; i < d.Length; i++)
+        {
+            if (i > 0 && (d.Length - i) % 3 == 0) sb.Append(gap);
+            sb.Append(d[i]);
+        }
+        return sb.ToString();
     }
 
     private string Mono(string s)

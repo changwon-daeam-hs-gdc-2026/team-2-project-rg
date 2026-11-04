@@ -28,7 +28,7 @@ public class EditorNote
 
 // 영역(Area): 이 박부터 Mask 레인이 영역 (Mask 0 = 영역 끝)  →  AREA, 마디, 분자, 분모, 1100
 public class EditorAreaEvent { public long Measure, Num, Den; public int Mask; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
-// 레인 접기 / 펼치기  →  FOLD (또는 UNFOLD), 마디, 분자, 분모, 초
+// 레인 사라짐 / 드러남 (예전 이름 접기 / 펼치기)  →  FOLD (= HIDE) / UNFOLD (= SHOW), 마디, 분자, 분모, 초
 public class EditorFoldEvent { public long Measure, Num, Den; public bool Fold; public double Duration; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 // DeathArea : BPM 오차 보정용 구간(차트 시간 초 단위). 격자/노트 배치 금지.
 public class EditorDeathArea { public double Start; public double End; }
@@ -219,6 +219,7 @@ public class ChartEditorManager : MonoBehaviour
     private bool IsSettingInputOpen { get { return isInputtingBpm || isInputtingSpeed || isInputtingDeathArea || isInputtingOffset; } }
     private bool speedApplyBothLayers = false; // Shift+F 로 입력하면 1층/2층 모두에 적용
     private bool isRedNoteMode = false;
+    private bool isDragNoteMode = false;   // 6: 드래그 노트 (1 → 드래그 노트 9, 2 → 드래그로 시작하는 롱노트 10)
     private int editLayer = NoteLayer.Top; // 현재 편집 중인 층 (기본: 2층)
     private bool isDraggingRedNote = false;
     private EditorNote draggedRedNote = null;
@@ -682,7 +683,7 @@ public class ChartEditorManager : MonoBehaviour
                 {
                     IncreaseCombo();
 
-                    if (n.Type == 2 || n.Type == 12)
+                    if (NoteTypes.IsLongHead(n.Type))
                     {
                         var tail = editorNotes
                             .Where(t => t.Lane == n.Lane && t.Layer == n.Layer && t.IsRedNote == n.IsRedNote && (t.Type == 3 || t.Type == 13) && t.AbsoluteBeat > n.AbsoluteBeat)
@@ -991,6 +992,13 @@ public class ChartEditorManager : MonoBehaviour
         if (kb[Key.Digit5].wasPressedThisFrame || kb[Key.Numpad5].wasPressedThisFrame) 
         {
             isRedNoteMode = !isRedNoteMode;
+            if (isRedNoteMode) isDragNoteMode = false;
+        }
+        // 6 : 드래그 노트 모드 켜기/끄기 (RED 와 동시에 켤 수 없음)
+        if (kb[Key.Digit6].wasPressedThisFrame || kb[Key.Numpad6].wasPressedThisFrame)
+        {
+            isDragNoteMode = !isDragNoteMode;
+            if (isDragNoteMode) isRedNoteMode = false;
         }
 
         // Q : 편집 층 전환 (1층 <-> 2층)
@@ -1206,7 +1214,9 @@ public class ChartEditorManager : MonoBehaviour
                     draggedRedNote = AddNoteToEditor(measure, num, den, hoverLane, rType, true, 1, editLayer);
                     isDraggingRedNote = true;
                 } else {
-                    AddNoteToEditor(measure, num, den, hoverLane, currentNoteType, false, 1, editLayer);
+                    int placeType = currentNoteType;
+                    if (isDragNoteMode) placeType = currentNoteType == 1 ? NoteTypes.Drag : currentNoteType == 2 ? NoteTypes.DragLongHead : currentNoteType;
+                    AddNoteToEditor(measure, num, den, hoverLane, placeType, false, 1, editLayer);
                 }
                 RefreshLongNoteBodies();
             }
@@ -1301,8 +1311,8 @@ public class ChartEditorManager : MonoBehaviour
         else
         {
             bool isBlue = (note.Lane % 2 == 0);
-            if (note.Type == 1 || NoteTypes.IsArrow(note.Type)) sr.sprite = isBlue ? blueShort : greenShort;
-            else if (note.Type == 2) sr.sprite = isBlue ? blueLongHead : greenLongHead;
+            if (note.Type == 1 || NoteTypes.IsArrow(note.Type) || note.Type == NoteTypes.Drag) sr.sprite = isBlue ? blueShort : greenShort;
+            else if (note.Type == 2 || note.Type == NoteTypes.DragLongHead) sr.sprite = isBlue ? blueLongHead : greenLongHead;
             else if (note.Type == 3) sr.sprite = isBlue ? blueLongTail : greenLongTail;
             
             if (sr.sprite == null) {
@@ -1320,6 +1330,13 @@ public class ChartEditorManager : MonoBehaviour
         // 층별 렌더링 순서: 2층(Top)이 항상 1층(Bottom)보다 위. 마디선(Type 4)은 맨 아래.
         sr.sortingOrder = (!note.IsRedNote && note.Type == 4) ? 1 : NoteLayer.HeadOrder(note.Layer);
         UpdateEditorArrow(note, sr);
+        if (!note.IsRedNote && NoteTypes.IsDrag(note.Type))
+        {
+            // 드래그 노트: 연한 노랑으로 물들이고 얇게
+            sr.color = Color.Lerp(Color.white, NoteArt.DragColor, 0.8f);
+            Vector3 ls = note.VisualObject.transform.localScale;
+            note.VisualObject.transform.localScale = new Vector3(ls.x, ls.y * NoteArt.DragHeightRatio, ls.z);
+        }
         note.BaseAlpha = sr.color.a;
     }
 
@@ -1500,13 +1517,13 @@ public class ChartEditorManager : MonoBehaviour
                 
                 foreach (var n in regularNotes)
                 {
-                    if (n.Type == 2) head = n; 
+                    if (n.Type == 2 || n.Type == NoteTypes.DragLongHead) head = n; 
                     else if (n.Type == 3 && head != null) 
                     {
                         CreateBodyObject(head, n);
                         head = null;
                     }
-                    else if (n.Type == 1 || n.Type == 4) head = null;
+                    else if (n.Type == 1 || n.Type == 4 || n.Type == NoteTypes.Drag) head = null;
                 }
 
                 var redNotes = editorNotes.Where(n => n.IsRedNote && n.Layer == layer && n.Lane == lane).OrderBy(n => n.AbsoluteBeat).ToList();
@@ -1925,10 +1942,10 @@ public class ChartEditorManager : MonoBehaviour
             else if (type == "AREA" && data.Length >= 5) {
                 areaEvents.Add(new EditorAreaEvent { Measure = long.Parse(data[1].Trim()), Num = long.Parse(data[2].Trim()), Den = long.Parse(data[3].Trim()), Mask = AreaMask.Parse(data[4]) });
             }
-            else if ((type == "FOLD" || type == "UNFOLD") && data.Length >= 5) {
+            else if ((type == "FOLD" || type == "UNFOLD" || type == "HIDE" || type == "SHOW") && data.Length >= 5) {   // 레인 사라짐 / 드러남
                 double dur;
                 if (!double.TryParse(data[4].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out dur)) dur = 0.5;
-                foldEvents.Add(new EditorFoldEvent { Measure = long.Parse(data[1].Trim()), Num = long.Parse(data[2].Trim()), Den = long.Parse(data[3].Trim()), Fold = type == "FOLD", Duration = dur });
+                foldEvents.Add(new EditorFoldEvent { Measure = long.Parse(data[1].Trim()), Num = long.Parse(data[2].Trim()), Den = long.Parse(data[3].Trim()), Fold = type == "FOLD" || type == "HIDE", Duration = dur });
             }
             else if (type == "NOTE" && data.Length >= 5) {
                 long m = long.Parse(data[1]), num = long.Parse(data[2]), den = long.Parse(data[3]);
@@ -2040,7 +2057,7 @@ public class ChartEditorManager : MonoBehaviour
             
             foreach (var note in group) {
                 if (note.Lane >= currentKeyCount) continue;
-                string token = note.IsRedNote ? $"{note.Type}_{note.Width}" : note.Type.ToString()[0].ToString();
+                string token = note.IsRedNote ? $"{note.Type}_{note.Width}" : note.Type.ToString(CultureInfo.InvariantCulture);   // 두 자리 종류(10 = 드래그 롱노트 시작)도 그대로
                 if (note.Layer == NoteLayer.Bottom) bottomStrs[note.Lane] = token;
                 else topStrs[note.Lane] = token;
             }
@@ -2114,8 +2131,9 @@ public class ChartEditorManager : MonoBehaviour
         UpdateLayerText();
         
         string baseMode = $"{currentKeyCount}B";
+        if (isDragNoteMode) baseMode += "  DRAG";
         if (modeText != null) modeText.text = baseMode;
-        if (modeText != null) modeText.color = isRedNoteMode ? Color.red : Color.white;
+        if (modeText != null) modeText.color = isRedNoteMode ? Color.red : (isDragNoteMode ? NoteArt.DragColor : Color.white);
         
         if (timeText != null) timeText.text = $"{currentPlaybackTime:F4}s";
         
@@ -2318,7 +2336,7 @@ public class ChartEditorManager : MonoBehaviour
                     Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
                     string dur = ev.Duration.ToString("0.###", CultureInfo.InvariantCulture);
                     uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale,
-                        text = (ev.Fold ? "FOLD " : "UNFOLD ") + dur + "s", shortText = ev.Fold ? "FLD" : "UFD",
+                        text = (ev.Fold ? "LANE HIDE " : "LANE SHOW ") + dur + "s", shortText = ev.Fold ? "HID" : "SHW",
                         color = ev.Fold ? new Color(1f, 0.6f, 0.3f) : new Color(0.5f, 1f, 0.6f), isWide = false });
                 }
             }

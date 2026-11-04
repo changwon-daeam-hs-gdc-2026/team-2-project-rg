@@ -67,6 +67,7 @@ public class SimpleGameSkin : MonoBehaviour
     {
         if (n.IsRedNote) return RedNote;
         if (NoteTypes.IsArrow(n.Type)) return NoteArt.ArrowColor(n.Type);   // 화살표 노트: 밝은 파랑 / 밝은 노랑
+        if (NoteTypes.IsDrag(n.Type)) return NoteArt.DragColor;              // 드래그 노트 (드래그로 시작하는 롱노트의 머리만 — 몸통 · 끝은 일반 롱노트 색)
         return LaneColor(n.Lane);
     }
 
@@ -126,7 +127,16 @@ public class SimpleGameSkin : MonoBehaviour
         public readonly SpriteRenderer[] arrows = new SpriteRenderer[3];   // [0] 본체, [1][2] 잔상
         public float t = 1f; public int lane; public Color c; public float power = 1f; public float x;
         public int arrowDir;                                                 // 0 = 일반, 1 = >>>, -1 = <<<
+        // 드래그 노트 전용 (심플 · 고급): 판정선을 따라 양옆으로 뻗는 빛 칼날 + 납작하게 번지는 연노랑 빛무리
+        //  + 노트 모양 잔상 2개가 위로 미끄러지며 사라짐 (드래그로 '훑고 지나가는' 느낌)
+        //  gem = 잔상 1,  shards[0] = 빛무리,  shards[1] = 잔상 2,  zip = 빛 칼날
+        public bool drag;
+        public SpriteRenderer gem, zip;
+        public readonly SpriteRenderer[] shards = new SpriteRenderer[DragShards];
+        public readonly Vector2[] shardVel = new Vector2[DragShards];
+        public readonly float[] shardSpin = new float[DragShards];
     }
+    private const int DragShards = 3;
     private readonly List<Burst> bursts = new List<Burst>();
     private const float BurstSeconds = 0.34f;
 
@@ -148,7 +158,31 @@ public class SimpleGameSkin : MonoBehaviour
 
     // LIFE 게이지 (레인 오른쪽, 둥근 막대)
     private RectTransform lifeRoot, lifeFillRt;
-    private Image lifeFill, lifeBg;
+    private Image lifeFill, lifeBg, lifeFlow, lifeGrad;
+
+    // 무한 LIFE 그라데이션: 아래 진한 파랑 → 가운데 하늘색 → 위 거의 흰 하늘색 (세로)
+    private static Sprite infiniteGradient;
+    private static Sprite InfiniteGradient
+    {
+        get
+        {
+            if (infiniteGradient != null) return infiniteGradient;
+            const int H = 128;
+            Texture2D tex = new Texture2D(4, H, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            var px = new Color32[4 * H];
+            Color bottom = new Color(0.16f, 0.42f, 1.00f), mid = new Color(0.30f, 0.78f, 1.00f), top = new Color(0.82f, 0.97f, 1.00f);
+            for (int y = 0; y < H; y++)
+            {
+                float t = y / (H - 1f);
+                Color c = t < 0.55f ? Color.Lerp(bottom, mid, t / 0.55f) : Color.Lerp(mid, top, (t - 0.55f) / 0.45f);
+                for (int x = 0; x < 4; x++) px[y * 4 + x] = c;
+            }
+            tex.SetPixels32(px); tex.Apply();
+            infiniteGradient = Sprite.Create(tex, new Rect(0, 0, 4, H), new Vector2(0.5f, 0.5f), 4f);
+            return infiniteGradient;
+        }
+    }
     private Sprite uiRoundSprite;
     private Sprite pillSprite;   // LIFE 바: 원 텍스처를 9-slice 로 늘려 양 끝이 반원인 알약 모양
 
@@ -557,17 +591,17 @@ public class SimpleGameSkin : MonoBehaviour
         // 양쪽 벽 (흰 선). 레인 사이 구분선은 없음.
         //  LANE OPACITY 와 관계없이 항상 같은 진하기 (등장·곡 종료 페이드만 따라감)
         float edgeW = IsDiverse ? 0.04f : EdgeWidth;
-        AddRect(worldRoot, "EdgeL", laneLeft, y + 13.5f, edgeW, 33f, EdgeColor, -19);
-        AddRect(worldRoot, "EdgeR", laneRight, y + 13.5f, edgeW, 33f, EdgeColor, -19);
+        AddSuckLine(AddRect(worldRoot, "EdgeL", laneLeft, y + 13.5f, edgeW, 33f, EdgeColor, -19));
+        AddSuckLine(AddRect(worldRoot, "EdgeR", laneRight, y + 13.5f, edgeW, 33f, EdgeColor, -19));
         if (IsDiverse)
         {
             // 벽 안쪽으로 은은하게 번지는 빛 (빛나는 레일 느낌, 폭 좁게)
-            AddSprite(worldRoot, "EdgeGlowL", hGradientSprite, laneLeft, y + 13.5f, 0.22f, 33f, new Color(0.75f, 0.9f, 1f, 0.08f), -19, false);
-            AddSprite(worldRoot, "EdgeGlowR", hGradientSprite, laneRight, y + 13.5f, 0.22f, 33f, new Color(0.75f, 0.9f, 1f, 0.08f), -19, true);
+            AddSuckLine(AddSprite(worldRoot, "EdgeGlowL", hGradientSprite, laneLeft, y + 13.5f, 0.22f, 33f, new Color(0.75f, 0.9f, 1f, 0.08f), -19, false));
+            AddSuckLine(AddSprite(worldRoot, "EdgeGlowR", hGradientSprite, laneRight, y + 13.5f, 0.22f, 33f, new Color(0.75f, 0.9f, 1f, 0.08f), -19, true));
 
             // 레일 바깥쪽 가는 보조선 (이중 레일)
-            AddRect(worldRoot, "RailL", laneLeft - 0.08f, y + 13.5f, 0.012f, 33f, new Color(1f, 1f, 1f, 0.28f), -19);
-            AddRect(worldRoot, "RailR", laneRight + 0.08f, y + 13.5f, 0.012f, 33f, new Color(1f, 1f, 1f, 0.28f), -19);
+            AddSuckLine(AddRect(worldRoot, "RailL", laneLeft - 0.08f, y + 13.5f, 0.012f, 33f, new Color(1f, 1f, 1f, 0.28f), -19));
+            AddSuckLine(AddRect(worldRoot, "RailR", laneRight + 0.08f, y + 13.5f, 0.012f, 33f, new Color(1f, 1f, 1f, 0.28f), -19));
 
             // 판정선 근처 바닥이 은은하게 밝음 (위로 갈수록 사라짐)
             AddSprite(worldRoot, "FloorGlow", glowSprite, centerX, y, fullW, 2.2f, new Color(0.55f, 0.80f, 1f, 0.07f), -19, false);
@@ -577,8 +611,12 @@ public class SimpleGameSkin : MonoBehaviour
         // 레인 구분선: 판정선에서 위로 갈수록 사라지는 아주 옅은 선 (레인이 또렷하게, 화면은 깔끔하게)
         //  설정 > GAMEPLAY > LANE LINES 로 켜고 끔 (게임 중 설정을 바꿔도 바로 반영)
         for (int i = 1; i < 4 && i < xs.Length; i++)
-            laneLines.Add(AddSprite(worldRoot, "LaneDiv" + i, glowSprite, laneLeft + i * laneWidth, y, IsDiverse ? 0.018f : 0.012f, IsDiverse ? 10f : 7f,
-                      new Color(1f, 1f, 1f, IsDiverse ? 0.11f : 0.09f), -19, false));
+        {
+            SpriteRenderer div = AddSprite(worldRoot, "LaneDiv" + i, glowSprite, laneLeft + i * laneWidth, y, IsDiverse ? 0.018f : 0.012f, IsDiverse ? 10f : 7f,
+                      new Color(1f, 1f, 1f, IsDiverse ? 0.11f : 0.09f), -19, false);
+            laneLines.Add(div);
+            AddSuckLine(div);
+        }
 
         // 키 누름 빛
         for (int i = 0; i < 4 && i < xs.Length; i++)
@@ -661,6 +699,13 @@ public class SimpleGameSkin : MonoBehaviour
             b.hot = EffectRenderer("HitHot" + i, NoteArt.GlowSprite, 10);
             b.hotCore = EffectRenderer("HitHotCore" + i, NoteArt.HBellSprite, 12);
             for (int k = 0; k < 3; k++) b.arrows[k] = EffectRenderer("HitArrow" + i + "_" + k, NoteArt.ArrowSprite, 9 - k);
+            b.gem = EffectRenderer("HitDragGhost" + i, NoteArt.NoteFaceSprite, 13);
+            b.gem.drawMode = SpriteDrawMode.Sliced;
+            b.zip = EffectRenderer("HitDragZip" + i, NoteArt.HBellSprite, 12);
+            b.shards[0] = EffectRenderer("HitDragHalo" + i, NoteArt.GlowSprite, 11);
+            b.shards[1] = EffectRenderer("HitDragGhostB" + i, NoteArt.NoteFaceSprite, 12);
+            b.shards[1].drawMode = SpriteDrawMode.Sliced;
+            b.shards[2] = EffectRenderer("HitDragUnused" + i, NoteArt.GlowSprite, 11);
             bursts.Add(b);
         }
 
@@ -705,8 +750,12 @@ public class SimpleGameSkin : MonoBehaviour
                 PrewarmNoteMaterials();
                 if (laneBlur != null) playfield.Register(laneBlur.ShowMaterial);
                 // LIFE 바는 레인 접기(FOLD)의 영향을 받지 않음
-                foreach (var sr in new[] { wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot })
+                foreach (var sr in new[] { wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot, wLifeFlow })
                     if (sr != null) playfield.Apply(sr, false, false);
+                // 레인 사라짐/드러남: 양쪽 실선 · 구분선은 투명해지지 않고 '위로 빨려 올라감 / 아래에서 올라옴' 으로 움직임 (UpdateLaneHide)
+                foreach (var ln in suckLines) if (ln.sr != null) playfield.Apply(ln.sr, false, false);
+                // 레인 밑에 깔린 남색 덮개(레인 배경)는 레인이 사라진 상태에서도 그대로 남음
+                if (LaneBgRenderer != null) playfield.Apply(LaneBgRenderer, false, false);
             }
         }
 
@@ -725,7 +774,7 @@ public class SimpleGameSkin : MonoBehaviour
     private const float WLifeGap = 0.26f;   // 오른쪽 벽에서 떨어진 거리
     private const float WLifeLen = 5.0f;    // 판정선에서 위로 뻗는 길이
     private const float WLifeW = 0.11f;     // 두께
-    private SpriteRenderer wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot;
+    private SpriteRenderer wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot, wLifeFlow;
     private readonly List<SpriteRenderer> wLifeTicks = new List<SpriteRenderer>();
     private float lastLaneVis;
 
@@ -739,6 +788,7 @@ public class SimpleGameSkin : MonoBehaviour
         wLifeFill = WorldPiece("LifeFill", PixelSprite, x, y, WLifeW, 0.01f, -16);
         wLifeHead = WorldPiece("LifeHead", PixelSprite, x, y, WLifeW + 0.05f, 0.035f, -14);
         wLifeFoot = WorldPiece("LifeFoot", PixelSprite, x, y, WLifeW + 0.05f, 0.035f, -14); // 아래쪽 끝 표시 (위쪽 끝선과 같은 모양, 고정)
+        wLifeFlow = WorldPiece("LifeInfiniteFlow", vBellSprite, x, y, WLifeW, 0.01f, -15);  // GAME SETTING 무한 LIFE: 흐르는 빛
     }
 
     private SpriteRenderer WorldPiece(string name, Sprite sprite, float x, float y, float w, float h, int order)
@@ -770,11 +820,19 @@ public class SimpleGameSkin : MonoBehaviour
         wLifeFrameL.enabled = wLifeFrameR.enabled = on;
         wLifeFrameL.color = wLifeFrameR.color = new Color(1f, 1f, 1f, 0.35f * vis);
 
-        Vector2 ps = PixelSprite.bounds.size;
+        bool infinite = gm.IsTestMode;
+        Sprite fillSprite = infinite ? InfiniteGradient : PixelSprite;
+        if (wLifeFill.sprite != fillSprite)
+        {
+            wLifeFill.sprite = fillSprite;
+            if (playfield != null) playfield.Apply(wLifeFill, false, false);   // 원근 재질도 새 그림에 맞춤 (LIFE 바는 사라짐 영향 없음)
+        }
+        Vector2 ps = fillSprite.bounds.size;
         wLifeFill.enabled = has;
         wLifeFill.transform.position = new Vector3(x, y + h * 0.5f, 0f);
         wLifeFill.transform.localScale = new Vector3(WLifeW / ps.x, h / ps.y, 1f);
-        wLifeFill.color = new Color(c.r, c.g, c.b, 0.9f * blink * vis);
+        // 무한 LIFE: 채움 색만 그라데이션 (아래 진한 파랑 → 위 밝은 하늘색, 색은 그림에 들어 있음)
+        wLifeFill.color = infinite ? new Color(1f, 1f, 1f, 0.9f * vis) : new Color(c.r, c.g, c.b, 0.9f * blink * vis);
 
         Vector2 gs = hBellSprite.bounds.size;
         wLifeGlow.enabled = has;
@@ -793,9 +851,87 @@ public class SimpleGameSkin : MonoBehaviour
             t.enabled = on;
             t.color = new Color(1f, 1f, 1f, 0.35f * vis);
         }
+
+        // GAME SETTING 무한 LIFE: 막대 안을 아래 → 위로 흐르는 밝은 빛 두 줄기 (막대 끝에서는 줄어들어 밖으로 안 나감)
+        if (wLifeFlow != null)
+        {
+            bool inf = false;   // (흐르는 빛 없음 — 무한 LIFE 는 채움 그라데이션만)
+            wLifeFlow.enabled = inf;
+            if (inf)
+            {
+                float len = WLifeLen * 0.22f;
+                float k = Mathf.Repeat(Time.unscaledTime * 0.35f, 1f);
+                float cy = y + Mathf.Lerp(-len * 0.5f, WLifeLen + len * 0.5f, k);
+                float y0 = Mathf.Max(y, cy - len * 0.5f), y1 = Mathf.Min(y + WLifeLen, cy + len * 0.5f);
+                float fh = Mathf.Max(0.0001f, y1 - y0);
+                Vector2 vs = vBellSprite.bounds.size;
+                wLifeFlow.transform.position = new Vector3(x, (y0 + y1) * 0.5f, 0f);
+                wLifeFlow.transform.localScale = new Vector3(WLifeW / vs.x, fh / vs.y, 1f);
+                wLifeFlow.color = new Color(0.9f, 0.98f, 1f, 0.55f * vis * Mathf.Clamp01(fh / (len * 0.5f)));
+            }
+        }
     }
 
     // 레인이 가운데에서 좌우로 펼쳐짐 (w: 0 ~ 1)
+    // =====================================================================
+    //  레인 사라짐 / 드러남 — 선이 위로 빨려 들어감 / 아래에서 올라옴
+    //   각 선의 원래 아래 끝(bottom) ~ 위 끝(top) 중 보이는 구간만 남기도록 세로 위치 · 배율만 바꿈 (가로는 그대로)
+    // =====================================================================
+    private class SuckLine { public SpriteRenderer sr; public float bottom, top, pivotY, spriteH; }
+    private readonly List<SuckLine> suckLines = new List<SuckLine>();
+
+    private void AddSuckLine(SpriteRenderer sr)
+    {
+        if (sr == null || sr.sprite == null) return;
+        Bounds sb = sr.sprite.bounds;
+        float hs = sb.size.y;
+        float py = (0f - sb.min.y) / Mathf.Max(0.0001f, hs);             // 피벗이 스프라이트 높이의 어디쯤인지 (0 아래 ~ 1 위)
+        float sy = sr.transform.localScale.y;
+        float bottom = sr.transform.position.y - py * sy * hs;
+        suckLines.Add(new SuckLine { sr = sr, bottom = bottom, top = bottom + sy * hs, pivotY = py, spriteH = hs });
+    }
+
+    private void UpdateLaneHide()
+    {
+        bool hiding;
+        float p = gm.LaneHideProgress(gm.currentPlayTime, out hiding);   // 0 ~ 1 (이벤트 시작 ~ 끝)
+        // (선 9개뿐이라 매 프레임 계산 — 레인 구분선 켜고 끄기와 순서가 꼬이지 않도록)
+
+        // 화면에서 보이는 위쪽 끝 (원근 화면은 판정선 위 12 유닛 정도, 정면 화면은 카메라 위 끝)
+        Camera cam = gm.SceneCamera;
+        float viewTop = IsDiverse ? gm.hitLineY + 12f
+                      : (cam != null && cam.orthographic ? cam.transform.position.y + cam.orthographicSize + 0.2f : gm.hitLineY + 10f);
+        foreach (var ln in suckLines)
+        {
+            if (ln.sr == null) continue;
+            float top = Mathf.Min(ln.top, Mathf.Max(viewTop, ln.bottom + 0.01f));
+            float b2, t2;
+            if (hiding)
+            {
+                // 사라짐: 아래 끝이 점점 빨라지며 위로 빨려 올라감 (ease-in)
+                float e = p * p * p;
+                b2 = Mathf.Lerp(ln.bottom, top, e);
+                t2 = p >= 1f ? b2 : ln.top;
+            }
+            else
+            {
+                // 드러남: 아래(판정선 쪽)에서 위로 쭉 올라옴 (ease-out), 다 올라오면 원래 길이로
+                float e = 1f - Mathf.Pow(1f - p, 3f);
+                b2 = ln.bottom;
+                t2 = p >= 1f ? ln.top : Mathf.Lerp(ln.bottom, top, e);
+            }
+            float len = Mathf.Max(0f, t2 - b2);
+            bool vis = len > 0.002f;
+            if (!vis) { ln.sr.enabled = false; continue; }
+            if (!laneLines.Contains(ln.sr)) ln.sr.enabled = true;          // 레인 구분선은 설정(레인 구분선 켜고 끄기)이 정함
+            Transform tr = ln.sr.transform;
+            Vector3 sc = tr.localScale;
+            tr.localScale = new Vector3(sc.x, len / Mathf.Max(0.0001f, ln.spriteH), sc.z);
+            Vector3 pos = tr.position;
+            tr.position = new Vector3(pos.x, b2 + ln.pivotY * len, pos.z);
+        }
+    }
+
     private void ApplyLaneExpand(float w)
     {
         if (Mathf.Abs(w - laneExpandApplied) < 0.0001f) return;
@@ -850,6 +986,24 @@ public class SimpleGameSkin : MonoBehaviour
         sr.sortingOrder = order;
         worldSprites.Add(new KeyValuePair<SpriteRenderer, Color>(sr, c));
         return sr;
+    }
+
+    // GAME SETTING: 레인 불투명도를 게임 중에 바로 바꿈 (레인 바탕 · 판정선 아래 어둡게)
+    public void SetLaneOpacity(float opacity)
+    {
+        opacity = Mathf.Clamp01(opacity);
+        for (int i = 0; i < worldSprites.Count; i++)
+        {
+            var kv = worldSprites[i];
+            if (kv.Key == null) continue;
+            Color c = kv.Value;
+            if (kv.Key == LaneBgRenderer) worldSprites[i] = new KeyValuePair<SpriteRenderer, Color>(kv.Key, new Color(c.r, c.g, c.b, opacity));
+            else if (kv.Key.name == "UnderLine") worldSprites[i] = new KeyValuePair<SpriteRenderer, Color>(kv.Key, new Color(c.r, c.g, c.b, 0.4f * opacity));
+        }
+        float a = worldAlpha;
+        worldAlpha = -1f;          // 다음 SetWorldAlpha 에서 다시 칠하도록
+        SetWorldAlpha(a < 0f ? 1f : a);
+        if (areaView != null) areaView.SetOpacity(opacity);
     }
 
     private void SetWorldAlpha(float a)
@@ -970,6 +1124,18 @@ public class SimpleGameSkin : MonoBehaviour
         lifeFillRt.anchorMax = Vector2.one;
         lifeFillRt.offsetMin = new Vector2(3f, 3f);
         lifeFillRt.offsetMax = new Vector2(-3f, -3f);
+        // GAME SETTING 무한 LIFE: 채움 위를 아래 → 위로 흐르는 밝은 빛 (가득 찬 막대 안에서만 보이게 마스크)
+        lifeFill.gameObject.AddComponent<RectMask2D>();
+        lifeGrad = SettingsUIKit.Img("InfiniteGradient", lifeFillRt, Color.white);   // 아래 진한 파랑 → 위 밝은 하늘색
+        lifeGrad.sprite = InfiniteGradient;
+        SettingsUIKit.Stretch(lifeGrad.rectTransform);
+        lifeGrad.enabled = false;
+        lifeFlow = SettingsUIKit.Img("InfiniteFlow", lifeFillRt, new Color(1f, 1f, 1f, 0f));
+        lifeFlow.sprite = vBellSprite;
+        lifeFlow.rectTransform.anchorMin = new Vector2(0f, 0f);
+        lifeFlow.rectTransform.anchorMax = new Vector2(1f, 0f);
+        lifeFlow.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+        lifeFlow.enabled = false;
         // SIMPLE 스킨이면 항상 LIFE 사용 (이 시점엔 아직 GameManager 에 스킨이 등록되기 전이라 gm.LifeEnabled 로 판단하면 안 됨)
         lifeRoot.gameObject.SetActive(!IsDiverse); // DIVERSE 는 레인 옆 원근 LIFE 바(UpdateWorldLife)를 씀
 
@@ -1005,12 +1171,13 @@ public class SimpleGameSkin : MonoBehaviour
         if (n == null) { Hit(lane); return; }
         bool tail = n.Type == 3 || n.Type == 13;
         int dir = n.Type == NoteTypes.ArrowRight ? 1 : n.Type == NoteTypes.ArrowLeft ? -1 : 0;
-        Hit(lane, NoteColor(n), tail ? 0.7f : 1f, dir);
+        // 드래그 노트: 일반 노트와 똑같은 이펙트, 색만 연한 노란색 (NoteColor 가 드래그 색을 줌)
+        Hit(lane, NoteColor(n), tail ? 0.7f : 1f, dir, false, false);
     }
 
     public void Hit(int lane, Color c, float power, int arrowDir = 0) { Hit(lane, c, power, arrowDir, false); }
 
-    private void Hit(int lane, Color c, float power, int arrowDir, bool mini)
+    private void Hit(int lane, Color c, float power, int arrowDir, bool mini, bool drag = false)
     {
         if (lane < 0 || lane > 3 || lane >= gm.laneXPositions.Length) return;
         Burst b = bursts.Find(x => x.t >= 1f);
@@ -1036,6 +1203,20 @@ public class SimpleGameSkin : MonoBehaviour
         b.star.transform.position = at; b.hot.transform.position = at; b.hotCore.transform.position = at;
         b.star.transform.rotation = Quaternion.identity;
         for (int k = 0; k < 3; k++) b.arrows[k].enabled = b.arrowDir != 0;
+        // 드래그 노트 효과 (히트 이펙트 '낮음'이면 파편은 생략, 보석 · 번개 줄기는 그대로)
+        b.drag = drag && !mini;
+        b.gem.enabled = b.zip.enabled = b.drag;
+        if (b.drag)
+        {
+            // 심플하게: 빛기둥 · 두 번째 충격파 · 가로 섬광 · 반짝임은 끄고 드래그 전용 효과로
+            b.beam.enabled = b.wave2.enabled = b.flare.enabled = b.star.enabled = false;
+            b.gem.transform.position = at; b.zip.transform.position = at;
+            b.shards[0].enabled = true;                                      // 빛무리
+            b.shards[1].enabled = full;                                      // 두 번째 잔상 (히트 이펙트 '낮음'이면 생략)
+            b.shards[2].enabled = false;
+            for (int k = 0; k < DragShards; k++) { b.shards[k].transform.position = at; b.shards[k].transform.rotation = Quaternion.identity; }
+        }
+        else for (int k = 0; k < DragShards; k++) b.shards[k].enabled = false;
         if (!mini) receptorPop[lane] = 1f;
     }
 
@@ -1054,14 +1235,13 @@ public class SimpleGameSkin : MonoBehaviour
 
     public void OnFastSlow(bool isFast, int ms)
     {
-        fastSlowText.text = (isFast ? "-" : "+") + ms + "ms";        // FAST 26 → -26ms,  SLOW 43 → +43ms
+        fastSlowText.SetText(isFast ? "-{0}ms" : "+{0}ms", ms);       // FAST 26 → -26ms,  SLOW 43 → +43ms (SetText: GC 없음)
         fastSlowText.color = isFast ? new Color(0.53f, 0.81f, 0.92f) : new Color(1f, 0.42f, 0.42f);
     }
 
     // =====================================================================
     //  매 프레임
     // =====================================================================
-    private bool foldWarned;
 
     // [렉 수정] 노트 그림(코드로 만드는 텍스처)과 원근 재질을 플레이 전에 미리 만들어 둠
     //  예전에는 첫 노트 · 첫 롱노트 · 영역 노트가 나오는 순간에 만들어져서 그 프레임이 끊겼다
@@ -1069,6 +1249,7 @@ public class SimpleGameSkin : MonoBehaviour
     {
         if (playfield == null) return;
         Sprite[] sprites = { NoteArt.NoteFaceSprite, NoteArt.TailCapSprite, NoteArt.LongBodySprite, NoteArt.ArrowSprite, NoteArt.GlowSprite,
+                             NoteArt.DragGemSprite, NoteArt.DragTrailSprite,
                              NoteSprite, RedNoteSprite, RedBodySprite, PixelSprite };
         foreach (var sp in sprites)
         {
@@ -1113,6 +1294,7 @@ public class SimpleGameSkin : MonoBehaviour
             ApplyFoldIfChanged(b.wave, f); ApplyFoldIfChanged(b.wave2, f); ApplyFoldIfChanged(b.flare, f);
             ApplyFoldIfChanged(b.star, f); ApplyFoldIfChanged(b.hot, f); ApplyFoldIfChanged(b.hotCore, f);
             if (b.arrowDir != 0) for (int k = 0; k < 3; k++) ApplyFoldIfChanged(b.arrows[k], f);
+            if (b.drag) { ApplyFoldIfChanged(b.gem, f); ApplyFoldIfChanged(b.zip, f); for (int k = 0; k < DragShards; k++) ApplyFoldIfChanged(b.shards[k], f); }
         }
     }
 
@@ -1154,19 +1336,20 @@ public class SimpleGameSkin : MonoBehaviour
         lastLaneVis = laneVis;
         if (laneBlur != null) laneBlur.Tick(laneVis, laneExpandApplied);
 
-        // 레인 접기 / 펼치기 (채보의 FOLD · UNFOLD, SIMPLE-DIVERSE 전용): 레인 · 노트 · 효과가 가운데로 모이며 사라짐
-        // 레인 접기는 SIMPLE-DIVERSE 원근 셰이더가 함 → 셰이더가 없으면 접히지 않는다 (원인 확인용 경고 1번)
-        if (playfield == null && !foldWarned && gm.HasLaneFolds)
+        // 레인 사라짐 / 드러남 (채보의 FOLD · UNFOLD 줄 — 예전 이름 '접기 / 펼치기')
+        //  · 양쪽 흰 실선 · 레일 · 레인 구분선: 사라질 때 위쪽으로 빨려 들어가고, 드러날 때 아래(판정선)에서 다시 올라옴
+        //  · 나머지(레인 바탕 · 판정선 · 영역 밖 노트 · 효과): 가로로 접히지 않고 같은 박자로 옅어졌다 다시 보임
+        //    (영역 안 노트 · 영역 레인 효과는 그대로 보임)
+        if (gm.HasLaneFolds)
         {
-            foldWarned = true;
-            Debug.LogWarning("[SimpleGameSkin] 채보에 FOLD/UNFOLD 가 있지만 SIMPLE-DIVERSE 원근 셰이더(Resources/Shaders/DiverseSprite.shader + DiverseProject.cginc)가 없거나 스킨이 SIMPLE-DIVERSE 가 아니라서 레인이 접히지 않습니다.");
-        }
-        if (playfield != null)
-        {
-            float fold = gm.LaneFoldAt(gm.currentPlayTime);
-            playfield.SetFold(fold, fold, laneCenterX);
-            laneHudGroup.alpha = basicVis * fold;
-            KeepAreaLaneEffects();
+            float shown = gm.LaneFoldAt(gm.currentPlayTime);
+            if (playfield != null)
+            {
+                playfield.SetFold(1f, shown, laneCenterX);       // 가로 배율 1 = 접지 않음, 투명도만
+                KeepAreaLaneEffects();
+            }
+            laneHudGroup.alpha = basicVis * shown;
+            UpdateLaneHide();
         }
         UpdateGlows(dt, laneVis);
         UpdateHold(dt, laneVis);
@@ -1319,13 +1502,66 @@ public class SimpleGameSkin : MonoBehaviour
                 }
             }
 
+            if (b.drag) UpdateDragBurst(b, t, sy, vis);
+
             if (b.t >= 1f)
             {
                 b.core.enabled = b.ring.enabled = b.beam.enabled = b.wave.enabled = false;
                 b.wave2.enabled = b.flare.enabled = b.star.enabled = b.hot.enabled = b.hotCore.enabled = false;
                 for (int k = 0; k < 3; k++) b.arrows[k].enabled = false;
+                b.gem.enabled = b.zip.enabled = false;
+                for (int k = 0; k < DragShards; k++) b.shards[k].enabled = false;
+                b.drag = false;
             }
         }
+    }
+
+    // 드래그 노트 히트 (심플 · 고급)
+    //  ① 빛 칼날: 판정선 위 아주 가는 흰 선이 가운데에서 양옆으로 빠르게 뻗고, 연노랑으로 물들며 가늘어짐
+    //  ② 빛무리: 판정선을 따라 납작하게 번지는 연노랑 빛 (부드럽게 숨 쉬듯 사라짐)
+    //  ③ 잔상: 얇은 드래그 노트 모양이 위로 미끄러지며 길어지고 옅어짐 — 두 번째 잔상은 조금 늦게, 더 옅게
+    private void UpdateDragBurst(Burst b, float t, float sy, float vis)
+    {
+        Color c = NoteArt.DragColor;
+        float y0 = gm.hitLineY;
+
+        // ① 빛 칼날 (앞쪽 40%)
+        float tz = Mathf.Clamp01(t / 0.4f), ez = 1f - Mathf.Pow(1f - tz, 4f);
+        Vector2 zsz = NoteArt.HBellSprite.bounds.size;
+        b.zip.transform.position = new Vector3(b.x, y0, 0f);
+        b.zip.transform.localScale = new Vector3(laneWidth * Mathf.Lerp(0.7f, 2.3f, ez) / zsz.x, 0.034f * sy * (1f - 0.6f * tz) / zsz.y, 1f);
+        Color zc = Color.Lerp(Color.white, c, tz);
+        b.zip.color = new Color(zc.r, zc.g, zc.b, Mathf.Pow(1f - tz, 1.3f) * vis);
+
+        // ② 빛무리 (전체 시간, 납작하게)
+        SpriteRenderer halo = b.shards[0];
+        if (halo.enabled)
+        {
+            Vector2 gsz = NoteArt.GlowSprite.bounds.size;
+            float th = t, eh = 1f - (1f - th) * (1f - th);
+            float hw = laneWidth * Mathf.Lerp(0.9f, 1.7f, eh);
+            halo.transform.position = new Vector3(b.x, y0, 0f);
+            halo.transform.localScale = new Vector3(hw / gsz.x, hw * 0.28f * sy / gsz.y, 1f);
+            halo.color = new Color(c.r, c.g, c.b, 0.55f * (1f - th) * (1f - th) * vis);
+        }
+
+        // ③ 잔상 2개
+        DragGhost(b.gem, b.x, y0, t, 0f, 1f, sy, vis, c);
+        if (b.shards[1].enabled) DragGhost(b.shards[1], b.x, y0, t, 0.12f, 0.55f, sy, vis, c);
+    }
+
+    // 얇은 노트 모양 잔상: delay 만큼 늦게 출발, 위로 0.55 유닛 미끄러지며 세로로 늘어나고 옅어짐
+    private void DragGhost(SpriteRenderer sr, float x, float y0, float t, float delay, float strength, float sy, float vis, Color c)
+    {
+        float tk = Mathf.Clamp01((t - delay) / (1f - delay));
+        float ek = 1f - Mathf.Pow(1f - tk, 3f);
+        float h = NoteHeight * NoteArt.DragHeightRatio;
+        float pad = NoteArt.NoteGlowPad * 2f;
+        sr.transform.position = new Vector3(x, y0 + 0.55f * ek * sy, 0f);
+        sr.transform.localScale = new Vector3(1f, sy, 1f);
+        sr.size = new Vector2(laneWidth * 0.95f * Mathf.Lerp(1f, 0.82f, ek) + pad, h * Mathf.Lerp(1f, 1.9f, ek) + pad);
+        Color gc = Color.Lerp(Color.white, c, 0.35f + 0.65f * tk);
+        sr.color = new Color(gc.r, gc.g, gc.b, (t < delay ? 0f : 0.85f * strength) * Mathf.Pow(1f - tk, 1.8f) * vis);
     }
 
     private void UpdateHudValues(float dt)
@@ -1336,7 +1572,7 @@ public class SimpleGameSkin : MonoBehaviour
         {
             if (combo > lastCombo && combo > 0) comboPunch = 1f;
             lastCombo = combo;
-            comboText.text = combo > 0 ? combo.ToString() : "";
+            if (combo > 0) comboText.SetText("{0}", combo); else comboText.text = "";   // SetText: 콤보마다 문자열을 만들지 않음
             comboLabel.gameObject.SetActive(combo > 0);
         }
         comboPunch = Mathf.MoveTowards(comboPunch, 0f, dt / 0.12f);
@@ -1615,8 +1851,29 @@ public class SimpleGameSkin : MonoBehaviour
                 : new Color(1f, 0.38f, 0.45f);
         float a = 1f;
         if (target <= 20f && target > 0f) a = 0.55f + 0.45f * Mathf.Abs(Mathf.Sin(Time.unscaledTime * 6f)); // 위험할 때 깜빡임
+        // GAME SETTING 무한 LIFE: 밝은 푸른색 계열이 천천히 오가는 색 + 흐르는 빛
+        bool infinite = gm.IsTestMode;
+        if (infinite)
+        {
+            // 채움 색만 그라데이션 (lifeGrad 그림) — 그 밑 기본 채움과 바깥 빛은 하늘색
+            c = new Color(0.35f, 0.75f, 1f);
+            a = 1f;
+        }
         lifeFill.color = new Color(c.r, c.g, c.b, a);
         lifeFill.enabled = shownLife > 0.05f;
+        if (lifeGrad != null) lifeGrad.enabled = infinite && lifeFill.enabled;
+        if (lifeFlow != null)
+        {
+            lifeFlow.enabled = false;   // (흐르는 빛 없음)
+            if (lifeFlow.enabled)
+            {
+                float h = lifeFillRt.rect.height;
+                float k = Mathf.Repeat(Time.unscaledTime * 0.45f, 1f);
+                lifeFlow.rectTransform.sizeDelta = new Vector2(0f, h * 0.25f);
+                lifeFlow.rectTransform.anchoredPosition = new Vector2(0f, Mathf.Lerp(-h * 0.15f, h * 1.15f, k));
+                lifeFlow.color = new Color(0.92f, 0.99f, 1f, 0.5f);
+            }
+        }
         UpdateWorldLife(shownLife, c, a);   // SIMPLE-DIVERSE 레인 옆 LIFE 바
     }
 

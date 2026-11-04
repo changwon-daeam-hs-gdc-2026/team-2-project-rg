@@ -21,12 +21,25 @@ using UnityEngine.SceneManagement;
 //      DEFAULT                 : 일반 히트 파티클(100) 아래 → 95
 //  - SIMPLE-DIVERSE 에서는 레인과 같은 원근으로 그림
 //  - 곡 종료 / FAILED 때 GameManager.EndUiAlpha 를 따라 함께 사라짐
+//  - [감소] 터치 판 · 붉은 띠 · 빛 기둥을 더 옅고 작게, 불씨 수를 줄임 (아래 상수로 조절)
 // ============================================================
 public class RedHitEffects : MonoBehaviour
 {
     private static readonly Color Red = new Color(1f, 0.24f, 0.36f, 1f);
     private static readonly Color Hot = new Color(1f, 0.82f, 0.86f, 1f);   // 불씨 처음 색 (거의 흰 분홍)
     private const float LaneW = 0.8f;
+
+    // ===== 세기 조절 (예전 값 → 지금 값) =====
+    private const float FlashAlpha = 0.55f;      // 터치 판 진하기 (0.9 → 0.55)
+    private const float FlashHeight = 0.40f;     // 터치 판 최대 높이 (0.62 → 0.40)
+    private const float BandAlpha = 0.50f;       // 퍼지는 붉은 띠 진하기 (0.85 → 0.50)
+    private const float BandHeight = 0.70f;      // 붉은 띠 최대 높이 (1.1 → 0.70)
+    private const float ColumnAlpha = 0.16f;     // 빛 기둥 진하기 (0.32 → 0.16)
+    private const float ColumnHeight = 1.5f;     // 빛 기둥 최대 높이 (2.4 → 1.5)
+    private const int TapEmbers = 6;             // 칠 때 튀는 불씨 수 (14 → 6)
+    private const float HoldBandAlpha = 0.45f;   // 홀드 중 맥박 띠 (0.75 → 0.45)
+    private const float HoldColumnAlpha = 0.08f; // 홀드 중 빛 기둥 (0.16 → 0.08)
+    private const float HoldSparkEvery = 0.08f;  // 홀드 중 불씨 간격(초) (0.035 → 0.08, 클수록 적게)
 
     private GameManager gm;
     private int order;
@@ -66,7 +79,7 @@ public class RedHitEffects : MonoBehaviour
         Span(n, out x, out w);
         Burst b = bursts.Find(o => o.t >= 1f) ?? bursts[0];
         b.t = 0f; b.x = x; b.w = w;
-        for (int i = 0; i < 14; i++) SpawnEmber(x, w, true);
+        for (int i = 0; i < TapEmbers; i++) SpawnEmber(x, w, true);
     }
 
     public void StartHold(NoteData n)
@@ -122,14 +135,14 @@ public class RedHitEffects : MonoBehaviour
             // 터치 판: 일반 노트의 네모 히트 효과처럼, 다만 노트 폭 전체를 한 장으로 (흰색 → 붉은색)
             float ft = Mathf.Clamp01(b.t * 0.32f / 0.2f);
             float fe = 1f - (1f - ft) * (1f - ft);
-            Place(b.flash, b.x, y, b.w * Mathf.Lerp(0.96f, 1.06f, fe), Mathf.Lerp(0.12f, 0.62f, fe));
+            Place(b.flash, b.x, y, b.w * Mathf.Lerp(0.96f, 1.06f, fe), Mathf.Lerp(0.12f, FlashHeight, fe));
             Color fc = Color.Lerp(Hot, Red, fe);
-            b.flash.color = new Color(fc.r, fc.g, fc.b, 0.9f * (1f - ft) * endA);
+            b.flash.color = new Color(fc.r, fc.g, fc.b, FlashAlpha * (1f - ft) * endA);
             b.flash.enabled = ft < 1f && endA > 0.001f;
-            Place(b.band, b.x, y, b.w * Mathf.Lerp(1f, 1.08f, e), Mathf.Lerp(0.18f, 1.1f, e));
-            b.band.color = new Color(Red.r, Red.g, Red.b, 0.85f * fade);
-            PlaceBottom(b.col, b.x, y, b.w, Mathf.Lerp(0.6f, 2.4f, e));
-            b.col.color = new Color(Red.r, Red.g, Red.b, 0.32f * fade);
+            Place(b.band, b.x, y, b.w * Mathf.Lerp(1f, 1.08f, e), Mathf.Lerp(0.18f, BandHeight, e));
+            b.band.color = new Color(Red.r, Red.g, Red.b, BandAlpha * fade);
+            PlaceBottom(b.col, b.x, y, b.w, Mathf.Lerp(0.5f, ColumnHeight, e));
+            b.col.color = new Color(Red.r, Red.g, Red.b, ColumnAlpha * fade);
             b.band.enabled = b.col.enabled = fade > 0.001f;
         }
 
@@ -142,14 +155,14 @@ public class RedHitEffects : MonoBehaviour
             {
                 float pulse = 0.75f + 0.25f * Mathf.Sin(clock * 16f);
                 Place(h.band, h.x, y, h.w, 0.28f + 0.14f * pulse);
-                h.band.color = new Color(Red.r, Red.g, Red.b, 0.75f * h.level * pulse * endA);
+                h.band.color = new Color(Red.r, Red.g, Red.b, HoldBandAlpha * h.level * pulse * endA);
                 PlaceBottom(h.col, h.x, y, h.w, 1.8f);
-                h.col.color = new Color(Red.r, Red.g, Red.b, 0.16f * h.level * endA);
+                h.col.color = new Color(Red.r, Red.g, Red.b, HoldColumnAlpha * h.level * endA);
             }
             if (h.on && dt > 0f)
             {
                 h.sparkTimer -= dt;
-                if (h.sparkTimer <= 0f) { h.sparkTimer = 0.035f; SpawnEmber(h.x, h.w, false); }
+                if (h.sparkTimer <= 0f) { h.sparkTimer = HoldSparkEvery; SpawnEmber(h.x, h.w, false); }
             }
         }
 
@@ -173,8 +186,8 @@ public class RedHitEffects : MonoBehaviour
         if (s == null) return;
         s.t = 0f;
         s.life = Random.Range(burst ? 0.3f : 0.35f, burst ? 0.5f : 0.6f);
-        s.rise = Random.Range(burst ? 1.2f : 0.8f, burst ? 2.6f : 1.6f);
-        s.size = Random.Range(0.04f, burst ? 0.085f : 0.065f);
+        s.rise = Random.Range(burst ? 0.9f : 0.6f, burst ? 1.8f : 1.2f);  // 덜 높이 튐
+        s.size = Random.Range(0.035f, burst ? 0.065f : 0.055f);   // 불씨 크기도 조금 작게
         s.start = new Vector3(x + Random.Range(-w * 0.48f, w * 0.48f), gm.hitLineY, 0f);
         s.sr.transform.position = s.start;
         s.sr.enabled = true;

@@ -111,13 +111,19 @@ public static class AreaHelper
 
 // 노트 종류 번호
 //  1 탭 · 2 롱노트 머리 · 3 롱노트 꼬리 · 4 마디선 · 7 화살표(>>> 밝은 파랑) · 8 화살표(<<< 밝은 노랑) · 11/12/13 RED
+//  9 드래그 노트 · 10 드래그로 시작하는 롱노트 머리 (끝은 일반 롱노트 끝 3 으로 닫음 — 몸통 · 끝은 일반 롱노트 색)
 //  화살표 노트는 판정이 탭과 똑같은 장식 노트 (주로 영역 경계에 둠)
+//  드래그 노트: 판정은 JUST PERFECT / MISS 두 가지뿐.
+//   (1) 판정선에 닿을 때 그 레인 키가 눌려 있으면 성공  또는  (2) 일반 노트처럼 판정선에 닿을 때 키를 누르면 성공
 public static class NoteTypes
 {
-    public const int Tap = 1, LongHead = 2, LongTail = 3, Measure = 4, ArrowRight = 7, ArrowLeft = 8;
+    public const int Tap = 1, LongHead = 2, LongTail = 3, Measure = 4, ArrowRight = 7, ArrowLeft = 8, Drag = 9, DragLongHead = 10;
     public static bool IsArrow(int type) { return type == ArrowRight || type == ArrowLeft; }
-    // 한 번 치고 끝나는 노트 (탭 · 화살표 · RED 탭)
-    public static bool IsTapLike(int type) { return type == Tap || type == 11 || IsArrow(type); }
+    public static bool IsDrag(int type) { return type == Drag || type == DragLongHead; }
+    // 롱노트 머리 (일반 · RED · 드래그 시작)
+    public static bool IsLongHead(int type) { return type == LongHead || type == 12 || type == DragLongHead; }
+    // 한 번 치고 끝나는 노트 (탭 · 화살표 · RED 탭 · 드래그)
+    public static bool IsTapLike(int type) { return type == Tap || type == 11 || IsArrow(type) || type == Drag; }
 }
 
 // 영역: 이 시각부터 mask 의 레인들이 영역 (mask 0 = 영역 끝). 채보: AREA, 마디, 분자, 분모, 1100
@@ -406,6 +412,7 @@ public class NoteData
 
     public bool IsRedNote = false;
     public int Width = 1; 
+    public bool DragTail = false;   // 드래그로 시작한 롱노트의 끝인지 (판정 · 색은 일반 롱노트 끝과 같음)
 
     // 층 정보 (NoteLayer.Bottom = 1층: 괄호 안 / NoteLayer.Top = 2층: 괄호 밖)
     // 기존 채보(괄호 없음)는 전부 Top(2층)으로 취급되어 동작이 바뀌지 않는다.

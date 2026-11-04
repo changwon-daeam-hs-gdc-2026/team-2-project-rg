@@ -19,6 +19,10 @@ using UnityEngine.UI;
 //  - 켜져 있을 때 GameManager.hideWhenInfoUi 에 넣은 오브젝트(기본 화면의 중복 정보 UI)는 숨김
 //  - 곡 종료 / FAILED 때 GameManager.EndUiAlpha 를 따라 함께 사라짐
 //  - 게임 씬에 붙어 있어서 씬이 바뀌면 함께 사라진다.
+//  - PRACTICE 모드(시작 시간을 바꿔 곡 중간부터 시작한 판):
+//      곡명 앞에 [⟳ PRACTICE] 배지, 점수 · 정확도 대신 [⊘ NOT SAVED] 배지 (PracticeBadge.cs)
+//  - GAME SETTING(5_Test): 곡명 자리에 GAME SETTING (작곡가 줄 · 난이도 · 남은 시간 없음),
+//      점수판(점수 · 정확도)은 숨김 — 그 자리를 조정 패널(GameSettingPanel)이 씀
 // ============================================================
 public class GameInfoHud : MonoBehaviour
 {
@@ -39,6 +43,14 @@ public class GameInfoHud : MonoBehaviour
     private float fadeIn;
     private bool hiddenApplied;
     private bool? lastShown;
+
+    // PRACTICE 모드 표시
+    private bool practiceApplied;
+    private RectTransform practiceBadge, notSavedBadge, titleTab, scoreTab;
+    private float titleOffset;          // (일반 배치) 곡명이 배지만큼 오른쪽으로 밀린 거리
+    private TextMeshProUGUI scoreLabelText, remainLabelText;
+    private RectTransform leftTab;
+    private bool testApplied;
 
     public static GameInfoHud Create(GameManager manager)
     {
@@ -132,6 +144,7 @@ public class GameInfoHud : MonoBehaviour
         remainText = Text("0:00", 40, TextAlignmentOptions.TopRight, Color.white, FontStyles.Bold, F.number);
         Place(remainText.rectTransform, new Vector2(1f, 1f), Margin, 74f, 300f, 50f);
         TextMeshProUGUI remainLabel = Text("REMAINING", 15, TextAlignmentOptions.TopRight, TextSub, FontStyles.Normal, F.label);
+        remainLabelText = remainLabel;
         remainLabel.characterSpacing = 8f;
         Place(remainLabel.rectTransform, new Vector2(1f, 1f), Margin, 124f, 300f, 22f);
         timeText = Text("0:00 / 0:00", 18, TextAlignmentOptions.TopRight, TextSub, FontStyles.Normal, F.info);
@@ -140,6 +153,7 @@ public class GameInfoHud : MonoBehaviour
         // ---- 오른쪽 아래: 점수 / 정확도 ----
         TextMeshProUGUI scoreLabel = Text("SCORE", 15, TextAlignmentOptions.BottomRight, TextSub, FontStyles.Normal, F.label);
         scoreLabel.characterSpacing = 8f;
+        scoreLabelText = scoreLabel;
         Place(scoreLabel.rectTransform, new Vector2(1f, 0f), Margin, 122f, 400f, 22f);
         scoreText = Text("0", 44, TextAlignmentOptions.BottomRight, Color.white, FontStyles.Bold, F.number);
         Place(scoreText.rectTransform, new Vector2(1f, 0f), Margin, 62f, 500f, 60f);
@@ -169,6 +183,8 @@ public class GameInfoHud : MonoBehaviour
         // 일시정지 중에는 일시정지 UI 캔버스보다 아래, 플레이 중에는 게임 UI 위
         hostCanvas.sortingOrder = gm.currentState == GameState.Paused ? refSortingOrder - 1 : refSortingOrder + 1;
 
+        if (!testApplied && gm.IsTestMode) ApplyTestMode();
+        if (!practiceApplied && gm.IsMidStart) ApplyPractice();
         if (group.alpha <= 0.001f) return;
 
         double start, end;
@@ -179,8 +195,11 @@ public class GameInfoHud : MonoBehaviour
         if (remainText != null) remainText.text = FormatTime(total - elapsed);
         if (timeText != null) timeText.text = (diverse ? "-" + FormatTime(total - elapsed) + "<color=#FFFFFF59>   /   " + FormatTime(total) + "</color>"
                                                        : FormatTime(elapsed) + " / " + FormatTime(total));
-        scoreText.text = gm.LiveScore.ToString("N0", CultureInfo.InvariantCulture);
-        accText.text = gm.LiveAccuracy.ToString("F2", CultureInfo.InvariantCulture) + "%";
+        if (!practiceApplied && !testApplied)
+        {
+            scoreText.text = gm.LiveScore.ToString("N0", CultureInfo.InvariantCulture);
+            accText.text = gm.LiveAccuracy.ToString("F2", CultureInfo.InvariantCulture) + "%";
+        }
 
         if (!diverse) LimitHeaderWidth();
     }
@@ -213,6 +232,7 @@ public class GameInfoHud : MonoBehaviour
 
         // ---- 왼쪽 탭: 난이도 + 배속 ----
         Image lt = Tab(tabLeft, dark, new Vector2(0f, 1f), 0f, 440f, BandH);
+        leftTab = lt.rectTransform;
         diffText = Text(DifficultyLabel(song, level), 26, TextAlignmentOptions.MidlineLeft, Color.white, FontStyles.Bold, F.info);
         diffText.transform.SetParent(lt.transform, false);
         Place(diffText.rectTransform, new Vector2(0f, 1f), 44f, 0f, 220f, BandH);
@@ -231,6 +251,7 @@ public class GameInfoHud : MonoBehaviour
 
         // ---- 가운데 탭: 곡 제목 + 진행 막대 ----
         Image ct = Tab(tabCenter, dark, new Vector2(0.5f, 1f), 0f, 760f, BandH + 10f);
+        titleTab = ct.rectTransform;
         titleText = Text(song != null ? (song.Name ?? "") + (song.SubName ?? "") : "", 28, TextAlignmentOptions.Center, Color.white, FontStyles.Bold, F.title);
         titleText.transform.SetParent(ct.transform, false);
         Place(titleText.rectTransform, new Vector2(0.5f, 1f), 0f, 6f, 600f, 40f);
@@ -247,6 +268,7 @@ public class GameInfoHud : MonoBehaviour
 
         // ---- 오른쪽 탭: SCORE + 점수 ----
         Image rt = Tab(tabRight, dark, new Vector2(1f, 1f), 0f, 520f, BandH);
+        scoreTab = rt.rectTransform;
         TextMeshProUGUI sl = Text("SCORE", 15, TextAlignmentOptions.MidlineLeft, TextSub, FontStyles.Bold, F.label);
         sl.characterSpacing = 10f;
         sl.transform.SetParent(rt.transform, false);
@@ -256,6 +278,86 @@ public class GameInfoHud : MonoBehaviour
         Place(scoreText.rectTransform, new Vector2(1f, 1f), 44f, 0f, 300f, BandH);
         accText = Text("100.00%", 20, TextAlignmentOptions.TopRight, Color.white, FontStyles.Bold, F.number);
         Place(accText.rectTransform, new Vector2(1f, 1f), 44f, BandH + 12f, 300f, 30f);
+    }
+
+    // =====================================================================
+    //  GAME SETTING (5_Test): 제목 · 난이도 · 곡 이름 표기, 점수판 숨김
+    // =====================================================================
+    private void ApplyTestMode()
+    {
+        testApplied = true;
+        SongData song = CoreManager.Instance != null ? CoreManager.Instance.CurrentSongData : null;
+        titleText.text = "GAME SETTING";
+        if (composerText != null) composerText.gameObject.SetActive(false);   // 작곡가 줄은 표시하지 않음
+        // 난이도 · 남은 시간 표시는 없앰 (왼쪽 난이도 탭 · 시간 줄 · REMAINING)
+        if (diffText != null) diffText.gameObject.SetActive(false);
+        if (leftTab != null) leftTab.gameObject.SetActive(false);
+        if (timeText != null) timeText.gameObject.SetActive(false);
+        if (remainText != null) remainText.gameObject.SetActive(false);
+        if (remainLabelText != null) remainLabelText.gameObject.SetActive(false);
+        scoreText.gameObject.SetActive(false);
+        accText.gameObject.SetActive(false);
+        if (scoreLabelText != null) scoreLabelText.gameObject.SetActive(false);
+        if (scoreTab != null) scoreTab.gameObject.SetActive(false);
+    }
+
+    // =====================================================================
+    //  PRACTICE 모드: 곡명 앞 [PRACTICE] 배지, 점수 · 정확도 대신 [NOT SAVED] 배지
+    // =====================================================================
+    private void ApplyPractice()
+    {
+        practiceApplied = true;
+        SimpleSkinFonts F = gm.simpleSkinFonts ?? new SimpleSkinFonts();
+        TMP_FontAsset lf = F.label;
+
+        // 점수 · 정확도 숨기고 NOT SAVED
+        scoreText.gameObject.SetActive(false);
+        accText.gameObject.SetActive(false);
+        if (diverse)
+        {
+            notSavedBadge = PracticeBadge.NotSaved(scoreTab, 32f, lf);
+            notSavedBadge.anchorMin = notSavedBadge.anchorMax = new Vector2(1f, 0.5f);
+            notSavedBadge.pivot = new Vector2(1f, 0.5f);
+            notSavedBadge.anchoredPosition = new Vector2(-44f, 0f);
+        }
+        else
+        {
+            notSavedBadge = PracticeBadge.NotSaved(hudRoot, 38f, lf);
+            notSavedBadge.anchorMin = notSavedBadge.anchorMax = new Vector2(1f, 0f);
+            notSavedBadge.pivot = new Vector2(1f, 0f);
+            notSavedBadge.anchoredPosition = new Vector2(-Margin, 70f);
+        }
+
+        // 곡명 앞 PRACTICE
+        string title = titleText.text;
+        if (diverse)
+        {
+            // 가운데 탭: [배지 + 곡명] 묶음이 가운데 오도록
+            practiceBadge = PracticeBadge.Practice(titleTab, 30f, lf);
+            float bw = practiceBadge.sizeDelta.x, gap = 12f;
+            float tw = Mathf.Min(titleText.GetPreferredValues(title).x + 4f, 600f - bw - gap);
+            float total = bw + gap + tw;
+            practiceBadge.anchorMin = practiceBadge.anchorMax = new Vector2(0.5f, 1f);
+            practiceBadge.pivot = new Vector2(0f, 0.5f);
+            practiceBadge.anchoredPosition = new Vector2(-total * 0.5f, -(6f + 20f));
+            RectTransform tr = titleText.rectTransform;
+            tr.pivot = new Vector2(0f, 1f);
+            tr.anchoredPosition = new Vector2(-total * 0.5f + bw + gap, -6f);
+            tr.sizeDelta = new Vector2(tw, tr.sizeDelta.y);
+            titleText.alignment = TextAlignmentOptions.MidlineLeft;
+        }
+        else
+        {
+            practiceBadge = PracticeBadge.Practice(hudRoot, 34f, lf);
+            practiceBadge.anchorMin = practiceBadge.anchorMax = new Vector2(0f, 1f);
+            practiceBadge.pivot = new Vector2(0f, 0.5f);
+            practiceBadge.anchoredPosition = new Vector2(Margin, -(28f + 23f));
+            titleOffset = practiceBadge.sizeDelta.x + 14f;
+            RectTransform tr = titleText.rectTransform;
+            tr.anchoredPosition = new Vector2(Margin + titleOffset, tr.anchoredPosition.y);
+            tr.sizeDelta = new Vector2(Mathf.Max(80f, tr.sizeDelta.x - titleOffset), tr.sizeDelta.y);
+            leftW = -1f;     // 폭 제한 다시 계산
+        }
     }
 
     // 맨 위에 붙는 탭 판 (Sliced, 비스듬한 옆면은 늘어나지 않는 테두리 안에 있음)
@@ -344,7 +446,7 @@ public class GameInfoHud : MonoBehaviour
             if (Mathf.Abs(w - leftW) > 0.5f)
             {
                 leftW = w;
-                titleText.rectTransform.sizeDelta = new Vector2(w, titleText.rectTransform.sizeDelta.y);
+                titleText.rectTransform.sizeDelta = new Vector2(Mathf.Max(80f, w - titleOffset), titleText.rectTransform.sizeDelta.y);
                 composerText.rectTransform.sizeDelta = new Vector2(w, composerText.rectTransform.sizeDelta.y);
             }
         }

@@ -55,12 +55,18 @@ public class AreaLaneView : MonoBehaviour
         return view;
     }
 
+    // GAME SETTING: 레인 불투명도 바로 반영
+    public void SetOpacity(float opacity)
+    {
+        bgColor = new Color(bgColor.r, bgColor.g, bgColor.b, Mathf.Clamp01(opacity));
+    }
+
     private void Build()
     {
         float opacity = Mathf.Clamp01(SettingsStore.Current.LaneOpacity);
         bgColor = skin.IsDiverse ? new Color(0.03f, 0.04f, 0.075f, opacity) : new Color(0.035f, 0.045f, 0.07f, opacity);
         Texture white = skin.PixelSprite.texture;
-        bg = MakeLayer("AreaLaneBg", white, -20, true);                                   // 일반 레인 배경: 접힘
+        bg = MakeLayer("AreaLaneBg", white, -20, false);                                  // 일반 레인 배경(남색 덮개): 레인이 사라져도 그대로 남음
         areaBg = MakeLayer("AreaDarkBg", white, -20, false);                              // 영역: 접히지 않음
         stripe = MakeLayer("AreaStripes", NoteArt.AreaStripeSprite.texture, -19, false);
         edge = MakeLayer("AreaEdges", white, -18, false);

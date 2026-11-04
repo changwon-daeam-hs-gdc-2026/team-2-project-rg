@@ -21,6 +21,8 @@ public static class SettingsUIKit
     public static readonly Color PanelColor = new Color(0.035f, 0.035f, 0.035f, 0.97f);
     public static readonly Color PanelSolid = new Color(0.03f, 0.03f, 0.03f, 1f);
     public static readonly Color RowColor = new Color(1f, 1f, 1f, 0.04f);
+    public static readonly Color RowSelected = new Color(1f, 1f, 1f, 0.10f);           // 방향키 · 마우스로 고른 줄
+    public static readonly Color TextDim = new Color(0.38f, 0.38f, 0.38f, 1f);         // 구역 제목 등 아주 옅은 글자
     public static readonly Color ButtonColor = new Color(1f, 1f, 1f, 0.08f);
     public static readonly Color FastColor = new Color(0.53f, 0.81f, 0.92f, 1f);
     public static readonly Color SlowColor = new Color(1f, 0.35f, 0.35f, 1f);
@@ -152,6 +154,38 @@ public static class SettingsUIKit
         cb.fadeDuration = 0.06f;
         s.colors = cb;
         return s;
+    }
+
+    // 둥근 모서리용 원 (지름 64, 9-slice 테두리 32) — Image.pixelsPerUnitMultiplier = 32 / 반지름(px) 로 모서리 크기 조절
+    private static Sprite round;
+    public static Sprite RoundSprite
+    {
+        get
+        {
+            if (round != null) return round;
+            const int C = 64;
+            Texture2D tex = new Texture2D(C, C, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            Color32[] px = new Color32[C * C];
+            for (int y = 0; y < C; y++)
+                for (int x = 0; x < C; x++)
+                {
+                    float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(C * 0.5f, C * 0.5f));
+                    px[y * C + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(C * 0.5f - d + 0.5f) * 255));
+                }
+            tex.SetPixels32(px); tex.Apply();
+            round = Sprite.Create(tex, new Rect(0, 0, C, C), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(C / 2, C / 2, C / 2, C / 2));
+            round.name = "SettingsRound";
+            return round;
+        }
+    }
+
+    // 이미지를 반지름 radius(px) 의 둥근 사각형으로
+    public static void Rounded(Image img, float radius)
+    {
+        img.sprite = RoundSprite;
+        img.type = Image.Type.Sliced;
+        img.pixelsPerUnitMultiplier = 32f / Mathf.Max(1f, radius);
     }
 
     public static LayoutElement Fixed(GameObject go, float height)

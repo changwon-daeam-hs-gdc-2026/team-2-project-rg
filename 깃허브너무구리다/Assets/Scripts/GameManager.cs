@@ -419,6 +419,8 @@ public class GameManager : MonoBehaviour
     void Start() 
     { 
         mainCam = FindSceneCamera();
+        // GAME SETTING (5_Test 씬): 실제 채보로 맞추는 연습 공간 — 무한 반복 · FAILED/결과창 없음 · 조정 패널
+        IsTestMode = GameSettingSession.Active;
         currentSong = CoreManager.Instance.CurrentSongData;
         if (SongIntroOverlay.PreferredTitleFont == null && loadingTitleText != null) SongIntroOverlay.PreferredTitleFont = loadingTitleText.font;
         hitSoundClip = Resources.Load<AudioClip>("Audio/etc/hitsound"); 
@@ -445,6 +447,11 @@ public class GameManager : MonoBehaviour
         if (GameSkins.UsesSimpleSkin(skinId)) simpleSkin = SimpleGameSkin.Create(this, skinId == GameSkins.Diverse);
         redFx = RedHitEffects.Create(this);  // RED 노트 전용 탭 / 롱노트 홀드 이펙트 (일반 이펙트 아래)
         infoHud = GameInfoHud.Create(this); // 곡 정보 · 난이도 · 시간 · 점수 · 배속 · 진행 막대 (모든 GAME UI 공통, 설정 > INFORMATION UI)
+        if (IsTestMode)
+        {
+            GameSettingPanel panel = GameSettingPanel.Create(this);   // 왼쪽 · 오른쪽 조정 패널 (마우스 조작)
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(panel.gameObject, gameObject.scene);
+        }
         if (bgmSource != null) bgmSource.volume = SettingsStore.MusicVolume; // 설정 > SOUND
 
         StartCoroutine(StartGameSetupRoutine());
@@ -991,11 +998,12 @@ public class GameManager : MonoBehaviour
                 // AREA, 마디, 분자, 분모, 1100  (영역 레인 / 0000 = 영역 끝)
                 areaEvents.Add(new AreaEvent { Time = exactTime, Mask = AreaMask.Parse(e.Value) });
             }
-            else if (e.Type == "FOLD" || e.Type == "UNFOLD") {
-                // FOLD / UNFOLD, 마디, 분자, 분모, 초 (완전히 접히는/펼쳐지는 데 걸리는 시간)
+            else if (e.Type == "FOLD" || e.Type == "UNFOLD" || e.Type == "HIDE" || e.Type == "SHOW") {
+                // 레인 사라짐 / 드러남: FOLD(=HIDE) / UNFOLD(=SHOW), 마디, 분자, 분모, 초 (다 사라지는/드러나는 데 걸리는 시간)
+                //  (예전 이름 '접기 / 펼치기' 의 FOLD · UNFOLD 를 그대로 씀. HIDE · SHOW 로 써도 같음)
                 double dur;
                 if (!double.TryParse(e.Value.Split(',')[0].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out dur)) dur = 0.5;
-                laneFoldEvents.Add(new LaneFoldEvent { Time = exactTime, Fold = e.Type == "FOLD", Duration = Math.Max(0.0, dur) });
+                laneFoldEvents.Add(new LaneFoldEvent { Time = exactTime, Fold = e.Type == "FOLD" || e.Type == "HIDE", Duration = Math.Max(0.0, dur) });
             }
             else if (e.Type == "NOTE") {
                 string[] lanesData = e.Value.Split(',');
@@ -1026,7 +1034,7 @@ public class GameManager : MonoBehaviour
         areaEvents.Sort((a, b) => a.Time.CompareTo(b.Time));
         laneFoldEvents.Sort((a, b) => a.Time.CompareTo(b.Time));
         if (laneFoldEvents.Count > 0)
-            Debug.Log($"[Chart] 레인 접기/펼치기 {laneFoldEvents.Count}개 (첫 이벤트 {laneFoldEvents[0].Time:0.000}s, {(laneFoldEvents[0].Fold ? "FOLD" : "UNFOLD")})");
+            Debug.Log($"[Chart] 레인 사라짐/드러남 {laneFoldEvents.Count}개 (첫 이벤트 {laneFoldEvents[0].Time:0.000}s, {(laneFoldEvents[0].Fold ? "사라짐" : "드러남")})");
         notes = notes.OrderBy(n => n.HitTime).ToList();
         for (int i = 0; i < 4; i++) notesByLane[i] = notesByLane[i].OrderBy(n => n.HitTime).ThenByDescending(n => n.Layer).ToList();
 
@@ -1063,9 +1071,12 @@ public class GameManager : MonoBehaviour
                 if (note.Lane != lane) continue;   // 넓은 노트(RED · 넓은 일반)는 기준 레인에서만 연결
                 int ly = Mathf.Clamp(note.Layer, 1, 2);
 
-                if (note.Type == 2 || note.Type == 12) lastLinkNode[ly] = note;
+                if (NoteTypes.IsLongHead(note.Type)) lastLinkNode[ly] = note;
                 else if ((note.Type == 3 || note.Type == 13) && lastLinkNode[ly] != null) {
-                    if (lastLinkNode[ly].IsRedNote == note.IsRedNote) { lastLinkNode[ly].NextLongNote = note; longHeadOf[note] = lastLinkNode[ly]; }
+                    if (lastLinkNode[ly].IsRedNote == note.IsRedNote) {
+                        lastLinkNode[ly].NextLongNote = note; longHeadOf[note] = lastLinkNode[ly];
+                        note.DragTail = lastLinkNode[ly].Type == NoteTypes.DragLongHead;   // 드래그로 시작한 롱노트의 끝 (표시용 정보, 판정 · 색은 일반 끝과 같음)
+                    }
                     lastLinkNode[ly] = null;
                 }
             }
@@ -1081,7 +1092,7 @@ public class GameManager : MonoBehaviour
             if (n.HitTime > chartLastTime) chartLastTime = n.HitTime;
             if (IsJudgableNote(n) && n.HitTime > chartJudgeEndTime) chartJudgeEndTime = n.HitTime; // 판정이 있는 마지막 노트 (꼬리 포함)
             if (NoteTypes.IsTapLike(n.Type)) chartNoteCount++;
-            else if (n.Type == 2 || n.Type == 12) {
+            else if (NoteTypes.IsLongHead(n.Type)) {
                 chartNoteCount += (n.NextLongNote != null) ? 2 : 1;
                 if (n.NextLongNote != null) chartTickCount += CountLongNoteTicks(n);
             }
@@ -1173,7 +1184,7 @@ public class GameManager : MonoBehaviour
         IsMidStart = false;
         MidStartSeconds = 0.0;
         double s = SettingsStore.Current.StartTime;
-        if (s <= 0.0) return;
+        if (s <= 0.0 || IsTestMode) return;     // GAME SETTING 에서는 시작 시간 설정을 쓰지 않음 (처음부터 반복)
         AudioClip clip = bgmSource != null ? bgmSource.clip : null;
         if (clip != null && s >= clip.length - 0.5)
         {
@@ -1261,7 +1272,21 @@ public class GameManager : MonoBehaviour
 
     public bool HasLaneFolds { get { return laneFoldEvents.Count > 0; } }
 
-    // 레인 펼침 정도 (1 = 다 펼침, 0 = 다 접힘)
+    // 레인 사라짐 / 드러남 진행도 (선이 빨려 들어가는 / 올라오는 모션용)
+    //  반환: 0 ~ 1 (마지막 이벤트 시작 ~ 끝), hiding = 마지막 이벤트가 '사라짐'(FOLD) 인가
+    //  이벤트가 아직 없으면 1, false (= 다 보임)
+    public float LaneHideProgress(double t, out bool hiding)
+    {
+        LaneFoldEvent last = null;
+        for (int i = 0; i < laneFoldEvents.Count && laneFoldEvents[i].Time <= t + 1e-9; i++) last = laneFoldEvents[i];
+        hiding = last != null && last.Fold;
+        if (last == null) return 1f;
+        double p = last.Duration <= 1e-6 ? 1.0 : (t - last.Time) / last.Duration;
+        return Mathf.Clamp01((float)p);
+    }
+
+    // 레인 보임 정도 (1 = 다 보임, 0 = 다 사라짐) — 예전 이름은 '펼침 정도'
+
     public float LaneFoldAt(double t)
     {
         LaneFoldEvent last = null;
@@ -1379,6 +1404,113 @@ public class GameManager : MonoBehaviour
     // ALL PERFECT / FULL COMBO / TRACK COMPLETE / FAILED 연출 중이거나 결과창으로 넘어가는 중이면 일시정지 불가
     public bool CanPause { get { return currentState == GameState.Playing && !clearEffectPlaying && !isFailed && !finishRoutineStarted && !isLeaving; } }
 
+    // =====================================================================
+    //  GAME SETTING (5_Test) — 테스트 모드 전용
+    // =====================================================================
+    public bool IsTestMode { get; private set; }
+    public int TestLoopCount { get; private set; }
+    // 자동 플레이: 테스트 모드에서는 패널의 AUTO PLAY, 그 밖에는 곡 선택창의 오토플레이
+    public bool AutoPlayNow { get { return IsTestMode ? GameSettingSession.AutoPlay : CoreManager.Instance.IsAutoPlay; } }
+
+    // 노트 속도를 바꾸면 증가 → 이미 내려오고 있는 노트(NoteObject)가 자기 위치 기준을 다시 계산
+    public static int ScrollVersion { get; private set; }
+    public void NotifyScrollChanged() { ScrollVersion++; UpdateCurrentScrollDist(); }
+
+    // 오디오 오프셋을 바꾼 즉시 음악 위치를 새 기준으로 다시 예약 (테스트 패널에서 실시간 반영)
+    public void ApplyAudioOffsetLive()
+    {
+        if (currentState != GameState.Playing || isFailed) return;
+        if (musicScheduled) ScheduleMusic(currentPlayTime);
+        if (!isFullMusicStarted && currentPlayTime >= TriggerTime) OnMusicStarted(currentPlayTime - TriggerTime);
+    }
+
+    // 판정 그래프 켜고 끄기 (게임 중에도 바로)
+    public void SetHitErrorMeter(bool on)
+    {
+        if (on && hitErrorMeter == null)
+        {
+            hitErrorMeter = HitErrorMeter.Create(this, W_EXCELLENT, W_GREAT, W_GOOD, W_BAD);
+            UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(hitErrorMeter.gameObject, gameObject.scene);
+        }
+        else if (!on && hitErrorMeter != null) { Destroy(hitErrorMeter.gameObject); hitErrorMeter = null; }
+    }
+
+    // 이번 반복의 판정 수 [PERFECT, GREAT, GOOD, BAD, MISS] · 콤보
+    public void GetJudgeCounts(int[] five)
+    {
+        five[0] = cntExcellent; five[1] = cntGreat; five[2] = cntGood; five[3] = cntBad; five[4] = cntMiss;
+    }
+    public int MaxComboNow { get { return maxCombo; } }
+
+    // 최근 n 개 판정의 평균 오차 (ms, FAST -, SLOW +)
+    //  [버그 수정] 예전에는 '이번 반복의 모든 오차'로 계산해서
+    //   ① 오프셋을 바꾼(반영한) 뒤에도 바꾸기 전 오차가 섞여 추천값이 계속 바뀌고 → 다시 반영하면 과하게 옮겨져 판정이 더 튀었다
+    //   ② 오토 플레이 · 드래그 노트(항상 0ms) · 롱노트 끝(손 뗀 시각)까지 섞여 값이 흔들렸다
+    //  지금: 직접 친 탭 · 롱노트 시작의 오차만, 마지막으로 오프셋을 바꾼 뒤부터 모음 (ResetCalibration)
+    //        평균은 위아래 15% 를 뺀 평균 (한두 번 크게 빗나간 타격에 흔들리지 않게)
+    private readonly List<float> calibErrors = new List<float>();
+    public void ResetCalibration() { calibErrors.Clear(); }
+
+    public float RecentAverageErrorMs(int n, out int count)
+    {
+        count = Mathf.Min(n, calibErrors.Count);
+        if (count == 0) return 0f;
+        var buf = new List<float>(count);
+        for (int i = calibErrors.Count - count; i < calibErrors.Count; i++) buf.Add(calibErrors[i]);
+        buf.Sort();
+        int cut = count >= 10 ? Mathf.FloorToInt(count * 0.15f) : 0;
+        double sum = 0; int m = 0;
+        for (int i = cut; i < count - cut; i++) { sum += buf[i]; m++; }
+        return m > 0 ? (float)(sum / m) : 0f;
+    }
+
+    // 채보 · 음악을 처음부터 다시 (노트 · 판정 · 콤보 · LIFE 초기화, 채보는 다시 읽지 않음)
+    public void RestartTestLoop()
+    {
+        for (int i = 0; i < 4; i++) StopHoldEffect(i);
+        if (redFx != null) redFx.StopAll();
+        if (bgmSource != null) bgmSource.Stop();
+
+        foreach (var obj in noteObjectDict.Values.ToList()) ReturnNoteToPool(obj);
+        noteObjectDict.Clear();
+        for (int i = 0; i < 8; i++) activeLongNote[i] = null;
+        foreach (var ml in activeMeasureLines) { ml.go.SetActive(false); measureLinePool.Enqueue(ml.go); }
+        activeMeasureLines.Clear();
+        foreach (var n in notes) n.IsHit = false;
+
+        layerSpawnIndex[1] = 0; layerSpawnIndex[2] = 0;
+        for (int i = 0; i < 4; i++) laneStartIndex[i] = 0;
+        measureSpawnIndex = 0;
+        chartEndCursor = 0;
+
+        // 판정 기록 (채보 정보 · 전체 노트 수는 그대로)
+        processedNotes = 0; currentCombo = 0; maxCombo = 0; currentAccSum = 0; accPoints = 0; accNotes = 0; cntJust = 0;
+        cntExcellent = cntGreat = cntGood = cntBad = cntMiss = 0;
+        errorSumMs = 0; timedCount = 0; comboSum = 0; life = 100.0; fastCount = slowCount = 0;
+        recProgress.Clear(); recJudge.Clear(); recLife.Clear(); recErrors.Clear();
+        finishHoldTimer = 0f; clearChecked = false; endUiAlpha = 1f;
+        UpdateUI();
+
+        // 시작 위치: 첫 노트가 화면 위쪽 바깥에서 나타나 자연스럽게 내려오도록 (한꺼번에 화면 중간에 툭 나타나지 않게)
+        //  - 첫 노트까지의 스크롤 거리가 '보이는 거리'(노트 생성 기준)를 넘는 시각까지 거슬러 올라가서 시작
+        //  - 음악 예약 여유보다도 앞이어야 함
+        isFullMusicStarted = false;
+        musicScheduled = false;
+        double firstNote = notes.Count > 0 ? notes[0].HitTime : 0.0;
+        double t0 = firstNote - 0.5;
+        for (int i = 0; i < 400; i++)
+        {
+            int ly = notes.Count > 0 ? notes[0].Layer : NoteLayer.Top;
+            if (GetScrollDistance(firstNote, ly) - GetScrollDistance(t0, ly) > 2000.0 + 50.0 && firstNote - t0 > 0.6) break;
+            t0 -= 0.05;
+        }
+        t0 = Math.Min(t0, firstNote - SPAWN_LOOKAHEAD - 0.05);   // 시간 기준 생성 범위(SPAWN_LOOKAHEAD) 밖에서도 시작
+        playStartTime = Math.Min(TriggerTime - musicScheduleLead - 0.05, t0);
+        currentPlayTime = playStartTime;
+        UpdateCurrentScrollDist();
+        TestLoopCount++;
+    }
+
     public void PauseGame()
     {
         if (!CanPause) return;
@@ -1492,6 +1624,14 @@ public class GameManager : MonoBehaviour
     public void RetryGame()
     {
         if (isLeaving) return;
+        if (IsTestMode)
+        {
+            // GAME SETTING: 씬을 다시 불러오지 않고 그 자리에서 처음부터
+            HidePauseUIImmediate();
+            RestartTestLoop();
+            currentState = GameState.Playing;
+            return;
+        }
         StartCoroutine(RetryRoutine());
     }
 
@@ -1507,12 +1647,11 @@ public class GameManager : MonoBehaviour
         if (bgmSource != null) bgmSource.Stop();
         if (mvPlayer != null) mvPlayer.Stop();
 
-        // 게임에 들어올 때와 같은 전환(곡 정보 화면이 덮은 뒤 씬 이동). 곡 선택 씬이 준비되면 걷힘 (SongSelectManager)
-        if (currentSong != null && !SongIntroOverlay.IsActive)
+        // 게임에 들어올 때의 '검은 막'만 따라함 (곡 정보 · 로딩 표시 없이): 막이 덮은 뒤 씬 이동, 곡 선택 씬이 준비되면 걷힘
+        if (!CurtainTransition.IsActive && !SongIntroOverlay.IsActive)
         {
-            int lv = CoreManager.Instance.CurrentLevelId;
             HidePauseUIImmediate();
-            SongIntroOverlay.Show(currentSong, lv, true, () => CoreManager.Instance.LoadSongSelectScene());
+            CurtainTransition.Play(() => CoreManager.Instance.LoadSongSelectScene());
             yield break;
         }
         
@@ -1555,7 +1694,8 @@ public class GameManager : MonoBehaviour
         var kb = Keyboard.current;
         if (kb != null && kb[Key.Escape].wasPressedThisFrame)
         {
-            if (currentState == GameState.Playing && !isFailed) PauseGame();
+            // GAME SETTING: 일시정지 없음 (패널의 [처음부터] · [나가기] 를 씀)
+            if (currentState == GameState.Playing && !isFailed && !IsTestMode) PauseGame();
         }
 
         if (currentState != GameState.Playing) 
@@ -1700,7 +1840,7 @@ public class GameManager : MonoBehaviour
 
         if (currentState == GameState.Playing && !isFailed)
         {
-            if (CoreManager.Instance.IsAutoPlay) HandleAutoPlay(currentPlayTime);
+            if (AutoPlayNow) HandleAutoPlay(currentPlayTime);
             else HandleInputs(currentPlayTime);
         }
 
@@ -1855,12 +1995,9 @@ public class GameManager : MonoBehaviour
                     bool isNormalNote = NoteTypes.IsTapLike(n.Type);
                     bool isTail = (n.Type == 3 || n.Type == 13);
                     
-                    if (isNormalNote) {
-                        double randomDiff = (UnityEngine.Random.Range(-30f, 30f)) / 1000.0;
-                        ApplyJudgment(randomDiff);
-                    } else {
-                        ProcessHit("EXCELLENT", 0.0, true);
-                    }
+                    // AUTO PLAY: 들쑥날쑥하지 않고 모든 노트를 정확히 0ms 로 판정
+                    if (isNormalNote) ApplyJudgment(0.0);
+                    else ProcessHit("EXCELLENT", 0.0, true);
                     
                     if (n.IsRedNote) {
                         // RED 노트: 레인별 일반 히트 효과 대신 노트 폭만큼의 RED 전용 효과 하나
@@ -1877,7 +2014,7 @@ public class GameManager : MonoBehaviour
                         }
                     }
 
-                    if (n.Type == 2 || n.Type == 12)
+                    if (NoteTypes.IsLongHead(n.Type))
                     {
                         RegisterActiveLongNote(n, GetTickInterval(n.HitTime));
                     }
@@ -1979,6 +2116,9 @@ public class GameManager : MonoBehaviour
                 if (LaneNeedsHoldEffect(i)) StartHoldEffect(i);
             }
         }
+
+        // 드래그 노트 (1): 판정선에 닿을 때 그 레인 키가 눌려 있으면 성공
+        CheckDragHolds(T_sys - SettingsStore.JudgeDelay);
         
         for (int s = 0; s < 8; s++)
         {
@@ -2071,8 +2211,8 @@ public class GameManager : MonoBehaviour
     private void EvaluateHit(int lane, double hitTimestamp) 
     {
         double adjustedHitTime = hitTimestamp - SettingsStore.JudgeDelay;
-        NoteData targetNote = null;
-        double minAbsDiff = double.MaxValue;
+        NoteData targetNote = null, dragNote = null;
+        double minAbsDiff = double.MaxValue, dragAbsDiff = double.MaxValue;
         int startIndex = laneStartIndex[lane];
         var currentLaneNotes = notesByLane[lane];
 
@@ -2084,7 +2224,7 @@ public class GameManager : MonoBehaviour
                 if (i == laneStartIndex[lane]) laneStartIndex[lane]++;
                 continue;
             }
-            if (!NoteTypes.IsTapLike(n.Type) && n.Type != 2 && n.Type != 12) continue;
+            if (!NoteTypes.IsTapLike(n.Type) && !NoteTypes.IsLongHead(n.Type)) continue;
             // 영역 채보: 판정 범위 동안 영역이었던 레인의 키로만 칠 수 있음
             if (!AreaAllowsLane(lane, n.HitTime)) continue;
 
@@ -2093,13 +2233,22 @@ public class GameManager : MonoBehaviour
             if (timeDiff < -W_BAD) continue; 
 
             double absDiff = Math.Abs(timeDiff);
+            if (NoteTypes.IsDrag(n.Type)) {
+                // 드래그 노트는 따로 모음 (일반 노트를 치려고 누른 키를 드래그 노트가 가로채지 않도록)
+                if (absDiff <= W_GREAT && absDiff < dragAbsDiff) { dragAbsDiff = absDiff; dragNote = n; }
+                continue;
+            }
             if (absDiff < minAbsDiff) {
                 minAbsDiff = absDiff;
                 targetNote = n;
             }
         }
 
-        if (targetNote == null) return;
+        // 드래그 노트 (2): 일반 노트처럼 판정선에 닿을 때 키를 누름 → 성공 (칠 일반 노트가 없을 때만)
+        if (targetNote == null) {
+            if (dragNote != null) HitDragNote(dragNote, false);
+            return;
+        }
             
         targetNote.IsHit = true; 
         ApplyJudgment(targetNote.HitTime - adjustedHitTime);
@@ -2118,9 +2267,51 @@ public class GameManager : MonoBehaviour
             SpawnHitEffect(lane, targetNote); 
         }
 
-        if (targetNote.Type == 2 || targetNote.Type == 12)
+        if (NoteTypes.IsLongHead(targetNote.Type))
         {
             RegisterActiveLongNote(targetNote, GetTickInterval(targetNote.HitTime));
+        }
+    }
+
+    // =====================================================================
+    //  드래그 노트 (9 · 10)
+    //   판정은 JUST PERFECT / MISS 두 가지뿐
+    //   (1) 판정선에 닿을 때 그 레인(넓으면 덮는 레인 중 하나) 키가 눌려 있으면 성공
+    //   (2) 일반 노트처럼 판정선 근처(±GREAT 범위)에서 키를 누르면 성공
+    //   판정선을 지나 BAD 범위가 끝날 때까지 둘 다 안 되면 MISS (NoteObject 가 처리)
+    //   10 (드래그로 시작하는 롱노트): 시작 판정만 드래그 규칙, 그 뒤는 일반 롱노트와 같음
+    // =====================================================================
+    private void CheckDragHolds(double judgeNow)
+    {
+        for (int lane = 0; lane < 4; lane++)
+        {
+            if (!prevKeyState[lane]) continue;
+            var laneNotes = notesByLane[lane];
+            for (int i = laneStartIndex[lane]; i < laneNotes.Count; i++)
+            {
+                var n = laneNotes[i];
+                if (n.HitTime > judgeNow) break;                  // 아직 판정선에 닿지 않음
+                if (n.IsHit || !NoteTypes.IsDrag(n.Type)) continue;
+                if (judgeNow - n.HitTime > W_BAD) continue;        // 이미 놓친 노트
+                if (!AreaAllowsLane(lane, n.HitTime)) continue;
+                HitDragNote(n, true);
+            }
+        }
+    }
+
+    private void HitDragNote(NoteData n, bool byHold)
+    {
+        if (n == null || n.IsHit) return;
+        n.IsHit = true;
+        ProcessHit("EXCELLENT", 0.0, true);                         // 항상 JUST PERFECT (오차 0ms)
+        if (hitErrorMeter != null) hitErrorMeter.Add(0.0, 0);
+        if (byHold) PlayHitSound();                                 // 누르고 있다가 받은 경우에도 탭음 (누른 경우는 누를 때 이미 남)
+        int cnt = Mathf.Max(1, n.Width);
+        for (int w = 0; w < cnt; w++) if (n.Lane + w < 4) SpawnHitEffect(n.Lane + w, n);
+        if (NoteTypes.IsLongHead(n.Type))
+        {
+            RegisterActiveLongNote(n, GetTickInterval(n.HitTime));
+            for (int w = 0; w < cnt; w++) { int l = n.Lane + w; if (l < 4 && prevKeyState[l] && LaneNeedsHoldEffect(l)) StartHoldEffect(l); }
         }
     }
 
@@ -2244,13 +2435,14 @@ public class GameManager : MonoBehaviour
         int msDiff = (int)(absDiff * 1000.0);
 
         double signedMs = SignedMs(diff);
+        if (IsTestMode && !AutoPlayNow && Math.Abs(diff) <= W_BAD) calibErrors.Add((float)signedMs);   // GAME SETTING 자동 맞춤용 (직접 친 탭 · 롱노트 시작만)
         if (absDiff <= W_EXCELLENT) ProcessHit("EXCELLENT", signedMs, true);
         else if (absDiff <= W_GREAT) ProcessHit("GREAT", signedMs, true);
         else if (absDiff <= W_GOOD) ProcessHit("GOOD", signedMs, true);
         else ProcessHit("BAD", signedMs, true);
         if (hitErrorMeter != null) hitErrorMeter.Add(signedMs, absDiff <= W_EXCELLENT ? 0 : absDiff <= W_GREAT ? 1 : absDiff <= W_GOOD ? 2 : 3);
 
-        if (CoreManager.Instance.CurrentSettings.ShowFastSlow && msDiff >= CoreManager.Instance.CurrentSettings.judgeoverrange && absDiff <= W_BAD)
+        if (CoreManager.Instance.CurrentSettings.ShowFastSlow && msDiff > 0 && msDiff >= CoreManager.Instance.CurrentSettings.judgeoverrange && absDiff <= W_BAD)   // 0ms(AUTO PLAY 등)는 표시 안 함
         {
             if (simpleSkin != null) simpleSkin.OnFastSlow(diff > 0, msDiff);
             if (fastSlowDirectionText != null && fastSlowValueText != null)
@@ -2414,6 +2606,8 @@ public class GameManager : MonoBehaviour
             new PauseMenu.Item { Label = "SETTINGS", Action = SettingsWindow.Open },
             new PauseMenu.Item { Label = "QUIT", Action = BackToMenu },
         };
+        // GAME SETTING(5_Test) 에서는 설정창에 들어가지 못함 (조정은 패널에서)
+        if (IsTestMode) items.RemoveAll(it => it.Label == "SETTINGS");
         pauseMenu = PauseMenu.Create(reg, bold, items, ResumeGame);
         // 씬을 겹쳐 불러오는 구조(Additive)라 '활성 씬'은 바뀌지 않음 → 게임 씬에 넣어야 게임이 끝날 때 같이 사라짐
         UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(pauseMenu.gameObject, gameObject.scene);
@@ -2512,7 +2706,7 @@ public class GameManager : MonoBehaviour
 
     private static bool IsJudgableNote(NoteData n)
     {
-        return NoteTypes.IsTapLike(n.Type) || n.Type == 2 || n.Type == 3 || n.Type == 12 || n.Type == 13;
+        return NoteTypes.IsTapLike(n.Type) || NoteTypes.IsLongHead(n.Type) || n.Type == 3 || n.Type == 13;
     }
 
     private bool IsChartFinished()
@@ -2565,6 +2759,7 @@ public class GameManager : MonoBehaviour
     // =====================================================================
     private void ApplyLife(string judge, bool isTick)
     {
+        if (IsTestMode) { life = 100.0; return; }   // GAME SETTING: LIFE 무한 (항상 가득, 줄지 않음)
         if (!LifeEnabled || isFailed || chartJudgeCount <= 0) return;
         // [완화] 한 번에 오르는 양은 최대 5%, 한 노트로 깎이는 양은 최대 20%
         //  (예전에는 노트 수가 적은 채보에서 MISS 한 번에 20% 넘게 깎일 수 있었다)
@@ -2592,6 +2787,7 @@ public class GameManager : MonoBehaviour
 
     private void StartFail()
     {
+        if (IsTestMode) { life = 100.0; return; }   // GAME SETTING: FAILED 없음 (LIFE 가 바닥나면 다시 가득)
         if (isFailed) return;
         isFailed = true;
         failProgress = PlayProgress();
@@ -2802,6 +2998,7 @@ public class GameManager : MonoBehaviour
     // 마지막 노트까지 판정이 끝난 순간 한 번 검사해서 연출을 띄운다
     private void UpdateClearEffect()
     {
+        if (IsTestMode) return;                    // GAME SETTING: 클리어 연출 없음
         if (clearChecked || currentState != GameState.Playing || isFailed) return;
         if (!IsAllNotesProcessed()) return;
         clearChecked = true;
@@ -3024,6 +3221,13 @@ public class GameManager : MonoBehaviour
     {
         if (currentState != GameState.Playing || finishRoutineStarted) return;
 
+        // GAME SETTING: 채보 · 음악이 끝나면 결과창 대신 처음부터 다시 (무한 반복)
+        if (IsTestMode)
+        {
+            if (IsChartFinished() && IsSongFinished()) RestartTestLoop();
+            return;
+        }
+
         if (IsChartFinished() && IsSongFinished() && IsMvFinished() && !clearEffectPlaying) {
             finishHoldTimer += Time.unscaledDeltaTime;
             if (finishHoldTimer >= resultDelaySeconds) {
@@ -3046,9 +3250,9 @@ public class GameManager : MonoBehaviour
     {
         int levelId = CoreManager.Instance.CurrentLevelId;
 
-        double acc = StrictAccuracy;
+        double acc = isFailed ? 0.0 : StrictAccuracy;   // FAILED 판은 정확도(TP) 0%
 
-        int score = ComputeScore();
+        int score = IsMidStart ? 0 : ComputeScore();       // PRACTICE 모드(중간부터 시작한 판)는 0점
 
         // 전체 판정 오차 = (모든 판정의 부호 있는 ms 합) / 전체 노트 수. 롱노트 중간 틱은 포함하지 않는다.
         int denom = missCountsInErrorAverage ? (timedCount + cntMiss) : timedCount;
@@ -3126,7 +3330,11 @@ public class GameManager : MonoBehaviour
             if (comboImageContainer != null) comboImageContainer.gameObject.SetActive(false);
         }
 
-        if (accuracyText != null) accuracyText.SetText("TP {0:2}%", (float)StrictAccuracy);   // SetText: 문자열을 새로 만들지 않음 (GC 줄이기)
+        if (accuracyText != null)
+        {
+            if (IsMidStart) accuracyText.SetText("");   // PRACTICE 모드: 정확도 표시 안 함
+            else accuracyText.SetText("TP {0:2}%", (float)StrictAccuracy);   // SetText: 문자열을 새로 만들지 않음 (GC 줄이기)
+        }
     }
 
     private static readonly char[] comboDigitBuf = new char[12];

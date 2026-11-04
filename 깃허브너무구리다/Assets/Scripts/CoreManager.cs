@@ -74,7 +74,22 @@ public class CoreManager : MonoBehaviour
 
     public void LoadSongSelectScene()
     {
+        if (GameSettingSession.Active) GameSettingSession.End(this);   // GAME SETTING 에서 나옴: 오토 · MV · 곡 선택 되돌림
         StartCoroutine(TransitionScene("1_SongSelect"));
+    }
+
+    // GAME SETTING (5_Test 씬): 실제 채보(곡 ID 2)로 노트 속도 · 판정 · 표시를 맞추는 곳
+    //  곡 선택 → 게임과 같은 전환(곡 정보 화면). 단 제목 GAME SETTING · 난이도 회색 UNKNOWN · 'MUSIC  곡명'
+    public void LoadTestScene()
+    {
+        if (isTransitioning || SongIntroOverlay.IsActive || CurtainTransition.IsActive) return;
+        SongData song = GameSettingSession.LoadSong(GameSettingSession.SongId);
+        if (song == null) { Debug.LogWarning("[GameSetting] songs.json 에 곡 ID " + GameSettingSession.SongId + " 이 없습니다."); return; }
+        GameSettingSession.Begin(this);
+        CurrentSongData = song;
+        CurrentLevelId = GameSettingSession.FindLevel(song.Id);
+        SongIntroOverlay.GameSettingMode = true;
+        SongIntroOverlay.Show(song, CurrentLevelId, false, () => StartCoroutine(TransitionScene(GameSettingSession.SceneName)));
     }
 
     // 에디터 씬으로 넘어갈 때 곡 데이터와 선택된 난이도를 함께 받도록 수정됨

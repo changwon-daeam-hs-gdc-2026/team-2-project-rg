@@ -144,7 +144,7 @@ public static class ChartNoteCounter
             {
                 if (n.Lane != lane) continue;          // 넓은 노트(RED · 넓은 일반)는 기준 레인에서만 연결
                 int ly = Math.Max(1, Math.Min(2, n.Layer));
-                if (n.Type == 2 || n.Type == 12) last[ly] = n;
+                if (NoteTypes.IsLongHead(n.Type)) last[ly] = n;
                 else if ((n.Type == 3 || n.Type == 13) && last[ly] != null)
                 {
                     if (last[ly].IsRed == n.IsRed) last[ly].Next = n;
@@ -158,7 +158,7 @@ public static class ChartNoteCounter
         foreach (var n in notes)
         {
             if (NoteTypes.IsTapLike(n.Type)) r.Notes++;
-            else if (n.Type == 2 || n.Type == 12)
+            else if (NoteTypes.IsLongHead(n.Type))
             {
                 r.Notes += n.Next != null ? 2 : 1;
                 if (n.Next != null) r.Ticks += LongNoteTickRule.Count(n.Time, n.Next.Time, bpmAt);

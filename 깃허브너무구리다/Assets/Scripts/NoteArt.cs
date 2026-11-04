@@ -26,6 +26,11 @@ public static class NoteArt
 
     public static Color ArrowColor(int type) { return type == NoteTypes.ArrowLeft ? ArrowLeftColor : ArrowRightColor; }
 
+    // 드래그 노트: 연한 노란색 (크림빛 — <<< 화살표의 진한 노랑과 구분되게 채도를 낮춤)
+    public static readonly Color DragColor = new Color(1.00f, 0.95f, 0.66f, 1f);
+    public const float DragHeightRatio = 0.58f;   // 드래그 노트 두께 = 일반 노트의 58% (얇은 레일 모양)
+
+    private static Sprite dragGem, dragTrail;
     private static Sprite arrow, glow, stripe, warn, rounded, white, face, outline, longBody, hGrad, diamond, beam, star, tailCap, hBell;
 
     // 롱노트 끝: 얇은 빛나는 막대 (흰색 → 레인 색). 위가 밝고 아래로 살짝 어두움 + 바깥 빛 (TailGlowPad 만큼 크게)
@@ -256,6 +261,60 @@ public static class NoteArt
             diamond = Sprite.Create(tex, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), 32f, 0, SpriteMeshType.FullRect);
             diamond.name = "Diamond";
             return diamond;
+        }
+    }
+
+    // 드래그 노트 보석: 바깥 마름모 테두리 + 안쪽 꽉 찬 작은 마름모 + 가운데 흰 반짝임 (이중 마름모)
+    public static Sprite DragGemSprite
+    {
+        get
+        {
+            if (dragGem != null) return dragGem;
+            const int S = 64;
+            Texture2D tex = NewTex(S, S);
+            Color32[] px = new Color32[S * S];
+            for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+            {
+                float dx = Mathf.Abs((x + 0.5f) / S * 2f - 1f), dy = Mathf.Abs((y + 0.5f) / S * 2f - 1f);
+                float d = dx + dy;                                                   // 마름모 거리 (0 가운데 ~ 1 꼭짓점)
+                float outer = Mathf.Clamp01(1f - Mathf.Abs(d - 0.86f) / 0.07f);      // 바깥 테두리
+                float inner = Mathf.Clamp01((0.52f - d) * 14f);                      // 안쪽 꽉 찬 마름모
+                float halo = Mathf.Clamp01(1f - d) * 0.28f;                          // 은은한 빛
+                float a = Mathf.Max(Mathf.Max(outer, inner), halo);
+                // 가운데로 갈수록 흰빛 (색은 SpriteRenderer.color 로 곱해짐 → 가운데만 하얗게 보이도록 알파는 그대로, 밝기만 유지)
+                px[y * S + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a) * 255f));
+            }
+            tex.SetPixels32(px); tex.Apply();
+            dragGem = Sprite.Create(tex, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), 64f, 0, SpriteMeshType.FullRect);
+            dragGem.name = "DragGem";
+            return dragGem;
+        }
+    }
+
+    // 드래그 노트 꼬리빛: 노트 위쪽(내려오는 반대 방향)으로 길게 남는 혜성 꼬리 — 아래가 밝고 위로 가늘어지며 사라짐 (피벗 아래 가운데)
+    public static Sprite DragTrailSprite
+    {
+        get
+        {
+            if (dragTrail != null) return dragTrail;
+            const int W = 32, H = 96;
+            Texture2D tex = NewTex(W, H);
+            Color32[] px = new Color32[W * H];
+            for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                float v = y / (H - 1f);                                      // 0 아래 ~ 1 위
+                float u = Mathf.Abs((x + 0.5f) / W * 2f - 1f);
+                float halfW = Mathf.Lerp(1f, 0.15f, v);                      // 위로 갈수록 가늘어짐
+                float side = Mathf.Clamp01(1f - u / Mathf.Max(0.01f, halfW));
+                float a = Mathf.Pow(1f - v, 1.6f) * side * side;
+                px[y * W + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a) * 255f));
+            }
+            tex.SetPixels32(px); tex.Apply();
+            dragTrail = Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0f), 64f, 0, SpriteMeshType.FullRect);
+            dragTrail.name = "DragTrail";
+            return dragTrail;
         }
     }
 

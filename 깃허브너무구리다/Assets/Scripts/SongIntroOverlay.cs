@@ -45,6 +45,10 @@ public class SongIntroOverlay : MonoBehaviour
     public static SongIntroFonts Fonts;
 
     public static bool IsActive { get { return instance != null; } }
+
+    // GAME SETTING(5_Test) 으로 들어갈 때: 난이도 회색 'UNKNOWN', 제목 'GAME SETTING', 부제, 정보 줄은 작곡가(MUSIC)만 (CoreManager.LoadTestScene 이 켬)
+    public static bool GameSettingMode;
+    private bool gameSetting;
     public static bool IsRevealing { get { return instance != null && instance.revealing; } }
 
     private const float NormalHold = 2.4f;   // 내용이 다 나온 뒤 최소 표시 시간
@@ -84,6 +88,8 @@ public class SongIntroOverlay : MonoBehaviour
         instance.level = levelId;
         instance.quick = quick;
         instance.onCovered = onCovered;
+        instance.gameSetting = GameSettingMode;
+        GameSettingMode = false;          // 한 번 쓰고 끔 (다음 곡 진입은 평소대로)
         instance.Build();
         instance.StartCoroutine(instance.Run());
     }
@@ -114,7 +120,7 @@ public class SongIntroOverlay : MonoBehaviour
         TMP_FontAsset fValue = F.value != null ? F.value : baseTitle;
         TMP_FontAsset fOptions = F.options != null ? F.options : K.Font;
         TMP_FontAsset fStatus = F.status != null ? F.status : K.Font;
-        Color dc = DifficultyHelper.GetColor(level);
+        Color dc = gameSetting ? new Color(0.55f, 0.55f, 0.58f, 1f) : DifficultyHelper.GetColor(level);   // GAME SETTING: 회색
 
         Canvas canvas = gameObject.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -182,7 +188,7 @@ public class SongIntroOverlay : MonoBehaviour
         float y = 250f;
         // 난이도 태그
         // 난이도: 이름만, 난이도 대표 색 (예: INSANE)
-        TextMeshProUGUI diff = K.Txt("Difficulty", infoRoot, DifficultyHelper.GetName(level), 32, TextAlignmentOptions.Left, dc, FontStyles.Bold);
+        TextMeshProUGUI diff = K.Txt("Difficulty", infoRoot, gameSetting ? "UNKNOWN" : DifficultyHelper.GetName(level), 32, TextAlignmentOptions.Left, dc, FontStyles.Bold);
         diff.font = fDiff;
         diff.characterSpacing = 8f;
         FitText(diff, 32f, 16f);
@@ -191,7 +197,7 @@ public class SongIntroOverlay : MonoBehaviour
         y -= 70f;
 
         // 곡명 / 부제
-        TextMeshProUGUI title = K.Txt("Title", infoRoot, song.Name ?? "", 64, TextAlignmentOptions.Left, Color.white, FontStyles.Bold);
+        TextMeshProUGUI title = K.Txt("Title", infoRoot, gameSetting ? "GAME SETTING" : song.Name ?? "", 64, TextAlignmentOptions.Left, Color.white, FontStyles.Bold);
         title.font = fTitle;
         FitText(title, 64f, 24f);
         LeftTop(title.rectTransform, 0f, y, InfoWidth, 80f);
@@ -215,15 +221,23 @@ public class SongIntroOverlay : MonoBehaviour
         y -= 30f;
 
         // 정보 줄
-        y = InfoRow("MUSIC", song.Composer, y, fLabel, fValue);
-        y = InfoRow("ILLUST", song.illustration, y, fLabel, fValue);
-        y = InfoRow("VOCAL", song.Vocal, y, fLabel, fValue);
+        if (gameSetting)
+        {
+            // GAME SETTING: 제목(GAME SETTING) · 부제 · 작곡가만 (일러스트 · 보컬 · BPM 없음)
+            y = InfoRow("MUSIC", song.Composer, y, fLabel, fValue);
+        }
+        else
+        {
+            y = InfoRow("MUSIC", song.Composer, y, fLabel, fValue);
+            y = InfoRow("ILLUST", song.illustration, y, fLabel, fValue);
+            y = InfoRow("VOCAL", song.Vocal, y, fLabel, fValue);
+        }
         // BPM: songs.json 의 "BPM" 글자를 그대로 표시 (예: "132", "132-250")
-        if (!string.IsNullOrWhiteSpace(song.BPM)) y = InfoRow("BPM", song.BPM.Trim(), y, fLabel, fValue);
+        if (!gameSetting && !string.IsNullOrWhiteSpace(song.BPM)) y = InfoRow("BPM", song.BPM.Trim(), y, fLabel, fValue);
 
         // 아래: 플레이 설정 / 로딩
         var s = SettingsStore.Current;
-        string opt = "SPEED  x" + s.SettingSpeed.ToString("0.0", CultureInfo.InvariantCulture);
+        string opt = (gameSetting ? "GAME SETTING     " : "") + "SPEED  x" + s.SettingSpeed.ToString("0.0", CultureInfo.InvariantCulture);
         if (CoreManager.Instance != null && CoreManager.Instance.IsMvOn && song.HasMV == 1) opt += "     MV ON";
         if (CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay) opt += "     AUTO PLAY";
         TextMeshProUGUI optText = K.Txt("Options", contentRt, opt, 20, TextAlignmentOptions.BottomLeft, K.TextSub);

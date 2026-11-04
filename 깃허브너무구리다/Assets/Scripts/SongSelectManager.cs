@@ -14,7 +14,7 @@ using UnityEngine.UI;
 //  - 좌측: 자켓 / 곡명 / 작곡가 / 곡 길이 / 난이도 이미지 3개(ON·OFF) + 난이도 숫자 3개
 //  - 우측: 악곡 정렬표 (뷰포트 밖으로 나간 줄은 RectMask2D 로 잘림)
 //  - ← → : 곡 이동 (길게 누르면 연속 이동)   ↑ ↓ : 난이도 변경
-//  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속   ESC : 설정창
+//  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속   ESC : 설정창   T : GAME SETTING
 // ============================================================
 public class SongSelectManager : MonoBehaviour
 {
@@ -261,6 +261,7 @@ public class SongSelectManager : MonoBehaviour
     {
         // 일시정지 → 곡 선택으로 나올 때 덮어 둔 곡 정보 화면(게임에 들어갈 때와 같은 전환)을 걷음
         if (SongIntroOverlay.IsActive) SongIntroOverlay.NotifyGameReady();
+        if (CurtainTransition.IsActive) CurtainTransition.NotifyReady();     // 일시정지 → QUIT: 검은 막만 걷음
 
         ColorUtility.TryParseHtmlString("#5ce1e6", out diffColors[1]);
         ColorUtility.TryParseHtmlString("#ff751f", out diffColors[2]);
@@ -491,6 +492,9 @@ public class SongSelectManager : MonoBehaviour
                 CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
                 Debug.Log(CoreManager.Instance.IsAutoPlay ? "AUTO PLAY 개시" : "AUTO PLAY 종료");
             }
+
+            // T : GAME SETTING (실제 채보로 노트 속도 · 판정 · 표시 맞추기, 5_Test 씬)
+            if (kb.tKey.wasPressedThisFrame && CoreManager.Instance != null) { OpenGameSetting(); return; }
 
             var st = SettingsStore.Current;
             if (kb.f1Key.wasPressedThisFrame) { st.SettingSpeed = Math.Round(Math.Max(1.0, st.SettingSpeed - 0.1), 1); SettingsStore.MarkDirty(); }
@@ -1279,6 +1283,19 @@ public class SongSelectManager : MonoBehaviour
         if (previewRoutine != null) StopCoroutine(previewRoutine);
         if (lengthRoutine != null) StopCoroutine(lengthRoutine);
         if (previewAudioSource != null) previewAudioSource.Stop();
+    }
+
+    // GAME SETTING (5_Test) 열기 — 미리듣기를 멈추고 게임에 들어갈 때와 같은 전환
+    public void OpenGameSetting()
+    {
+        if (isLeaving || CoreManager.Instance == null) return;
+        if (GameSettingSession.LoadSong(GameSettingSession.SongId) == null)
+        {
+            Debug.LogWarning("[GameSetting] songs.json 에 곡 ID " + GameSettingSession.SongId + " 이 없어 열 수 없습니다.");
+            return;
+        }
+        BeginLeave();
+        CoreManager.Instance.LoadTestScene();
     }
 
     private void StartGame(SongData song, bool mv)
