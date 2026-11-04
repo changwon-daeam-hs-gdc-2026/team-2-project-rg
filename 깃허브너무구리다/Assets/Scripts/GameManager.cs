@@ -265,7 +265,7 @@ public class GameManager : MonoBehaviour
     //  롱노트 중간 판정(틱)은 항상 JUST PERFECT (100%),  끝까지 누른 롱노트 끝도 JUST PERFECT
     //  TP 100.00% (모든 판정이 JUST PERFECT) = ALL JUST
     //  표시는 버림 (99.999% 를 100.00% 로 올려 보이지 않게)
-    public const double JustWindowMs = 15.0;
+    public static double JustWindowMs = 15.0;   // (모드로 판정 범위가 좁아지면 PERFECT 범위를 넘지 않게 줄어듦)
     public const double PerfectTopValue = 0.99, PerfectEdgeValue = 0.88;
     private double accPoints = 0;
     private int accNotes = 0;
@@ -317,7 +317,17 @@ public class GameManager : MonoBehaviour
     public double TriggerTime { get { return songStartOffset - SettingsStore.MusicLead; } }
     // 판정 기준 시각 (설정의 JUDGE OFFSET 반영). NoteObject 의 자동 MISS 도 이 시각으로 판단해야 판정 범위와 일치한다
     public double JudgeTime { get { return currentPlayTime - SettingsStore.JudgeDelay; } }
-    public const double W_EXCELLENT = 0.065, W_GREAT = 0.085, W_GOOD = 0.100, W_BAD = 0.120;
+    // 판정 범위 (초). 게임 모드 HARD 1/2 · MAXIMUM 1/3 · ULTIMATE 1/4 로 줄어듦 → ApplyJudgeWindows (판 시작 때마다 다시 계산)
+    public const double BaseExcellent = 0.065, BaseGreat = 0.085, BaseGood = 0.100, BaseBad = 0.120;
+    public static double W_EXCELLENT = BaseExcellent, W_GREAT = BaseGreat, W_GOOD = BaseGood, W_BAD = BaseBad;
+
+    private static void ApplyJudgeWindows(double extra = 1.0)
+    {
+        double k = GameModes.Play.JudgeScale * extra;     // extra: CLUTCH (LIFE 가 낮을수록 넓어짐)
+        W_EXCELLENT = BaseExcellent * k; W_GREAT = BaseGreat * k; W_GOOD = BaseGood * k; W_BAD = BaseBad * k;
+        // JUST PERFECT 는 ±15ms 그대로 (단, 좁아진 PERFECT 범위보다는 작게)
+        JustWindowMs = Math.Min(15.0, W_EXCELLENT * 1000.0 - 1.0);
+    }
     
     private Key[] laneKeys = { Key.D, Key.F, Key.J, Key.K };
     private bool[] prevKeyState = new bool[4];
@@ -421,12 +431,18 @@ public class GameManager : MonoBehaviour
         mainCam = FindSceneCamera();
         // GAME SETTING (5_Test 씬): 실제 채보로 맞추는 연습 공간 — 무한 반복 · FAILED/결과창 없음 · 조정 패널
         IsTestMode = GameSettingSession.Active;
+        // 게임 모드: 이번 판에 쓸 모드를 확정 (GAME SETTING 은 모드 없음) → 판정 범위 계산
+        GameModes.BeginPlay(IsTestMode);
+        ApplyJudgeWindows();
+        if (GameModes.Play.Modes.Length > 0) Debug.Log("[Mode] " + string.Join(", ", GameModes.Play.Modes.Select(m => GameModes.Info(m).Name)) + "  (점수 " + GameModes.Percent(GameModes.Play.ScoreMultiplier) + ")");
         currentSong = CoreManager.Instance.CurrentSongData;
         if (SongIntroOverlay.PreferredTitleFont == null && loadingTitleText != null) SongIntroOverlay.PreferredTitleFont = loadingTitleText.font;
         hitSoundClip = Resources.Load<AudioClip>("Audio/etc/hitsound"); 
         // [버그 수정] 탭음 데이터를 미리 올려 둠 (첫 PlayOneShot 때 아직 안 올라와 있으면 첫 소리가 나지 않음)
         if (hitSoundClip != null && hitSoundClip.loadState == AudioDataLoadState.Unloaded) hitSoundClip.LoadAudioData();
         laneKeys = SettingsStore.GetLaneKeys();                        // 설정 > CONTROLS
+        // REVERSE: 화면이 180도 돌아가 레인 순서도 좌우가 바뀌므로, 키도 거꾸로 (왼쪽 키 = 화면 왼쪽 레인)
+        if (GameModes.Play.Reverse) { laneKeys = (Key[])laneKeys.Clone(); Array.Reverse(laneKeys); }
         InputTiming.Watch(laneKeys);                                     // 키를 실제로 누른 시각 기록 (프레임 단위 오차 제거)
         InputTiming.Watch(new[] { Key.Space });
         SetupAudioTiming();
@@ -445,6 +461,7 @@ public class GameManager : MonoBehaviour
             skinId = GameSkins.Diverse;
         }
         if (GameSkins.UsesSimpleSkin(skinId)) simpleSkin = SimpleGameSkin.Create(this, skinId == GameSkins.Diverse);
+        if (GameModes.Play.Reverse) ApplyReverseView();
         redFx = RedHitEffects.Create(this);  // RED 노트 전용 탭 / 롱노트 홀드 이펙트 (일반 이펙트 아래)
         infoHud = GameInfoHud.Create(this); // 곡 정보 · 난이도 · 시간 · 점수 · 배속 · 진행 막대 (모든 GAME UI 공통, 설정 > INFORMATION UI)
         if (IsTestMode)
@@ -866,6 +883,7 @@ public class GameManager : MonoBehaviour
 
         songStartOffset = 0; chartAudioOffset = 0;
         bool hasMusicOffset = false;
+        BuildLaneMap();
         for(int i=0; i<4; i++) notesByLane[i].Clear();
 
         string path = Path.Combine(Application.streamingAssetsPath, "chart", $"{songId}_{levelId}.txt");
@@ -996,7 +1014,7 @@ public class GameManager : MonoBehaviour
             else if (e.Type == "START") { for (int L = 1; L <= 2; L++) speedChangesByLayer[L].Add(new SpeedChange { Time = exactTime, Multiplier = currentSpeedByLayer[L] }); }
             else if (e.Type == "AREA") {
                 // AREA, 마디, 분자, 분모, 1100  (영역 레인 / 0000 = 영역 끝)
-                areaEvents.Add(new AreaEvent { Time = exactTime, Mask = AreaMask.Parse(e.Value) });
+                areaEvents.Add(new AreaEvent { Time = exactTime, Mask = MapMask(AreaMask.Parse(e.Value)) });
             }
             else if (e.Type == "FOLD" || e.Type == "UNFOLD" || e.Type == "HIDE" || e.Type == "SHOW") {
                 // 레인 사라짐 / 드러남: FOLD(=HIDE) / UNFOLD(=SHOW), 마디, 분자, 분모, 초 (다 사라지는/드러나는 데 걸리는 시간)
@@ -1015,8 +1033,9 @@ public class GameManager : MonoBehaviour
                         if (val[lane] != '0') {
                             int noteType = int.Parse(val[lane].ToString());
                             if (noteType == 6 || noteType == 5) continue;
-                            var newNote = new NoteData { HitTime = exactTime, Lane = lane, Type = noteType, IsHit = false, isTimeLogged = false, Layer = NoteLayer.Top };
-                            notes.Add(newNote); notesByLane[lane].Add(newNote); 
+                            int ml = MapLaneStart(lane, 1);   // MIRROR / RANDOM
+                            var newNote = new NoteData { HitTime = exactTime, Lane = ml, Type = noteType, IsHit = false, isTimeLogged = false, Layer = NoteLayer.Top };
+                            notes.Add(newNote); notesByLane[ml].Add(newNote); 
                         }
                     }
                 } else {
@@ -1083,6 +1102,7 @@ public class GameManager : MonoBehaviour
         }
 
         ApplyMidStart();
+        GenerateFakeNotes();   // 게임 모드 FAKE: 가짜 노트 (판정 · 노트 수에는 들어가지 않음)
 
         // 채보 전체 노트 수: 완벽하게 쳤을 때 판정이 나오는 횟수 (= 풀콤보 시 MAX COMBO)
         //  노트(탭·화살표·롱노트 머리/꼬리) + 롱노트 중간 틱. 틱은 실제 플레이와 똑같은 규칙으로 미리 세어 둔다.
@@ -1118,6 +1138,82 @@ public class GameManager : MonoBehaviour
         measureSpawnIndex = 0;
     }
 
+    // =====================================================================
+    //  게임 모드: FAKE — 치면 안 되는 가짜 노트
+    //   노트가 있는 시각마다 FakeChance 확률로, 그 시각에 비어 있는 레인 하나에 가짜 노트를 하나 놓음
+    //   (같은 레인의 진짜 노트 · 롱노트 구간에서 FakeGap 초 이상 떨어진 곳만)
+    //   가짜 노트는 판정 · 노트 수 · 결과에 들어가지 않고, 그냥 지나가면 아무 일도 없음
+    //   쳤을 때(그 레인에 칠 진짜 노트가 없고 ±GOOD 범위 안): 지금 LIFE 의 50% 감소
+    // =====================================================================
+    private readonly List<NoteData>[] fakeByLane = { new List<NoteData>(), new List<NoteData>(), new List<NoteData>(), new List<NoteData>() };
+
+    private void GenerateFakeNotes()
+    {
+        for (int i = 0; i < 4; i++) fakeByLane[i].Clear();
+        if (!GameModes.Play.Fake || IsTestMode) return;
+        System.Random rng = new System.Random(Guid.NewGuid().GetHashCode());
+
+        var busy = new List<KeyValuePair<double, double>>[4];
+        for (int i = 0; i < 4; i++) busy[i] = new List<KeyValuePair<double, double>>();
+        foreach (var n in notes)
+        {
+            if (n.Type == 4) continue;
+            double a = n.HitTime - GameModes.FakeGap;
+            double b = (NoteTypes.IsLongHead(n.Type) && n.NextLongNote != null ? n.NextLongNote.HitTime : n.HitTime) + GameModes.FakeGap;
+            for (int w = 0; w < Mathf.Max(1, n.Width); w++)
+                if (n.Lane + w < 4) busy[n.Lane + w].Add(new KeyValuePair<double, double>(a, b));
+        }
+
+        var times = notes.Where(n => n.Type != 4 && n.Type != 3 && n.Type != 13).Select(n => n.HitTime).Distinct().OrderBy(t => t).ToList();
+        int made = 0;
+        int[] order = { 0, 1, 2, 3 };
+        foreach (double t in times)
+        {
+            if (rng.NextDouble() >= GameModes.FakeChance) continue;
+            for (int i = 3; i > 0; i--) { int j = rng.Next(i + 1); int tmp = order[i]; order[i] = order[j]; order[j] = tmp; }
+            foreach (int lane in order)
+            {
+                bool free = true;
+                foreach (var r in busy[lane]) if (t >= r.Key && t <= r.Value) { free = false; break; }
+                if (!free) continue;
+                var fake = new NoteData { HitTime = t, Lane = lane, Type = NoteTypes.Tap, IsHit = false, isTimeLogged = false, Layer = NoteLayer.Top, IsFake = true };
+                fakeByLane[lane].Add(fake);
+                notesByLayer[NoteLayer.Top].Add(fake);
+                busy[lane].Add(new KeyValuePair<double, double>(t - GameModes.FakeGap, t + GameModes.FakeGap));
+                made++;
+                break;
+            }
+        }
+        if (made > 0)
+        {
+            var sorted = notesByLayer[NoteLayer.Top].OrderBy(n => n.HitTime).ToList();
+            notesByLayer[NoteLayer.Top].Clear();
+            notesByLayer[NoteLayer.Top].AddRange(sorted);
+        }
+        Debug.Log($"[Mode] FAKE 가짜 노트 {made}개");
+    }
+
+    private void CheckFakeHit(int lane, double judgeT)
+    {
+        if (!GameModes.Play.Fake || lane < 0 || lane >= 4) return;
+        foreach (var f in fakeByLane[lane])
+        {
+            if (f.IsHit) continue;
+            if (f.HitTime - judgeT > W_GOOD) break;
+            if (Math.Abs(f.HitTime - judgeT) > W_GOOD) continue;
+            f.IsHit = true;
+            HideNoteObject(f);
+            if (LifeEnabled && !LifeInfinite && !isFailed)
+            {
+                life -= life * GameModes.FakePenalty;
+                if (recLife.Count > 0) recLife[recLife.Count - 1] = (float)life;
+            }
+            GameModePopup.Show(gameObject.scene, "FAKE", new Color(1f, 0.38f, 0.45f), 1f);
+            Debug.Log($"[Mode] FAKE 노트를 침 → LIFE {life:0.0}");
+            return;
+        }
+    }
+
     // 토큰("11_3", "2" ...) 하나를 노트로 만들어 등록한다.
     private void AddNoteFromToken(string token, int lane, double hitTime, int layer)
     {
@@ -1125,11 +1221,81 @@ public class GameManager : MonoBehaviour
         if (!NoteCellParser.TryParseToken(token, out int type, out int width, out bool isRed)) return;
 
         // 폭(Width): RED 노트 · 넓은 일반 노트(영역 채보, "1_3" 처럼) 모두 1~4칸. 덮는 레인 모두에서 칠 수 있음
-        var newNote = new NoteData { HitTime = hitTime, Lane = lane, Type = type, IsHit = false, isTimeLogged = false, Layer = layer };
+        int w0 = Mathf.Clamp(width, 1, 4 - lane);
+        int ml = MapLaneStart(lane, w0);   // MIRROR / RANDOM
+        var newNote = new NoteData { HitTime = hitTime, Lane = ml, Type = type, IsHit = false, isTimeLogged = false, Layer = layer };
         newNote.IsRedNote = isRed;
-        newNote.Width = Mathf.Clamp(width, 1, 4 - lane);
+        newNote.Width = w0;
         notes.Add(newNote);
-        for (int w = 0; w < newNote.Width; w++) notesByLane[lane + w].Add(newNote);
+        for (int w = 0; w < newNote.Width; w++) notesByLane[ml + w].Add(newNote);
+    }
+
+    // =====================================================================
+    //  게임 모드: MIRROR / RANDOM — 채보를 읽을 때 레인 번호를 바꿈
+    //   MIRROR : 0 1 2 3 → 3 2 1 0
+    //   RANDOM : 판마다 무작위로 섞음 (원래와 같은 배치는 나오지 않음). 한 판 동안은 같은 섞임이라 롱노트 · 동시치기가 그대로 유지됨
+    //            넓은 노트(2 ~ 3칸)는 섞인 뒤에도 붙어 있어야 하므로, 섞임이 그 노트의 레인 순서를 뒤집으면 좌우 반전 자리, 아니면 제자리
+    //   영역(AREA) 레인도 같은 규칙으로 바뀜
+    // =====================================================================
+    private int[] laneMap;   // null = 그대로
+
+    private void BuildLaneMap()
+    {
+        laneMap = null;
+        if (GameModes.Play.Mirror) laneMap = new[] { 3, 2, 1, 0 };
+        else if (GameModes.Play.Random)
+        {
+            System.Random rng = new System.Random(Guid.NewGuid().GetHashCode());
+            int[] m = { 0, 1, 2, 3 };
+            do
+            {
+                for (int i = 3; i > 0; i--) { int j = rng.Next(i + 1); int t = m[i]; m[i] = m[j]; m[j] = t; }
+            } while (m[0] == 0 && m[1] == 1 && m[2] == 2 && m[3] == 3);
+            laneMap = m;
+            Debug.Log($"[Mode] RANDOM 배치: {m[0]}{m[1]}{m[2]}{m[3]}");
+        }
+        if (GameModes.Play.Reverse)
+        {
+            int[] m = laneMap ?? new[] { 0, 1, 2, 3 };
+            laneMap = new[] { 3 - m[0], 3 - m[1], 3 - m[2], 3 - m[3] };
+        }
+    }
+
+    // =====================================================================
+    //  게임 모드: REVERSE — 판정선이 위쪽, 노트가 아래에서 위로
+    //   SIMPLE: 게임 카메라를 180도 돌림 (화면 공간 UI 는 카메라와 함께 돌아 그대로 바로 보임, 배경은 되돌려 똑바로)
+    //   SIMPLE-DIVERSE: 원근 레인 쪽에서 뒤집음 (DiversePlayfield)
+    //   180도 회전은 좌우도 뒤집으므로 → 채보 레인을 한 번 더 좌우 반전 + 키도 거꾸로 = 레인 순서는 원래대로
+    // =====================================================================
+    public Key[] LaneKeys { get { return laneKeys; } }
+
+    private void ApplyReverseView()
+    {
+        bool diverse = simpleSkin != null && simpleSkin.IsDiverse;
+        if (diverse) return;
+        Quaternion flip = Quaternion.Euler(0f, 0f, 180f);
+        if (mainCam != null) mainCam.transform.rotation = flip * mainCam.transform.rotation;
+        if (bgRenderer != null) bgRenderer.transform.rotation = flip * bgRenderer.transform.rotation;   // 배경(MV 포함)은 똑바로
+    }
+
+    private int MapLaneStart(int lane, int width)
+    {
+        if (laneMap == null || lane < 0 || lane > 3) return lane;
+        if (width >= 4) return 0;
+        if (width <= 1) return laneMap[lane];
+        int last = Mathf.Min(3, lane + width - 1);
+        int lo = 4, hi = -1;
+        for (int i = lane; i <= last; i++) { lo = Mathf.Min(lo, laneMap[i]); hi = Mathf.Max(hi, laneMap[i]); }
+        if (hi - lo + 1 == width) return lo;                        // 섞인 뒤에도 붙어 있음
+        return laneMap[lane] > laneMap[last] ? 4 - lane - width : lane;   // 붙어 있지 않으면 반전 / 제자리
+    }
+
+    private int MapMask(int mask)
+    {
+        if (laneMap == null || mask == 0) return mask;
+        int r = 0;
+        for (int i = 0; i < 4; i++) if ((mask & (1 << i)) != 0) r |= 1 << laneMap[i];
+        return r;
     }
 
     // =====================================================================
@@ -1487,6 +1653,8 @@ public class GameManager : MonoBehaviour
         processedNotes = 0; currentCombo = 0; maxCombo = 0; currentAccSum = 0; accPoints = 0; accNotes = 0; cntJust = 0;
         cntExcellent = cntGreat = cntGood = cntBad = cntMiss = 0;
         errorSumMs = 0; timedCount = 0; comboSum = 0; life = 100.0; fastCount = slowCount = 0;
+        scoreLockUntil = double.NegativeInfinity;
+        autoHeld.Clear();
         recProgress.Clear(); recJudge.Clear(); recLife.Clear(); recErrors.Clear();
         finishHoldTimer = 0f; clearChecked = false; endUiAlpha = 1f;
         UpdateUI();
@@ -1842,6 +2010,10 @@ public class GameManager : MonoBehaviour
         {
             if (AutoPlayNow) HandleAutoPlay(currentPlayTime);
             else HandleInputs(currentPlayTime);
+            // STRICT: LIFE 최대치가 곡 진행에 따라 내려오므로, 판정이 없어도 매 프레임 맞춰 줌
+            if (GameModes.Play.Strict && !IsTestMode && life > LifeCap) life = LifeCap;
+            // CLUTCH: LIFE 가 낮을수록 판정 범위가 넓어짐 (LIFE 0 에서 2.5배)
+            if (GameModes.Play.Clutch && !IsTestMode) ApplyJudgeWindows(GameModes.ClutchScale(life));
         }
 
         UpdateClearEffect();
@@ -1960,6 +2132,7 @@ public class GameManager : MonoBehaviour
 
     private bool IsLongNoteHeld(NoteData ln)
     {
+        if (autoHeld.Contains(ln)) return true;   // LAZY 로 살아난 롱노트: 끝까지 자동으로 눌림
         int cnt = CoveredLaneCount(ln);
         for (int k = 0; k < cnt; k++) {
             int l = ln.Lane + k;
@@ -2247,6 +2420,7 @@ public class GameManager : MonoBehaviour
         // 드래그 노트 (2): 일반 노트처럼 판정선에 닿을 때 키를 누름 → 성공 (칠 일반 노트가 없을 때만)
         if (targetNote == null) {
             if (dragNote != null) HitDragNote(dragNote, false);
+            else CheckFakeHit(lane, adjustedHitTime);   // FAKE: 가짜 노트를 쳤는가
             return;
         }
             
@@ -2334,16 +2508,17 @@ public class GameManager : MonoBehaviour
     {
         if (isFailed) return;
         processedNotes++;
-        currentAccSum += 1f;
+        bool locked = ScoreLocked;       // COMBO BREAK: 콤보가 끊긴 뒤 잠깐은 점수 없음
+        if (!locked) currentAccSum += 1f;
         cntExcellent++;
         cntJust++;                       // 롱노트 중간 판정 = 항상 JUST PERFECT
         accNotes++; accPoints += 1.0;    // TP 에도 100% 로 들어감
         currentCombo++;
         if (currentCombo > maxCombo) maxCombo = currentCombo;
-        comboSum += currentCombo - 1;
+        if (!locked) comboSum += currentCombo - 1;
         comboAnimTimer = 1f;
         UpdateUI();
-        ApplyLife("EXCELLENT", true);
+        ApplyLife("EXCELLENT", true, true);
         RecordJudge("EXCELLENT");
     }
 
@@ -2421,10 +2596,12 @@ public class GameManager : MonoBehaviour
         processedNotes++;
         accNotes++;                      // 놓친 틱은 TP 0%
         cntMiss++;
+        if (currentCombo > 0) OnComboBroken();
         currentCombo = 0;
         UpdateUI();
-        ApplyLife("MISS", true);
+        ApplyLife("MISS", true, false);
         RecordJudge("MISS");
+        CheckModeCrash("MISS", false);
     }
 
     private double GetLongNoteEndTime(NoteData head) { return head.NextLongNote != null ? head.NextLongNote.HitTime : head.HitTime; }
@@ -2463,8 +2640,35 @@ public class GameManager : MonoBehaviour
     public void ProcessHit(string judge, double signedErrorMs = 0.0, bool hasTiming = false)
     {
         if (isFailed) return; // FAILED 이후의 판정은 무시
+        // 게임 모드 EASY: BAD 범위 안이면 모두 PERFECT (MISS 는 그대로)
+        if (GameModes.Play.Easy && (judge == "GREAT" || judge == "GOOD" || judge == "BAD")) judge = "EXCELLENT";
+        // 게임 모드 MERCY: BAD · MISS 를 MercyChance(50%) 확률로 GREAT 이상으로 바꿈
+        //  바뀐 판정: GREAT 50% · PERFECT(JUST 아님) 35% · JUST PERFECT 15%. 바뀐 판정의 오차는 오차 기록(평균 · FAST/SLOW)에 넣지 않음
+        bool mercied = false;
+        if ((judge == "MISS" || judge == "BAD") && GameModes.Play.Mercy && !IsTestMode && uiRng.NextDouble() < GameModes.MercyChance)
+        {
+            mercied = true;
+            double roll = uiRng.NextDouble();
+            if (roll < GameModes.MercyGreat) { judge = "GREAT"; signedErrorMs = 0.0; hasTiming = false; }
+            else if (roll < GameModes.MercyGreat + GameModes.MercyPerfect)
+            {
+                // JUST 가 아닌 PERFECT: JUST 범위와 PERFECT 범위 사이의 오차로 처리 (TP 도 그만큼)
+                judge = "EXCELLENT";
+                double edge = W_EXCELLENT * 1000.0;
+                if (edge > JustWindowMs + 1.0)
+                {
+                    double mag = JustWindowMs + 1.0 + uiRng.NextDouble() * (edge - JustWindowMs - 1.0);
+                    signedErrorMs = uiRng.Next(2) == 0 ? -mag : mag;
+                    hasTiming = true;
+                }
+                else { signedErrorMs = 0.0; hasTiming = false; }   // PERFECT 범위가 너무 좁으면(ULTIMATE) JUST 로
+            }
+            else { judge = "EXCELLENT"; signedErrorMs = 0.0; hasTiming = false; }   // JUST PERFECT
+            GameModePopup.Show(gameObject.scene, "MERCY", new Color(0.45f, 0.95f, 0.80f), 0.7f);
+        }
         processedNotes++;
         float accMultiplier = 0f;
+        int comboBefore = currentCombo;
 
         switch (judge) {
             case "EXCELLENT": accMultiplier = 1f; currentCombo++; break;
@@ -2474,9 +2678,11 @@ public class GameManager : MonoBehaviour
             case "MISS": accMultiplier = 0f; currentCombo = 0; break;
         }
         if (currentCombo > maxCombo) maxCombo = currentCombo; 
-        if (currentCombo > 0) comboSum += currentCombo - 1;
+        if (comboBefore > 0 && currentCombo == 0) OnComboBroken();
+        bool locked = ScoreLocked;   // COMBO BREAK: 콤보가 끊긴 뒤 3초 동안은 판정 · 콤보 점수 모두 0
+        if (currentCombo > 0 && !locked) comboSum += currentCombo - 1;
 
-        currentAccSum += accMultiplier;
+        if (!locked) currentAccSum += accMultiplier;
         accNotes++;
         accPoints += AccValue(judge, signedErrorMs, hasTiming);
         bool just = IsJust(judge, signedErrorMs, hasTiming);
@@ -2489,7 +2695,7 @@ public class GameManager : MonoBehaviour
             case "BAD": cntBad++; break;
             case "MISS": cntMiss++; break;
         }
-        if (hasTiming && judge != "MISS")
+        if (hasTiming && judge != "MISS" && !mercied)
         {
             errorSumMs += signedErrorMs; timedCount++;
             recErrors.Add((float)signedErrorMs);
@@ -2501,11 +2707,75 @@ public class GameManager : MonoBehaviour
         }
 
         UpdateUI();
-        ShowJudgmentImage(judge);
+        // UNKNOWN UI: 화면에 보이는 판정 글자는 무작위
+        string shown = GameModes.Play.UnknownUi ? RandomJudgeText() : (just && SettingsStore.Current.ShowJustPerfect ? "JUST" : judge);
+        ShowJudgmentImage(shown == "JUST" ? "EXCELLENT" : shown);
         // JUST PERFECT 는 화면에 'PERFECT' 그대로 (설정 > 게임플레이 > JUST PERFECT 표시 를 켜면 'JUST PERFECT')
-        if (simpleSkin != null) simpleSkin.OnJudge(just && SettingsStore.Current.ShowJustPerfect ? "JUST" : judge);
-        ApplyLife(judge, false);
+        if (simpleSkin != null) simpleSkin.OnJudge(shown);
+        ApplyLife(judge, false, just);
         RecordJudge(judge);
+        CheckModeCrash(judge, just);
+    }
+
+    // =====================================================================
+    //  게임 모드 — 판정 · LIFE · 점수 · 화면
+    // =====================================================================
+    // LAZY: 놓친 노트(판정 범위를 지나감)를 LazyChance 확률로 JUST PERFECT 처리. NoteObject 가 MISS 내기 직전에 물어봄
+    //  롱노트 머리면 그 롱노트는 끝까지 자동으로 눌린 것으로 (틱 · 끝도 JUST PERFECT)
+    private readonly HashSet<NoteData> autoHeld = new HashSet<NoteData>();
+    public bool TryLazySave(NoteData n)
+    {
+        if (!GameModes.Play.Lazy || isFailed || IsTestMode || n == null || n.IsHit) return false;
+        if (uiRng.NextDouble() >= GameModes.LazyChance) return false;
+        n.IsHit = true;
+        ProcessHit("EXCELLENT", 0.0, false);                 // 오차 기록 없이 JUST PERFECT
+        if (n.IsRedNote && redFx != null) redFx.Tap(n);
+        else for (int w = 0; w < Mathf.Max(1, n.Width); w++) if (n.Lane + w < 4) SpawnHitEffect(n.Lane + w, n);
+        if (NoteTypes.IsLongHead(n.Type) && n.NextLongNote != null)
+        {
+            autoHeld.Add(n);
+            RegisterActiveLongNote(n, GetTickInterval(n.HitTime));
+        }
+        return true;
+    }
+    // COMBO BREAK: 콤보가 끊긴 시각부터 ComboBreakLockSeconds 동안 점수를 얻지 못함
+    private double scoreLockUntil = double.NegativeInfinity;
+    public bool ScoreLocked { get { return GameModes.Play.ComboBreak && currentPlayTime < scoreLockUntil; } }
+    private void OnComboBroken()
+    {
+        if (GameModes.Play.ComboBreak) scoreLockUntil = currentPlayTime + GameModes.ComboBreakLockSeconds;
+    }
+
+    // PERFECTIONIST · PERFECTIONIST+ · ONE CHANCE: 조건을 어기면 즉시 TRACK CRASH (FAILED)
+    private void CheckModeCrash(string judge, bool just)
+    {
+        if (isFailed || IsTestMode) return;
+        if (GameModes.Play.Modes.Length == 0) return;
+        bool crash = (GameModes.Play.OneChance && judge == "MISS")
+                  || (GameModes.Play.Perfectionist && judge != "EXCELLENT")
+                  || (GameModes.Play.PerfectionistPlus && !just);
+        if (!crash) return;
+        Debug.Log($"[Mode] TRACK CRASH ({judge}{(judge == "EXCELLENT" ? " / not JUST" : "")})");
+        life = 0.0;
+        StartFail();
+    }
+
+    // LIFE 를 쓰지 않는 판(무한): GAME SETTING · IMMORTAL
+    public bool LifeInfinite { get { return IsTestMode || GameModes.Play.Immortal; } }
+    // STRICT: 곡이 진행될수록 LIFE 최대치가 100 → 50
+    public double LifeCap { get { return GameModes.Play.Strict && !IsTestMode ? 100.0 - (100.0 - GameModes.StrictMinCap) * PlayProgress() : 100.0; } }
+
+    // UNKNOWN UI: 화면에 보이는 점수 · 콤보 (판정이 날 때마다 새 무작위 값)
+    private readonly System.Random uiRng = new System.Random();
+    private int fakeCombo, fakeScore;
+    private static readonly string[] FakeJudges = { "JUST", "EXCELLENT", "EXCELLENT", "GREAT", "GOOD", "BAD", "MISS" };
+    public int DisplayCombo { get { return GameModes.Play.UnknownUi ? fakeCombo : currentCombo; } }
+    public int DisplayScore { get { return GameModes.Play.UnknownUi ? fakeScore : ComputeScore(); } }
+    private string RandomJudgeText() { return FakeJudges[uiRng.Next(FakeJudges.Length)]; }
+    private void ScrambleUi()
+    {
+        fakeCombo = uiRng.Next(4) == 0 ? 0 : uiRng.Next(1, Math.Max(100, chartJudgeCount + 1));
+        fakeScore = uiRng.Next(0, GameModes.MaxScoreWithModes + 1);
     }
 
     // 결과창 판정 타임라인 / LIFE 그래프용 기록
@@ -2586,6 +2856,8 @@ public class GameManager : MonoBehaviour
         finishHoldTimer = 0f; finishRoutineStarted = false;
         clearChecked = false; clearEffectPlaying = false;
         comboSum = 0; life = 100.0; isFailed = false; failSpeed = 1f; endUiAlpha = 1f;
+        scoreLockUntil = double.NegativeInfinity;
+        autoHeld.Clear();
         recProgress.Clear(); recJudge.Clear(); recLife.Clear(); recErrors.Clear();
         fastCount = slowCount = 0; failProgress = -1f;
     }
@@ -2745,7 +3017,11 @@ public class GameManager : MonoBehaviour
         if (n <= 0) return 0;
         double judge = JudgeScoreMax * currentAccSum / n;
         double combo = n > 1 ? ComboScoreMax * 2.0 / ((double)(n - 1) * n) * comboSum : (maxCombo >= 1 ? ComboScoreMax : 0);
-        return Mathf.Clamp((int)Math.Round(judge + combo), 0, MaxScore);
+        int baseScore = Mathf.Clamp((int)Math.Round(judge + combo), 0, MaxScore);
+        // 게임 모드 점수 배율 (고른 모드 배율의 곱, 최대 300% = 3,000,000)
+        double k = GameModes.Play.ScoreMultiplier;
+        if (Math.Abs(k - 1.0) < 1e-9) return baseScore;
+        return (int)Math.Min(GameModes.MaxScoreWithModes, Math.Round(baseScore * k));
     }
 
     // =====================================================================
@@ -2757,9 +3033,16 @@ public class GameManager : MonoBehaviour
     //   MISS      : - 100 × (1750 / N) × 5%          N = 전체 노트 수(틱 포함)
     //   99.3 이상이면 100. 0 이 되면 FAILED.
     // =====================================================================
-    private void ApplyLife(string judge, bool isTick)
+    //  게임 모드
+    //   IMMORTAL : 항상 100 (GAME SETTING 과 같음)
+    //   MAXIMUM  : GREAT 미만이면 감소 → GOOD -2.5% (BAD · MISS 는 원래대로 감소)  (× 1750/N)
+    //   ULTIMATE : PERFECT 미만이면 감소, GREAT 미만이면 크게 감소
+    //              → GREAT -2%, GOOD -5%, BAD -7%, MISS -10% (× 1750/N, 놓친 틱은 2배)
+    //   CLUTCH   : (LIFE 규칙은 그대로, 판정 범위만 넓어짐)
+    //   STRICT   : 위로는 LifeCap 까지만
+    private void ApplyLife(string judge, bool isTick, bool just = true)
     {
-        if (IsTestMode) { life = 100.0; return; }   // GAME SETTING: LIFE 무한 (항상 가득, 줄지 않음)
+        if (LifeInfinite) { life = 100.0; return; }   // GAME SETTING · IMMORTAL: LIFE 무한 (항상 가득, 줄지 않음)
         if (!LifeEnabled || isFailed || chartJudgeCount <= 0) return;
         // [완화] 한 번에 오르는 양은 최대 5%, 한 노트로 깎이는 양은 최대 20%
         //  (예전에는 노트 수가 적은 채보에서 MISS 한 번에 20% 넘게 깎일 수 있었다)
@@ -2775,9 +3058,25 @@ public class GameManager : MonoBehaviour
             case "BAD": delta = -damage * 0.03; break;
             case "MISS": delta = -damage * 0.05 * (isTick ? 0.10 : 1.0); break; // 놓친 롱노트 틱은 10%
         }
+        if (GameModes.Play.Ultimate)
+        {
+            if (isTick) { if (judge == "MISS") delta *= 2.0; }
+            else switch (judge)
+            {
+                case "GREAT": delta = -damage * 0.02; break;
+                case "GOOD": delta = -damage * 0.05; break;
+                case "BAD": delta = -damage * 0.07; break;
+                case "MISS": delta = -damage * 0.10; break;
+            }
+        }
+        else if (GameModes.Play.Maximum && !isTick)
+        {
+            if (judge == "GOOD") delta = -damage * 0.025;
+        }
         delta = Math.Max(-MaxLoss, Math.Min(MaxGain, delta));
         life += delta;
         if (life >= 99.3) life = 100.0;
+        if (GameModes.Play.Strict) life = Math.Min(life, LifeCap);
         if (life <= 0.0)
         {
             life = 0.0;
@@ -2789,6 +3088,15 @@ public class GameManager : MonoBehaviour
     {
         if (IsTestMode) { life = 100.0; return; }   // GAME SETTING: FAILED 없음 (LIFE 가 바닥나면 다시 가득)
         if (isFailed) return;
+        // 게임 모드 ONE+: OnePlusChance 확률로 부활 (LIFE 30). 다시 CRASH 되면 또 확률로
+        if (GameModes.Play.OnePlus && uiRng.NextDouble() < GameModes.OnePlusChance)
+        {
+            life = GameModes.OnePlusReviveLife;
+            if (GameModes.Play.Strict) life = Math.Min(life, LifeCap);
+            GameModePopup.Show(gameObject.scene, "REVIVE", new Color(1f, 0.80f, 0.36f), 1.2f);
+            Debug.Log("[Mode] ONE+ 부활");
+            return;
+        }
         isFailed = true;
         failProgress = PlayProgress();
         finishRoutineStarted = true; // 일반 종료 흐름 대신 FAILED 흐름으로
@@ -3294,7 +3602,9 @@ public class GameManager : MonoBehaviour
             IsMv = CoreManager.Instance.IsMvOn,
             IsMidStart = IsMidStart,
             MidStartSeconds = MidStartSeconds,
-            Speed = SettingsStore.Current.SettingSpeed
+            Speed = SettingsStore.Current.SettingSpeed,
+            Modes = GameModes.Play.Modes.Select(m => (int)m).ToArray(),
+            ScoreMultiplier = GameModes.Play.ScoreMultiplier
         };
     }
 
@@ -3316,12 +3626,14 @@ public class GameManager : MonoBehaviour
 
     private void UpdateUI()
     {
-        if (currentCombo > 0) {
+        if (GameModes.Play.UnknownUi) ScrambleUi();
+        int shownCombo = DisplayCombo;
+        if (shownCombo > 0) {
             if (comboTitleImage != null) comboTitleImage.gameObject.SetActive(true);
             
             if (comboImageContainer != null) { 
                 comboImageContainer.gameObject.SetActive(true); 
-                UpdateComboImages(currentCombo, comboImageContainer, basicComboDigits);
+                UpdateComboImages(shownCombo, comboImageContainer, basicComboDigits);
             }
             
             comboAnimTimer = 1f; 

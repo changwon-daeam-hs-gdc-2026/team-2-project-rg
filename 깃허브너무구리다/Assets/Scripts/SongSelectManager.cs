@@ -14,7 +14,7 @@ using UnityEngine.UI;
 //  - 좌측: 자켓 / 곡명 / 작곡가 / 곡 길이 / 난이도 이미지 3개(ON·OFF) + 난이도 숫자 3개
 //  - 우측: 악곡 정렬표 (뷰포트 밖으로 나간 줄은 RectMask2D 로 잘림)
 //  - ← → : 곡 이동 (길게 누르면 연속 이동)   ↑ ↓ : 난이도 변경
-//  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속   ESC : 설정창   T : GAME SETTING
+//  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속   ESC : 설정창   T : GAME SETTING   M : 게임 모드
 // ============================================================
 public class SongSelectManager : MonoBehaviour
 {
@@ -209,10 +209,28 @@ public class SongSelectManager : MonoBehaviour
             SettingsStore.MarkDirty();
         };
         detailPanel.OnToggleMv = () => { if (CurrentSong.HasMV == 1) isMvOn = !isMvOn; };
-        detailPanel.OnToggleAuto = () =>
+        detailPanel.OnToggleAuto = ToggleAutoPlayMode;
+        detailPanel.OnOpenModes = OpenModeWindow;
+    }
+
+    // AUTO PLAY 는 게임 모드와 따로. 켜져 있는 동안은 모드를 고를 수 없고, 고른 모드도 적용되지 않음
+    private void ToggleAutoPlayMode()
+    {
+        if (CoreManager.Instance == null) return;
+        CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
+        Debug.Log(CoreManager.Instance.IsAutoPlay ? "AUTO PLAY 개시 (게임 모드 잠금)" : "AUTO PLAY 종료");
+    }
+
+    // M 키 / MODE 바 클릭: 게임 모드 설정창 (AUTO PLAY 중이면 열지 않고 MODE 바를 깜빡임)
+    private void OpenModeWindow()
+    {
+        if (GameModeWindow.BlocksInput || SettingsWindow.BlocksGameInput || isLeaving) return;
+        if (GameModes.Locked)
         {
-            if (CoreManager.Instance != null) CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
-        };
+            if (detailPanel != null) detailPanel.FlashModeFull();
+            return;
+        }
+        GameModeWindow.Open(gameObject.scene, detailFont != null ? detailFont : rowFont);
     }
 
     // 난이도를 바로 고르기 (패널 클릭)
@@ -472,7 +490,7 @@ public class SongSelectManager : MonoBehaviour
 
         // 설정창이 열려 있으면(또는 이번 프레임에 닫혔으면) 곡 선택 조작은 막고 화면 연출만 계속한다
         // 설정창 또는 플레이 확인 창(경고 · 알림)이 열려 있으면 곡 선택 조작을 막음
-        bool inputBlocked = SettingsWindow.BlocksGameInput || PlayConfirmDialog.IsOpen;
+        bool inputBlocked = SettingsWindow.BlocksGameInput || PlayConfirmDialog.IsOpen || GameModeWindow.BlocksInput;   // 모드 설정창이 열려 있어도 막음
         if (!inputBlocked && kb.escapeKey.wasPressedThisFrame)
         {
             SettingsWindow.Open();
@@ -487,11 +505,10 @@ public class SongSelectManager : MonoBehaviour
             if (kb.upArrowKey.wasPressedThisFrame) ChangeDifficulty(1);
             if (kb.downArrowKey.wasPressedThisFrame) ChangeDifficulty(-1);
 
-            if (kb.aKey.wasPressedThisFrame && CoreManager.Instance != null)
-            {
-                CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
-                Debug.Log(CoreManager.Instance.IsAutoPlay ? "AUTO PLAY 개시" : "AUTO PLAY 종료");
-            }
+            if (kb.aKey.wasPressedThisFrame && CoreManager.Instance != null) ToggleAutoPlayMode();
+
+            // M : 게임 모드 설정창 (MIRROR · RANDOM · HARD … 최대 3개)
+            if (kb.mKey.wasPressedThisFrame) { OpenModeWindow(); return; }
 
             // T : GAME SETTING (실제 채보로 노트 속도 · 판정 · 표시 맞추기, 5_Test 씬)
             if (kb.tKey.wasPressedThisFrame && CoreManager.Instance != null) { OpenGameSetting(); return; }

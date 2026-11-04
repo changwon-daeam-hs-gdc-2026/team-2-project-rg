@@ -197,7 +197,8 @@ public class GameInfoHud : MonoBehaviour
                                                        : FormatTime(elapsed) + " / " + FormatTime(total));
         if (!practiceApplied && !testApplied)
         {
-            scoreText.text = gm.LiveScore.ToString("N0", CultureInfo.InvariantCulture);
+            scoreText.text = gm.DisplayScore.ToString("N0", CultureInfo.InvariantCulture);   // UNKNOWN UI 면 무작위 값
+            scoreText.alpha = gm.ScoreLocked ? 0.35f : 1f;                                       // COMBO BREAK: 점수를 못 얻는 동안 흐리게
             accText.text = gm.LiveAccuracy.ToString("F2", CultureInfo.InvariantCulture) + "%";
         }
 

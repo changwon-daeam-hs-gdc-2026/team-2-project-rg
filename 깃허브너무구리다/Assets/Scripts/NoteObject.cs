@@ -46,6 +46,7 @@ public class NoteObject : MonoBehaviour
     private Color headBaseColor = Color.white;
     private Color bodyBaseColor = Color.white;
     private float appliedEndAlpha = 1f;
+    private float appliedBodyAlpha = 1f;   // 롱노트 몸통 (SHADOW 는 몸통 가운데 높이로 따로 계산)
 
     private static Sprite measureSprite;
 
@@ -231,6 +232,9 @@ public class NoteObject : MonoBehaviour
             if (bodyRenderer != null && baseBodyMaterial != null && bodyRenderer.sharedMaterial != baseBodyMaterial) bodyRenderer.sharedMaterial = baseBodyMaterial;
         }
 
+        // 게임 모드 FAKE: 가짜 노트는 어두운 보라 회색 (진짜 노트와 구별할 수 있게)
+        if (myData.IsFake) spriteRenderer.color = GameModes.FakeNoteColor;
+
         RememberBaseColors();
 
         // 층별 스크롤 속도: 노트가 속한 층의 변속 기준으로 위치를 계산한다 (롱노트 머리/꼬리는 항상 같은 층)
@@ -409,9 +413,12 @@ public class NoteObject : MonoBehaviour
         //   반대로 범위 밖인데도 노트가 남아 있었다.
         double judgeTime = GameManager.Instance.JudgeTime;
 
-        if (judgeTime - myData.HitTime > GameManager.W_BAD && !myData.IsHit)
+        // 가짜 노트(FAKE)는 그냥 지나감 (MISS 없음)
+        if (judgeTime - myData.HitTime > GameManager.W_BAD && !myData.IsHit && !myData.IsFake)
         {
-            if (NoteTypes.IsTapLike(myData.Type)) 
+            // 게임 모드 LAZY: 놓친 노트가 확률로 JUST PERFECT (살아나면 MISS 대신 아무것도 안 함)
+            if (GameManager.Instance.TryLazySave(myData)) { }
+            else if (NoteTypes.IsTapLike(myData.Type)) 
             {
                 GameManager.Instance.ProcessHit("MISS");
                 DimNote(); 
@@ -512,6 +519,7 @@ public class NoteObject : MonoBehaviour
         headBaseColor = spriteRenderer.color;
         if (bodyRenderer != null) bodyBaseColor = bodyRenderer.color;
         appliedEndAlpha = 1f;
+        appliedBodyAlpha = 1f;
     }
 
     // GameManager.EndUiAlpha (곡 종료 0.75초 페이드 / FAILED) 를 따라 투명해짐
@@ -519,10 +527,21 @@ public class NoteObject : MonoBehaviour
     {
         float a = GameManager.Instance.EndUiAlpha;
         if (missFade >= 0f) { float k = 1f - Mathf.Clamp01(missFade); a *= k * k * (3f - 2f * k); } // 놓친 롱노트: 서서히 투명
-        if (Mathf.Approximately(a, appliedEndAlpha)) return;
+        float ab = a;
+        // 게임 모드 SHADOW: 판정선에 가까워질수록 투명 (노트 높이 기준, 몸통은 몸통 가운데 높이 기준)
+        if (GameModes.Play.Shadow)
+        {
+            float line = GameManager.Instance.hitLineY;
+            a *= GameModes.ShadowAlpha(transform.position.y - line);
+            if (bodyRenderer != null && myLongBody != null && myLongBody.activeSelf)
+                ab *= GameModes.ShadowAlpha(bodyRenderer.bounds.center.y - line);
+            else ab = a;
+        }
+        if (Mathf.Approximately(a, appliedEndAlpha) && Mathf.Approximately(ab, appliedBodyAlpha)) return;
         appliedEndAlpha = a;
+        appliedBodyAlpha = ab;
         spriteRenderer.color = new Color(headBaseColor.r, headBaseColor.g, headBaseColor.b, headBaseColor.a * a);
-        if (bodyRenderer != null) bodyRenderer.color = new Color(bodyBaseColor.r, bodyBaseColor.g, bodyBaseColor.b, bodyBaseColor.a * a);
+        if (bodyRenderer != null) bodyRenderer.color = new Color(bodyBaseColor.r, bodyBaseColor.g, bodyBaseColor.b, bodyBaseColor.a * ab);
     }
 
     // SIMPLE 롱노트를 누르고 있는 동안: 몸통이 흰빛으로 밝아지며 맥박처럼 빛남
@@ -533,7 +552,7 @@ public class NoteObject : MonoBehaviour
         if (!myData.IsHit || !NoteTypes.IsLongHead(myData.Type)) return;
         float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 14f);
         Color lit = Color.Lerp(bodyBaseColor, Color.white, 0.30f + 0.20f * pulse);
-        bodyRenderer.color = new Color(lit.r, lit.g, lit.b, Mathf.Min(1f, bodyBaseColor.a * 1.15f) * appliedEndAlpha);
+        bodyRenderer.color = new Color(lit.r, lit.g, lit.b, Mathf.Min(1f, bodyBaseColor.a * 1.15f) * appliedBodyAlpha);
     }
 
     public void HideNote() {

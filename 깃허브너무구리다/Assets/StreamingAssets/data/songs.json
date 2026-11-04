@@ -13,14 +13,13 @@
     "NoteCount_INSANE": 6,
     "BarColor": "#000000",
     "HasMV": 0,
-    "ExistSongbar": 1,
+    "ExistSongbar": 0,
     "Area": "deployed(INSANE)"
   },
   {
     "Id": 2,
-    "SubName": "[ Original Song ] nightfall",
+    "SubName": "ginkiha - nightfall",
     "Difficulty_EASY": "0",
-    "Composer": "ginkiha",
     "illustration": "",
     "Vocal": "inst Ver.",
     "BPM": 92,
@@ -42,8 +41,8 @@
     "NoteCount_HARD": 806,
     "NoteCount_INSANE": 1234,
     "BarColor": "#299e9f",
-    "HasMV": 1,
-    "ExistSongbar": 1
+    "HasMV": 0,
+    "ExistSongbar": 0
   },
   {
     "Id": 4,
@@ -234,7 +233,7 @@
     "NoteCount_INSANE": 3215,
     "BarColor": "#271e24",
     "HasMV": 1,
-    "ExistSongbar": 1,
+    "ExistSongbar": 0,
     "Length": "3:02",
     "Area": "deployed(INSANE)"
   },
@@ -399,7 +398,7 @@
     "NoteCount_HARD": 0,
     "NoteCount_INSANE": 0,
     "BarColor": "None",
-    "HasMV": 0,
+    "HasMV": 1,
     "ExistSongbar": 1,
     "Length": "1:48"
   },
@@ -426,7 +425,7 @@
     "Name": "グローエンブレイス",
     "Difficulty_EASY": "00",
     "Difficulty_HARD": "00",
-    "Difficulty_INSANE": "11",
+    "Difficulty_INSANE": "13",
     "Composer": "藤永龍太郎 (Elements Garden)",
     "illustration": "吹田亜沙美 (ARIA entertainment) (MV & illust)",
     "Vocal": "白上フブキ",
@@ -438,24 +437,6 @@
     "HasMV": 1,
     "ExistSongbar": 1,
     "Length": "3:44"
-  },
-  {
-    "Id": 33,
-    "Name": "MARENOL",
-    "Difficulty_EASY": "00",
-    "Difficulty_HARD": "00",
-    "Difficulty_INSANE": "00",
-    "Composer": "LeaF",
-    "illustration": "Optie&Fiz",
-    "Vocal": "inst Ver.",
-    "BPM": 140,
-    "NoteCount_EASY": 0,
-    "NoteCount_HARD": 0,
-    "NoteCount_INSANE": 0,
-    "BarColor": "#7d6d83",
-    "HasMV": 0,
-    "ExistSongbar": 0,
-    "Length": "0:00"
   },
   {
     "Id": 34,
@@ -543,7 +524,7 @@
     "NoteCount_HARD": 806,
     "NoteCount_INSANE": 1234,
     "BarColor": "#c66782",
-    "HasMV": 1,
+    "HasMV": 0,
     "ExistSongbar": 1
   },
   {
@@ -560,7 +541,7 @@
     "NoteCount_HARD": 806,
     "NoteCount_INSANE": 1234,
     "BarColor": "#18214a",
-    "HasMV": 1,
+    "HasMV": 0,
     "ExistSongbar": 1
   },
   {
@@ -595,7 +576,7 @@
     "NoteCount_HARD": 806,
     "NoteCount_INSANE": 1234,
     "BarColor": "#7a7977",
-    "HasMV": 1,
+    "HasMV": 0,
     "ExistSongbar": 0
   },
   {
@@ -614,7 +595,8 @@
     "BarColor": "#bfa7a6",
     "HasMV": 1,
     "ExistSongbar": 1,
-    "Length": "2:12"
+    "Length": "2:12",
+    "Area": "deployed(INSANE)"
   },
   {
     "Id": 43,
@@ -756,7 +738,7 @@
     "NoteCount_INSANE": 3475,
     "BarColor": "#59afec",
     "HasMV": 0,
-    "ExistSongbar": 0,
+    "ExistSongbar": 1,
     "Length": "4:29"
   },
   {
@@ -791,7 +773,7 @@
     "NoteCount_HARD": 0,
     "NoteCount_INSANE": 2343,
     "BarColor": "#271630",
-    "HasMV": 1,
+    "HasMV": 0,
     "ExistSongbar": 1,
     "Length": "2:22",
     "Area": "deployed(INSANE)"

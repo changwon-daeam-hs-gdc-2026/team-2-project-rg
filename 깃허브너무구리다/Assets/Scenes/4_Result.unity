@@ -786,7 +786,10 @@ MonoBehaviour:
   fonts:
     title: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
     info: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+    difficulty: {fileID: 11400000, guid: 374c5492305579b499304268efdfe845, type: 2}
+    composer: {fileID: 11400000, guid: 8cb3b49c0bbd8fa4898740848360a934, type: 2}
     number: {fileID: 11400000, guid: 8cb3b49c0bbd8fa4898740848360a934, type: 2}
+    score: {fileID: 11400000, guid: 374c5492305579b499304268efdfe845, type: 2}
     label: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
     status: {fileID: 11400000, guid: 8cb3b49c0bbd8fa4898740848360a934, type: 2}
     rank: {fileID: 11400000, guid: 0a8c7609c1af5ae45a7a4abed63ef745, type: 2}
@@ -797,7 +800,9 @@ MonoBehaviour:
   monospaceNumbers: 1
   labelHeightScale: 1.05
   numberHeightScale: 1.05
+  scoreHeightScale: 1
   otherHeightScale: 1.05
+  numberGroupGap: 0.22
 --- !u!4 &921088796
 Transform:
   m_ObjectHideFlags: 0

@@ -179,6 +179,9 @@ public class DiversePlayfield : MonoBehaviour
         // 먼 쪽 끝 페이드: 화면에서 FadeScreenLength 만큼 아래 지점의 월드 y 를 찾음
         float farV = Viewport(new Vector3(laneCenterX, FarY, 0f)).y;
         float fadeStartY = WorldYAtViewport(farV - FadeScreenLength);
+        // 게임 모드 REVERSE: 레인 화면을 180도 돌림 (위아래 + 좌우. 좌우는 GameManager 가 채보 · 키를 반전해 되돌림)
+        //  (먼 쪽 페이드 계산이 끝난 뒤에 뒤집어야 이분 탐색이 맞음)
+        if (GameModes.Play.Reverse) { camU = -camU; camR = -camR; }
 
         vProj = new Vector4(projX, projY, 0f, 0f);
         vFade = new Vector4(Mathf.Min(fadeStartY, FarY - 0.05f), FarY, 0f, 0f);

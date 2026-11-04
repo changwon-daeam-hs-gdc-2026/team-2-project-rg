@@ -181,7 +181,7 @@ public class ResultData
     public string DifficultyName;   // EASY / HARD / INSANE
     public string DifficultyValue;  // 예: "13"
 
-    public int Score;               // 0 ~ 1,000,000
+    public int Score;               // 0 ~ 1,000,000 (게임 모드 배율을 곱하면 최대 3,000,000)
     public double Accuracy;         // 0 ~ 100 (%)
 
     public int Excellent;
@@ -219,6 +219,9 @@ public class ResultData
     public bool IsMidStart;
     public double MidStartSeconds;
     public double Speed = 1.0;
+    // 게임 모드 (GameMode 번호) · 점수 배율 (1 = 100%, 최대 3 = 300%)
+    public int[] Modes = new int[0];
+    public double ScoreMultiplier = 1.0;
 
     // 화면에 보여 줄 클리어 등급 (높을수록 좋음): 0 FAILED  1 CLEAR  2 FULL COMBO  3 ALL PERFECT
     public int ClearRank { get { return IsFailed ? 0 : (IsAllPerfect ? 3 : (IsFullCombo ? 2 : 1)); } }
@@ -413,6 +416,7 @@ public class NoteData
     public bool IsRedNote = false;
     public int Width = 1; 
     public bool DragTail = false;   // 드래그로 시작한 롱노트의 끝인지 (판정 · 색은 일반 롱노트 끝과 같음)
+    public bool IsFake = false;     // 게임 모드 FAKE 의 가짜 노트 (치면 LIFE 감소, 판정 · 노트 수에 안 들어감)
 
     // 층 정보 (NoteLayer.Bottom = 1층: 괄호 안 / NoteLayer.Top = 2층: 괄호 밖)
     // 기존 채보(괄호 없음)는 전부 Top(2층)으로 취급되어 동작이 바뀌지 않는다.

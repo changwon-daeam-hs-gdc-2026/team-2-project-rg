@@ -18,6 +18,7 @@ public class ResultFonts
     [Tooltip("왼쪽 난이도 줄 (예: INSANE 16). 비우면 Info")] public TMP_FontAsset difficulty;
     [Tooltip("왼쪽 곡 정보: 작곡가 줄. 비우면 Info")] public TMP_FontAsset composer;
     [Tooltip("숫자: 점수 · 정확도 · 콤보 · 판정 개수")] public TMP_FontAsset number;
+    [Tooltip("큰 점수 숫자 (SCORE 아래). 비우면 Number")] public TMP_FontAsset score;
     [Tooltip("작은 라벨: RESULT · SCORE · ACCURACY · 판정 이름 등")] public TMP_FontAsset label;
     [Tooltip("클리어 상태: ALL PERFECT / FULL COMBO / CLEAR / FAILED")] public TMP_FontAsset status;
     [Tooltip("(지금은 안 씀 — 랭크 시스템 삭제)")] public TMP_FontAsset rank;
@@ -62,6 +63,8 @@ public class ResultScreen : MonoBehaviour
     [Range(0.7f, 1.8f)] public float labelHeightScale = 1.15f;
     [Tooltip("숫자 글자: 점수 · 콤보 · 판정 개수 등 (글꼴 = Fonts > Number)")]
     [Range(0.7f, 1.8f)] public float numberHeightScale = 1f;
+    [Tooltip("큰 점수 숫자 (글꼴 = Fonts > Score, 비어 있으면 Number 값을 씀)")]
+    [Range(0.7f, 1.8f)] public float scoreHeightScale = 1f;
     [Tooltip("나머지 글자: 곡명 · 작곡가 · 난이도 · 클리어 상태 · 버튼")]
     [Range(0.7f, 1.8f)] public float otherHeightScale = 1f;
 
@@ -249,6 +252,61 @@ public class ResultScreen : MonoBehaviour
         TextMeshProUGUI comp = T(g, r.Composer ?? "", 22, TextAlignmentOptions.MidlineLeft, TextSub, fonts.composer != null ? fonts.composer : fonts.info, FontStyles.Normal);
         Box(comp.rectTransform, 160, 804, 480, 32);
         Shrink(comp, 0.7f);
+
+        // 게임 모드: 작곡가 아래 (모드가 없으면 표시 안 함)
+        //   MODE ─────────────────────────────── 240%      ← 머리줄: 이름표 + 가는 선 + 최종 점수 배율
+        //   ┃[◎] HARD   ┃[≡] SHADOW  ┃[◇] PERF..      ← 모드 칩: 왼쪽 색 막대 + 아이콘 + 이름 / 그 모드의 배율
+        //      135%        175%         200%
+        if (r.Modes != null && r.Modes.Length > 0)
+        {
+            const float X0 = 160f, Wd = 480f, HeadY = 856f, ChipY = 884f, ChipH = 46f, ChipGap = 8f, Icon = 30f;
+            var list = new List<GameMode>();
+            foreach (int m in r.Modes) if (m >= 0 && m < GameModes.All.Length) list.Add((GameMode)m);
+
+            // 머리줄
+            TextMeshProUGUI head = T(g, "MODE", 14, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
+            head.characterSpacing = 8f;
+            Box(head.rectTransform, X0, HeadY, 100f, 20f);
+            double k = r.ScoreMultiplier;
+            string kc = k > 1.0001 ? "FFFFFF" : "FFFFFF99";
+            string total = "<color=#" + kc + ">" + GameModes.Percent(k) + "</color>";   // 최종 배율만 (예: 240%)
+            TextMeshProUGUI tt = T(g, total, 17, TextAlignmentOptions.MidlineRight, TextMain, fonts.label, FontStyles.Bold);
+            tt.characterSpacing = 3f;
+            Box(tt.rectTransform, X0 + Wd - 200f, HeadY - 2f, 200f, 24f);
+            float headW = head.GetPreferredValues("MODE").x + 14f;
+            float totalW = tt.GetPreferredValues(total).x + 14f;
+            Line(g, X0 + headW, HeadY + 10f, Mathf.Max(10f, Wd - headW - totalW));
+
+            // 모드 칩 (최대 3개, 같은 폭)
+            float cw = (Wd - ChipGap * (GameModes.MaxSelected - 1)) / GameModes.MaxSelected;
+            for (int i = 0; i < list.Count; i++)
+            {
+                GameModeInfo info = GameModes.Info(list[i]);
+                float cx = X0 + i * (cw + ChipGap);
+                Image chip = SettingsUIKit.Img("ModeChip", g, Color.Lerp(new Color(0.06f, 0.065f, 0.085f, 1f), info.Color, 0.12f));
+                chip.sprite = roundSprite; chip.type = Image.Type.Sliced; chip.pixelsPerUnitMultiplier = 32f / 8f;
+                Box(chip.rectTransform, cx, ChipY, cw, ChipH);
+                // 왼쪽 색 막대: 칩과 같은 높이, 칩의 둥근 모서리 모양대로 잘림 (칩 자체를 마스크로)
+                chip.gameObject.AddComponent<Mask>().showMaskGraphic = true;
+                Image bar = SettingsUIKit.Img("Accent", chip.rectTransform, info.Color);
+                bar.rectTransform.anchorMin = new Vector2(0f, 0f); bar.rectTransform.anchorMax = new Vector2(0f, 1f);
+                bar.rectTransform.offsetMin = new Vector2(0f, 0f); bar.rectTransform.offsetMax = new Vector2(4f, 0f);
+
+                RectTransform b = GameModes.CreateBadge(chip.rectTransform, list[i], Icon);
+                b.anchorMin = b.anchorMax = new Vector2(0f, 0.5f);
+                b.pivot = new Vector2(0f, 0.5f);
+                b.anchoredPosition = new Vector2(10f, 0f);
+
+                TextMeshProUGUI nm = T(chip.rectTransform, info.Name, 14, TextAlignmentOptions.BottomLeft, TextMain, fonts.label, FontStyles.Bold);
+                nm.characterSpacing = 2f;
+                SettingsUIKit.Place(nm.rectTransform, new Vector2(0f, 0.5f), new Vector2(1f, 1f), new Vector2(Icon + 18f, 0f), new Vector2(-6f, -3f));
+                Shrink(nm, 0.65f);
+                Color pc = info.Multiplier > 1.0001 ? info.Color : new Color(1f, 1f, 1f, 0.45f);
+                TextMeshProUGUI pv = T(chip.rectTransform, GameModes.Percent(info.Multiplier), 12, TextAlignmentOptions.TopLeft, pc, fonts.label, FontStyles.Bold);
+                pv.characterSpacing = 2f;
+                SettingsUIKit.Place(pv.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0.5f), new Vector2(Icon + 18f, 3f), new Vector2(-6f, 0f));
+            }
+        }
     }
 
     private void BuildRight()
@@ -287,7 +345,7 @@ public class ResultScreen : MonoBehaviour
         TextMeshProUGUI sl = T(g1, "SCORE", 16, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
         sl.characterSpacing = 10f;
         Box(sl.rectTransform, X, 268, 120, 24);
-        scoreText = T(g1, Mono("0"), 110, TextAlignmentOptions.MidlineLeft, TextMain, fonts.number, FontStyles.Bold);
+        scoreText = T(g1, Mono("0"), 110, TextAlignmentOptions.MidlineLeft, TextMain, fonts.score != null ? fonts.score : fonts.number, FontStyles.Bold);
         Box(scoreText.rectTransform, X - 6, 290, W - BestW - 40, 124);
         if (r.IsMidStart)
         {
@@ -379,10 +437,9 @@ public class ResultScreen : MonoBehaviour
             Box(judgeCounts[k].rectTransform, X + 200, y, 220, 44);
             if (k == 0)
             {
-                // PERFECT 중 JUST PERFECT 수 (±15ms, 롱노트 중간 판정 포함)
-                TextMeshProUGUI js = T(g3, "JUST  " + Num(r.JustPerfect), 14, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
-                js.characterSpacing = 4f;
-                Box(js.rectTransform, X + 436, y, 140, 44);
+                // PERFECT 중 JUST PERFECT 수 (±15ms, 롱노트 중간 판정 포함) → PERFECT 670  +220 처럼 옆에 '+숫자'
+                TextMeshProUGUI js = T(g3, "+" + Num(r.JustPerfect), 18, TextAlignmentOptions.MidlineLeft, TextDim, fonts.number, FontStyles.Bold);
+                Box(js.rectTransform, X + 432, y, 140, 44);
             }
         }
 
@@ -613,7 +670,8 @@ public class ResultScreen : MonoBehaviour
         foreach (var t in stage.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
             float k;
-            if (fonts.label != null && t.font == fonts.label) k = labelHeightScale;
+            if (t == scoreText) k = fonts.score != null ? scoreHeightScale : (fonts.number != null ? numberHeightScale : otherHeightScale);
+            else if (fonts.label != null && t.font == fonts.label) k = labelHeightScale;
             else if (fonts.number != null && t.font == fonts.number) k = numberHeightScale;
             else k = otherHeightScale;
             if (Mathf.Abs(k - 1f) < 0.001f) continue;

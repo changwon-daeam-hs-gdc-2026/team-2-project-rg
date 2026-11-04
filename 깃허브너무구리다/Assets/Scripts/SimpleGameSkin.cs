@@ -159,6 +159,9 @@ public class SimpleGameSkin : MonoBehaviour
     // LIFE 게이지 (레인 오른쪽, 둥근 막대)
     private RectTransform lifeRoot, lifeFillRt;
     private Image lifeFill, lifeBg, lifeFlow, lifeGrad;
+    private Image lifeCapShade, lifeCapLine;      // 게임 모드 STRICT: 줄어든 LIFE 최대치 위쪽을 붉게 가림 + 상한선
+    private static readonly Color StrictShade = new Color(0.95f, 0.30f, 0.40f, 0.22f);
+    private static readonly Color StrictLine = new Color(1f, 0.42f, 0.50f, 0.95f);
 
     // 무한 LIFE 그라데이션: 아래 진한 파랑 → 가운데 하늘색 → 위 거의 흰 하늘색 (세로)
     private static Sprite infiniteGradient;
@@ -750,7 +753,7 @@ public class SimpleGameSkin : MonoBehaviour
                 PrewarmNoteMaterials();
                 if (laneBlur != null) playfield.Register(laneBlur.ShowMaterial);
                 // LIFE 바는 레인 접기(FOLD)의 영향을 받지 않음
-                foreach (var sr in new[] { wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot, wLifeFlow })
+                foreach (var sr in new[] { wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot, wLifeFlow, wLifeCapShade, wLifeCapLine })
                     if (sr != null) playfield.Apply(sr, false, false);
                 // 레인 사라짐/드러남: 양쪽 실선 · 구분선은 투명해지지 않고 '위로 빨려 올라감 / 아래에서 올라옴' 으로 움직임 (UpdateLaneHide)
                 foreach (var ln in suckLines) if (ln.sr != null) playfield.Apply(ln.sr, false, false);
@@ -775,6 +778,7 @@ public class SimpleGameSkin : MonoBehaviour
     private const float WLifeLen = 5.0f;    // 판정선에서 위로 뻗는 길이
     private const float WLifeW = 0.11f;     // 두께
     private SpriteRenderer wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot, wLifeFlow;
+    private SpriteRenderer wLifeCapShade, wLifeCapLine;   // STRICT
     private readonly List<SpriteRenderer> wLifeTicks = new List<SpriteRenderer>();
     private float lastLaneVis;
 
@@ -789,6 +793,8 @@ public class SimpleGameSkin : MonoBehaviour
         wLifeHead = WorldPiece("LifeHead", PixelSprite, x, y, WLifeW + 0.05f, 0.035f, -14);
         wLifeFoot = WorldPiece("LifeFoot", PixelSprite, x, y, WLifeW + 0.05f, 0.035f, -14); // 아래쪽 끝 표시 (위쪽 끝선과 같은 모양, 고정)
         wLifeFlow = WorldPiece("LifeInfiniteFlow", vBellSprite, x, y, WLifeW, 0.01f, -15);  // GAME SETTING 무한 LIFE: 흐르는 빛
+        wLifeCapShade = WorldPiece("LifeStrictShade", PixelSprite, x, y, WLifeW, 0.01f, -15);   // STRICT: 막힌 위쪽
+        wLifeCapLine = WorldPiece("LifeStrictLine", PixelSprite, x, y, WLifeW + 0.05f, 0.03f, -14); // STRICT: 상한선
     }
 
     private SpriteRenderer WorldPiece(string name, Sprite sprite, float x, float y, float w, float h, int order)
@@ -820,7 +826,7 @@ public class SimpleGameSkin : MonoBehaviour
         wLifeFrameL.enabled = wLifeFrameR.enabled = on;
         wLifeFrameL.color = wLifeFrameR.color = new Color(1f, 1f, 1f, 0.35f * vis);
 
-        bool infinite = gm.IsTestMode;
+        bool infinite = gm.LifeInfinite;   // GAME SETTING · IMMORTAL
         Sprite fillSprite = infinite ? InfiniteGradient : PixelSprite;
         if (wLifeFill.sprite != fillSprite)
         {
@@ -845,6 +851,24 @@ public class SimpleGameSkin : MonoBehaviour
         wLifeHead.enabled = has;
         wLifeHead.transform.position = new Vector3(x, y + h, 0f);
         wLifeHead.color = new Color(1f, 1f, 1f, 0.95f * vis);
+
+        // STRICT: LIFE 최대치(상한) 위쪽을 붉게 가리고, 상한 위치에 붉은 선
+        float cap = Mathf.Clamp01((float)gm.LifeCap / 100f);
+        bool strict = on && cap < 0.999f && !infinite;
+        if (wLifeCapShade != null)
+        {
+            wLifeCapShade.enabled = wLifeCapLine.enabled = strict;
+            if (strict)
+            {
+                float yc = y + WLifeLen * cap, hs = Mathf.Max(0.0001f, WLifeLen * (1f - cap));
+                Vector2 pz = PixelSprite.bounds.size;
+                wLifeCapShade.transform.position = new Vector3(x, yc + hs * 0.5f, 0f);
+                wLifeCapShade.transform.localScale = new Vector3(WLifeW / pz.x, hs / pz.y, 1f);
+                wLifeCapShade.color = new Color(StrictShade.r, StrictShade.g, StrictShade.b, StrictShade.a * vis);
+                wLifeCapLine.transform.position = new Vector3(x, yc, 0f);
+                wLifeCapLine.color = new Color(StrictLine.r, StrictLine.g, StrictLine.b, StrictLine.a * vis);
+            }
+        }
 
         foreach (var t in wLifeTicks)
         {
@@ -1136,10 +1160,15 @@ public class SimpleGameSkin : MonoBehaviour
         lifeFlow.rectTransform.anchorMax = new Vector2(1f, 0f);
         lifeFlow.rectTransform.pivot = new Vector2(0.5f, 0.5f);
         lifeFlow.enabled = false;
+        // STRICT: 상한 위쪽 가림 + 상한선 (UpdateLife 에서 위치 갱신)
+        lifeCapShade = SettingsUIKit.Img("StrictCap", lifeRoot, StrictShade);
+        lifeCapShade.enabled = false;
+        lifeCapLine = SettingsUIKit.Img("StrictCapLine", lifeRoot, StrictLine);
+        lifeCapLine.enabled = false;
         // SIMPLE 스킨이면 항상 LIFE 사용 (이 시점엔 아직 GameManager 에 스킨이 등록되기 전이라 gm.LifeEnabled 로 판단하면 안 됨)
         lifeRoot.gameObject.SetActive(!IsDiverse); // DIVERSE 는 레인 옆 원근 LIFE 바(UpdateWorldLife)를 씀
 
-        Key[] keys = SettingsStore.GetLaneKeys();
+        Key[] keys = gm.LaneKeys != null ? gm.LaneKeys : SettingsStore.GetLaneKeys();   // REVERSE 면 거꾸로 된 키
         for (int i = 0; i < 4; i++)
         {
             keyTexts[i] = Text(laneHud, SettingsStore.KeyDisplayName(keys[i]), 20, TextAlignmentOptions.Center, new Color(1f, 1f, 1f, 0.35f), FontStyles.Bold, F.label);
@@ -1567,7 +1596,7 @@ public class SimpleGameSkin : MonoBehaviour
     private void UpdateHudValues(float dt)
     {
         // 콤보
-        int combo = gm.Combo;
+        int combo = gm.DisplayCombo;   // UNKNOWN UI 면 무작위 값
         if (combo != lastCombo)
         {
             if (combo > lastCombo && combo > 0) comboPunch = 1f;
@@ -1627,7 +1656,10 @@ public class SimpleGameSkin : MonoBehaviour
                 lifeRoot.anchorMin = lifeRoot.anchorMax = new Vector2(0.5f, 0.5f);
                 lifeRoot.pivot = new Vector2(0.5f, 0f);
                 lifeRoot.anchoredPosition = bottom;
-                lifeRoot.sizeDelta = new Vector2(LifeBarWidth, Mathf.Max(40f, top.y - bottom.y));
+                // REVERSE(화면 180도): 판정선이 위라서 막대가 아래로 뻗음 → 막대를 뒤집어 판정선 쪽에서부터 채워지게
+                float span = top.y - bottom.y;
+                lifeRoot.localRotation = span < 0f ? Quaternion.Euler(0f, 0f, 180f) : Quaternion.identity;
+                lifeRoot.sizeDelta = new Vector2(LifeBarWidth, Mathf.Max(40f, Mathf.Abs(span)));
             }
         }
     }
@@ -1852,7 +1884,7 @@ public class SimpleGameSkin : MonoBehaviour
         float a = 1f;
         if (target <= 20f && target > 0f) a = 0.55f + 0.45f * Mathf.Abs(Mathf.Sin(Time.unscaledTime * 6f)); // 위험할 때 깜빡임
         // GAME SETTING 무한 LIFE: 밝은 푸른색 계열이 천천히 오가는 색 + 흐르는 빛
-        bool infinite = gm.IsTestMode;
+        bool infinite = gm.LifeInfinite;   // GAME SETTING · IMMORTAL
         if (infinite)
         {
             // 채움 색만 그라데이션 (lifeGrad 그림) — 그 밑 기본 채움과 바깥 빛은 하늘색
@@ -1861,6 +1893,21 @@ public class SimpleGameSkin : MonoBehaviour
         }
         lifeFill.color = new Color(c.r, c.g, c.b, a);
         lifeFill.enabled = shownLife > 0.05f;
+        if (lifeCapShade != null)
+        {
+            float cap = Mathf.Clamp01((float)gm.LifeCap / 100f);
+            bool strict = cap < 0.999f && !infinite;
+            lifeCapShade.enabled = lifeCapLine.enabled = strict;
+            if (strict)
+            {
+                RectTransform sr = lifeCapShade.rectTransform;
+                sr.anchorMin = new Vector2(0f, cap); sr.anchorMax = new Vector2(1f, 1f);
+                sr.offsetMin = new Vector2(3f, 0f); sr.offsetMax = new Vector2(-3f, -3f);
+                RectTransform lr = lifeCapLine.rectTransform;
+                lr.anchorMin = new Vector2(0f, cap); lr.anchorMax = new Vector2(1f, cap);
+                lr.offsetMin = new Vector2(-2f, -1f); lr.offsetMax = new Vector2(2f, 1f);
+            }
+        }
         if (lifeGrad != null) lifeGrad.enabled = infinite && lifeFill.enabled;
         if (lifeFlow != null)
         {
