@@ -10,15 +10,16 @@ using UnityEngine.UI;
 // 모드 설정창 (곡 선택창에서 M 키 또는 MODE 바 클릭) — 코드로 생성
 //
 //   ┌──────────────────────────────────────────────────────────────┐
-//   │ GAME MODE                                       SCORE  130%  │
-//   │ [ JUDGE 1 ]        [ RULE ]        [ CHART 1 ]               │  ← 성격별 탭 3개 (켠 모드 수)
+//   │ MODE                                      SCORE       130%  │  ← 제목 글꼴 · 크기는 곡 선택 인스펙터에서
+//   │                                           MULTIPLIER         │     (상한에 닿으면 숫자만 연한 빨강)
+//   │ [ JUDGE 1 ]   [ RULE ]   [ CHART 1 ]   [ GAUGE ]             │  ← 성격별 탭 4개 (켠 모드 수)
 //   │ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
 //   │ │[◎] EASY      │ │[◎] HARD      │ │[◎] MAXIMUM   │  ← 탭의 카드 (3열 × 최대 3줄)
 //   │ │ 설명…   120% │ │ 설명…   165% │ │ 설명…   175% │     켜진 카드: 모드 색 테두리 + 왼쪽 색 막대
 //   │ └──────────────┘ └──────────────┘ └──────────────┘            │
 //   │  …                                                           │
-//   │ [1 MIRROR] [2 HARD] [3 ─ ]                 (안내 · 경고 한 줄) │
-//   │          ARROWS MOVE  SPACE SELECT  TAB CATEGORY  BACKSPACE CLEAR  M ESC CLOSE │
+//   │ [ 1 MIRROR ] [ 2 HARD ] [ 3 EMPTY ] [  ?  RANDOM  ]          │  ← 탭처럼 같은 폭 4칸
+//   │                      TAB CATEGORY  BACKSPACE CLEAR  R RANDOM │  ← 키 안내는 셋만 (다른 키도 그대로 동작)
 //   └──────────────────────────────────────────────────────────────┘
 //
 //  조작: 방향키 이동 · SPACE / ENTER 켜고 끄기 · TAB (SHIFT+TAB) 분류 바꾸기 · BACKSPACE 모두 끄기 · M / ESC 닫기
@@ -62,6 +63,8 @@ public class GameModeWindow : MonoBehaviour
         public TextMeshProUGUI name, desc, mult;
         public GameModeBadge badge;
         public CanvasGroup cg;
+        public Image lockIcon;                 // 고를 조건이 안 맞을 때 (예: STRICT 는 HARD 이상 게이지)
+        public bool lockShown;
         public float sel, focus, pop;
     }
 
@@ -76,9 +79,16 @@ public class GameModeWindow : MonoBehaviour
     private readonly Slot[] slots = new Slot[GameModes.MaxSelected];
     private RectTransform panel;
     private CanvasGroup group;
-    private TextMeshProUGUI totalText, message, capNote;
+    private TextMeshProUGUI totalText;
+    private static readonly Color CapColor = new Color(1f, 0.60f, 0.60f, 1f);   // 배율 상한에 닿으면 연한 빨강
+    // 아래 줄: 고른 모드 3칸 + RANDOM 버튼 (위 분류 탭처럼 같은 폭 4칸)
+    private const float SlotH = 64f;
+    private Image randomBtn;
+    private GameModeBadge randomBadge;
+    private TextMeshProUGUI randomLabel;
+    private static readonly Color RandomGold = new Color(1f, 0.82f, 0.36f, 1f);
     private TMP_FontAsset bold, reg;
-    private float openT, msgT;
+    private float openT;
     private bool closing;
     private int openedFrame;
     private int focusIndex;
@@ -89,6 +99,10 @@ public class GameModeWindow : MonoBehaviour
     // =====================================================================
     //  열기 / 닫기
     // =====================================================================
+    // 제목 "MODE" 글꼴 · 크기 (곡 선택 SongSelectManager 인스펙터의 Mode Title Font · Size 에서 넣음, 비우면 기본 굵은 글꼴 · 42)
+    public static TMP_FontAsset TitleFont;
+    public static float TitleFontSize = 42f;
+
     public static void Open(Scene scene, TMP_FontAsset nameFont)
     {
         if (Instance != null || GameModes.Locked) return;   // AUTO PLAY 중에는 모드를 고를 수 없음
@@ -179,21 +193,21 @@ public class GameModeWindow : MonoBehaviour
         border.transform.SetSiblingIndex(2);
 
         // ---- 머리줄 ----
-        TextMeshProUGUI title = Txt(panel, "GAME MODE", 30, TextAlignmentOptions.MidlineLeft, TextMain, bold, FontStyles.Bold);
-        title.characterSpacing = 10f;
-        Box(title.rectTransform, Pad, 34, 500, 44);
-        TextMeshProUGUI sub = Txt(panel, "UP TO " + GameModes.MaxSelected + " MODES", 15, TextAlignmentOptions.MidlineLeft, TextDim, bold, FontStyles.Bold);
-        sub.characterSpacing = 6f;
-        Box(sub.rectTransform, Pad + 2, 76, 500, 22);
+        // 제목만 (아래 안내 글자 없음)
+        TextMeshProUGUI title = Txt(panel, "MODE", TitleFontSize > 0f ? TitleFontSize : 42f, TextAlignmentOptions.MidlineLeft, TextMain,
+                                    TitleFont != null ? TitleFont : bold, FontStyles.Bold);
+        title.characterSpacing = 12f;
+        Box(title.rectTransform, Pad, 30, 700, 62);
 
+        // 점수 배율: 왼쪽에 "SCORE / MULTIPLIER" 두 줄, 오른쪽에 큰 숫자
         TextMeshProUGUI sl = Txt(panel, "SCORE", 15, TextAlignmentOptions.MidlineRight, TextDim, bold, FontStyles.Bold);
         sl.characterSpacing = 8f;
-        Box(sl.rectTransform, PanelW - Pad - 340, 30, 160, 24);
+        Box(sl.rectTransform, PanelW - Pad - 400, 29, 220, 22);
+        TextMeshProUGUI ml = Txt(panel, "MULTIPLIER", 15, TextAlignmentOptions.MidlineRight, TextDim, bold, FontStyles.Bold);
+        ml.characterSpacing = 8f;
+        Box(ml.rectTransform, PanelW - Pad - 400, 51, 220, 22);
         totalText = Txt(panel, "100%", 40, TextAlignmentOptions.MidlineRight, TextMain, bold, FontStyles.Bold);
         Box(totalText.rectTransform, PanelW - Pad - 170, 22, 170, 56);
-        capNote = Txt(panel, "", 13, TextAlignmentOptions.MidlineRight, TextDim, bold, FontStyles.Bold);
-        capNote.characterSpacing = 4f;
-        Box(capNote.rectTransform, PanelW - Pad - 340, 76, 340, 22);
 
         // ---- 분류 탭 ----
         float tabW = (PanelW - Pad * 2f - 10f * (tabs.Length - 1)) / tabs.Length;
@@ -217,8 +231,9 @@ public class GameModeWindow : MonoBehaviour
         // ---- 카드 (분류마다 3열, 탭을 바꾸면 그 분류만 보임) ----
         float cardW = (PanelW - Pad * 2f - Gap * (Cols - 1)) / Cols;
         int[] count = new int[tabs.Length];
-        foreach (var info in GameModes.All)
+        foreach (var gmode in GameModes.DisplayOrder)
         {
+            GameModeInfo info = GameModes.Info(gmode);
             int i = count[info.Category]++;
             int col = i % Cols, row = i / Cols;
             Card c = MakeCard(info, Pad + col * (cardW + Gap), GridTop + row * (CardH + Gap), cardW);
@@ -231,36 +246,50 @@ public class GameModeWindow : MonoBehaviour
         float fy = GridTop + Rows * (CardH + Gap) + 12f;
         Image line = SettingsUIKit.Img("Line", panel, new Color(1f, 1f, 1f, 0.06f));
         Box(line.rectTransform, Pad, fy, PanelW - Pad * 2f, 1);
-        float slotW = 236f;
+        // 위 분류 탭과 같은 폭 · 간격으로 4칸 (EMPTY 3칸 + RANDOM)
+        int cells = slots.Length + 1;
+        float slotW = (PanelW - Pad * 2f - 10f * (cells - 1)) / cells;
         for (int i = 0; i < slots.Length; i++)
         {
             Slot s = new Slot();
             Image sb = Round(SettingsUIKit.Img("Slot" + i, panel, CardColor), 10f);
             s.rt = sb.rectTransform;
-            Box(s.rt, Pad + i * (slotW + 12f), fy + 18, slotW, 58);
+            Box(s.rt, Pad + i * (slotW + 10f), fy + 18, slotW, SlotH);
             s.ring = sb;
             RectTransform br = GameModes.CreateBadge(s.rt, GameMode.Mirror, 40f);
             br.anchorMin = br.anchorMax = new Vector2(0f, 0.5f);
             br.pivot = new Vector2(0f, 0.5f);
             br.anchoredPosition = new Vector2(10f, 0f);
             s.badge = br.GetComponent<GameModeBadge>();
-            s.name = Txt(s.rt, "", 16, TextAlignmentOptions.MidlineLeft, TextMain, bold, FontStyles.Bold);
+            s.name = Txt(s.rt, "", 17, TextAlignmentOptions.MidlineLeft, TextMain, bold, FontStyles.Bold);
             s.name.characterSpacing = 3f;
-            s.name.enableAutoSizing = true; s.name.fontSizeMax = 16; s.name.fontSizeMin = 11;
-            SettingsUIKit.Place(s.name.rectTransform, Vector2.zero, Vector2.one, new Vector2(60f, 0f), new Vector2(-10f, 0f));
+            s.name.enableAutoSizing = true; s.name.fontSizeMax = 17; s.name.fontSizeMin = 11;
+            SettingsUIKit.Place(s.name.rectTransform, Vector2.zero, Vector2.one, new Vector2(62f, 0f), new Vector2(-10f, 0f));
             slots[i] = s;
         }
-        message = Txt(panel, "", 16, TextAlignmentOptions.MidlineRight, TextSub, bold, FontStyles.Bold);
-        message.characterSpacing = 4f;
-        Box(message.rectTransform, PanelW - Pad - 480, fy + 18, 480, 30);
-        // 키 안내: 키캡 그림 (일시정지 · 결과창과 같은 KeyHintUI)
+        // RANDOM 버튼: 4번째 칸 전체 (곡 선택창의 R 키와 같음) — 더 큰 물음표 · 글자, 가운데 정렬
+        {
+            float rx = Pad + slots.Length * (slotW + 10f);
+            randomBtn = Round(SettingsUIKit.Img("RandomButton", panel, CardColor), 10f);
+            Box(randomBtn.rectTransform, rx, fy + 18, slotW, SlotH);
+            RectTransform content = SettingsUIKit.Rect("Content", randomBtn.rectTransform);   // 물음표 + 글자 묶음 (가운데)
+            content.anchorMin = content.anchorMax = content.pivot = new Vector2(0.5f, 0.5f);
+            content.sizeDelta = new Vector2(196f, SlotH);
+            RectTransform rb = GameModes.CreateBadge(content, GameMode.Mirror, 46f);
+            rb.anchorMin = rb.anchorMax = new Vector2(0f, 0.5f);
+            rb.pivot = new Vector2(0f, 0.5f);
+            rb.anchoredPosition = Vector2.zero;
+            randomBadge = rb.GetComponent<GameModeBadge>();
+            randomLabel = Txt(content, "RANDOM", 22, TextAlignmentOptions.MidlineLeft, TextSub, bold, FontStyles.Bold);
+            randomLabel.characterSpacing = 5f;
+            SettingsUIKit.Place(randomLabel.rectTransform, Vector2.zero, Vector2.one, new Vector2(62f, 0f), Vector2.zero);
+        }
+        // 키 안내: 키캡 그림 (일시정지 · 결과창과 같은 KeyHintUI) — TAB · BACKSPACE · R 만 표시 (나머지 키도 그대로 동작)
         RectTransform hints = KeyHintUI.Build(panel, reg, bold, new[]
         {
-            new KeyHintUI.Item("MOVE", "^LEFT", "^RIGHT", "^UP", "^DOWN"),
-            new KeyHintUI.Item("SELECT", "SPACE"),
             new KeyHintUI.Item("CATEGORY", "TAB"),
             new KeyHintUI.Item("CLEAR", "BACKSPACE"),
-            new KeyHintUI.Item("CLOSE", "M", "ESC"),
+            new KeyHintUI.Item("RANDOM", "R"),
         }, 14f, 1);
         hints.anchorMin = hints.anchorMax = new Vector2(1f, 0f);
         hints.anchoredPosition = new Vector2(-Pad, 34f);
@@ -296,6 +325,20 @@ public class GameModeWindow : MonoBehaviour
         br.anchoredPosition = new Vector2(20f, 0f);
         c.badge = br.GetComponent<GameModeBadge>();
 
+        // 자물쇠: 아이콘 오른쪽 아래에 겹쳐 (조건이 안 맞을 때만)
+        Image lb = Round(SettingsUIKit.Img("LockBg", c.rt, new Color(0.05f, 0.055f, 0.07f, 1f)), 7f);
+        lb.rectTransform.anchorMin = lb.rectTransform.anchorMax = new Vector2(0f, 0.5f);
+        lb.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+        lb.rectTransform.sizeDelta = new Vector2(26f, 26f);
+        lb.rectTransform.anchoredPosition = new Vector2(20f + 58f - 4f, -22f);
+        c.lockIcon = SettingsUIKit.Img("Lock", lb.rectTransform, WarnColor);
+        c.lockIcon.sprite = GameModeIconArt.Lock();
+        c.lockIcon.preserveAspect = true;
+        SettingsUIKit.Stretch(c.lockIcon.rectTransform);
+        c.lockIcon.rectTransform.offsetMin = new Vector2(4f, 4f);
+        c.lockIcon.rectTransform.offsetMax = new Vector2(-4f, -4f);
+        lb.gameObject.SetActive(false);
+
         c.name = Txt(c.rt, info.Name, 20, TextAlignmentOptions.TopLeft, TextMain, bold, FontStyles.Bold);
         c.name.characterSpacing = 4f;
         c.name.enableAutoSizing = true; c.name.fontSizeMax = 20; c.name.fontSizeMin = 14;
@@ -309,7 +352,7 @@ public class GameModeWindow : MonoBehaviour
         SettingsUIKit.Place(c.mult.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, -42f), new Vector2(-18f, -15f));
 
         c.desc = Txt(c.rt, info.Desc, 15, TextAlignmentOptions.TopLeft, TextSub, reg, FontStyles.Normal);
-        c.desc.enableWordWrapping = true;
+        c.desc.textWrappingMode = TextWrappingModes.Normal;
         c.desc.lineSpacing = -6f;
         c.desc.enableAutoSizing = true; c.desc.fontSizeMax = 15; c.desc.fontSizeMin = 11.5f;
         SettingsUIKit.Place(c.desc.rectTransform, Vector2.zero, Vector2.one, new Vector2(94f, 10f), new Vector2(-18f, -46f));
@@ -349,6 +392,16 @@ public class GameModeWindow : MonoBehaviour
             Card c = cards[i];
             bool on = sel.Contains(c.mode);
             bool blocked = !on && full && !sel.Exists(x => GameModes.Conflicts(x, c.mode));
+            // 고를 조건이 안 맞음 (예: STRICT — HARD 이상 게이지가 없음) → 자물쇠 + 안내 글자
+            bool reqLocked = !on && !GameModes.RequirementMet(c.mode, sel.FindAll(x => !GameModes.Conflicts(x, c.mode)));
+            if (reqLocked != c.lockShown)
+            {
+                c.lockShown = reqLocked;
+                c.lockIcon.transform.parent.gameObject.SetActive(reqLocked);
+                c.desc.text = reqLocked ? GameModes.RequirementText(c.mode) : GameModes.Info(c.mode).Desc;
+                c.desc.color = reqLocked ? WarnColor : TextSub;
+            }
+            blocked |= reqLocked;
             c.sel = Mathf.Lerp(c.sel, on ? 1f : 0f, k);
             bool focused = focusIndex >= 0 && focusIndex < view.Count && view[focusIndex] == c;
             c.focus = Mathf.Lerp(c.focus, focused ? 1f : 0f, k);
@@ -380,9 +433,6 @@ public class GameModeWindow : MonoBehaviour
         }
 
         // 안내 · 경고 글자: 잠깐 보였다 사라짐
-        msgT = Mathf.MoveTowards(msgT, 0f, dt / 2.2f);
-        Color mcol = message.color;
-        message.color = new Color(mcol.r, mcol.g, mcol.b, Mathf.Clamp01(msgT * 3f));
     }
 
     private void HandleKeys()
@@ -415,6 +465,7 @@ public class GameModeWindow : MonoBehaviour
         }
         if (kb.spaceKey.wasPressedThisFrame || kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame)
             ToggleCard(focusIndex);
+        if (kb.rKey.wasPressedThisFrame) { ToggleRandom(); return; }
         if (kb.backspaceKey.wasPressedThisFrame || kb.deleteKey.wasPressedThisFrame)
         {
             if (GameModes.Selected.Count > 0) { GameModes.Clear(); Say("ALL MODES CLEARED", TextSub); Changed(); }
@@ -438,18 +489,30 @@ public class GameModeWindow : MonoBehaviour
         if (over >= 0) { ToggleCard(over); return; }
         for (int t = 0; t < tabs.Length; t++)
             if (RectTransformUtility.RectangleContainsScreenPoint(tabs[t].rt, mp, null)) { SetTab(t); return; }
+        if (randomBtn != null && RectTransformUtility.RectangleContainsScreenPoint(randomBtn.rectTransform, mp, null)) { ToggleRandom(); return; }
         for (int i = 0; i < slots.Length; i++)
         {
             if (slots[i].badge.HasMode && RectTransformUtility.RectangleContainsScreenPoint(slots[i].rt, mp, null))
             {
                 string dummy;
                 GameModes.Toggle(slots[i].badge.Mode, out dummy);
-                Say(GameModes.Info(slots[i].badge.Mode).Name + " OFF", TextSub);
+                if (GameModes.LastDropped != null) Say(GameModes.Info(slots[i].badge.Mode).Name + " · " + GameModes.LastDropped + " OFF", TextSub);
+                else Say(GameModes.Info(slots[i].badge.Mode).Name + " OFF", TextSub);
                 Changed();
                 return;
             }
         }
         if (!RectTransformUtility.RectangleContainsScreenPoint(panel, mp, null)) Close();   // 창 바깥 클릭 = 닫기
+    }
+
+    // RANDOM 버튼 / R 키: MODE RANDOM 켜고 끄기 (켜면 시작할 때 모드 3개를 무작위로, 카드에서 모드를 고르면 꺼짐)
+    private void ToggleRandom()
+    {
+        if (GameModes.Locked) { Say("AUTO PLAY  ·  MODES DISABLED", WarnColor); return; }
+        GameModes.SetRandomPick(!GameModes.RandomPick);
+        if (GameModes.RandomPick) Say("MODE RANDOM ON  ·  PICK A MODE TO TURN IT OFF", RandomGold);
+        else Say("MODE RANDOM OFF", TextSub);
+        Changed();
     }
 
     private void ToggleCard(int index)
@@ -465,6 +528,10 @@ public class GameModeWindow : MonoBehaviour
                 Say("MAX " + GameModes.MaxSelected + " MODES  ·  TURN ONE OFF FIRST", WarnColor);
                 c.pop = 1f;
                 return;
+            case GameModes.ToggleResult.Requires:
+                Say(GameModes.RequirementText(c.mode), WarnColor, true);   // "해당 모드는 HARD 이상의 게이지를 필요로 합니다."
+                c.pop = 1f;
+                return;
             case GameModes.ToggleResult.Replaced:
                 Say(replaced + "  >  " + name, TextSub);
                 break;
@@ -475,6 +542,8 @@ public class GameModeWindow : MonoBehaviour
                 Say(name + " OFF", TextSub);
                 break;
         }
+        // 조건이 깨져 함께 꺼진 모드 (예: NORMAL 게이지로 바꾸면 STRICT 가 꺼짐)
+        if (GameModes.LastDropped != null) Say(name + " ON  ·  " + GameModes.LastDropped + " OFF (HARD 이상 게이지 필요)", WarnColor, true);
         c.pop = 1f;
         Changed();
     }
@@ -499,21 +568,26 @@ public class GameModeWindow : MonoBehaviour
         if (OnChanged != null) OnChanged();
     }
 
-    private void Say(string text, Color c)
-    {
-        message.text = text;
-        message.color = c;
-        msgT = 1f;
-    }
+    // 오른쪽 아래 안내 글자(예: MERCY ON)는 없앰 — 호출은 남겨 두고 아무것도 하지 않음
+    private void Say(string text, Color c, bool korean = false) { }
 
     private void Refresh(bool first)
     {
         lastVersion = GameModes.Version;
         var sel = GameModes.Selected;
+        bool rnd = GameModes.RandomPick && !GameModes.Locked;
         for (int i = 0; i < slots.Length; i++)
         {
             Slot s = slots[i];
-            if (i < sel.Count)
+            if (rnd)
+            {
+                // MODE RANDOM: 시작할 때 정해지므로 물음표 (곡 선택창과 같음)
+                s.badge.SetMystery(RandomGold);
+                s.name.text = "???";
+                s.name.color = RandomGold;
+                s.ring.color = Color.Lerp(CardColor, RandomGold, 0.08f);
+            }
+            else if (i < sel.Count)
             {
                 GameModeInfo info = GameModes.Info(sel[i]);
                 s.badge.Set(sel[i]);
@@ -530,9 +604,17 @@ public class GameModeWindow : MonoBehaviour
             }
         }
         double k = GameModes.MultiplierOf(sel);
-        totalText.text = GameModes.Percent(k);
-        totalText.color = k > 1.0001 ? TextMain : k < 0.9999 ? new Color(1f, 1f, 1f, 0.6f) : TextSub;
-        capNote.text = GameModes.CapReached(sel) ? "MAX " + GameModes.Percent(GameModes.MaxMultiplier) : "";
+        totalText.text = rnd ? "???%" : GameModes.Percent(k);
+        bool cap = !rnd && GameModes.CapReached(sel);           // 상한에 닿음: 숫자만 연한 빨강 (글자 추가 없음)
+        totalText.color = rnd ? RandomGold : cap ? CapColor : k > 1.0001 ? TextMain : k < 0.9999 ? new Color(1f, 1f, 1f, 0.6f) : TextSub;
+        // RANDOM 버튼: 켜지면 금색 물음표 + 금색 테두리 빛
+        if (randomBtn != null)
+        {
+            if (rnd) randomBadge.SetMystery(RandomGold); else randomBadge.SetMystery(new Color(1f, 1f, 1f, 0.45f));
+            randomLabel.color = rnd ? RandomGold : TextSub;
+            randomLabel.text = rnd ? "RANDOM  <size=70%>ON</size>" : "RANDOM  <size=70%><color=#FFFFFF66>OFF</color></size>";
+            randomBtn.color = rnd ? Color.Lerp(CardColor, RandomGold, 0.16f) : CardColor;
+        }
 
         // 탭 이름 옆에 그 분류에서 켠 모드 수
         for (int t = 0; t < tabs.Length; t++)
@@ -569,7 +651,7 @@ public class GameModeWindow : MonoBehaviour
         t.richText = true;
         t.raycastTarget = false;
         t.overflowMode = TextOverflowModes.Overflow;
-        t.enableWordWrapping = false;
+        t.textWrappingMode = TextWrappingModes.NoWrap;
         return t;
     }
 }

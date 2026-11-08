@@ -181,7 +181,7 @@ public class SettingsWindow : MonoBehaviour
     private void EnsureEventSystem()
     {
         if (EventSystem.current != null) return;
-        if (FindObjectOfType<EventSystem>() != null) return;
+        if (FindFirstObjectByType<EventSystem>() != null) return;
 
         createdEventSystem = new GameObject("SettingsEventSystem");
         createdEventSystem.transform.SetParent(transform, false);
@@ -526,7 +526,7 @@ public class SettingsWindow : MonoBehaviour
             {
                 if (CoreManager.Instance == null || GameManager.Instance != null) { SetStatus("곡 선택창에서만 열 수 있습니다."); return; }
                 Hide();
-                SongSelectManager ssm = FindObjectOfType<SongSelectManager>();
+                SongSelectManager ssm = FindFirstObjectByType<SongSelectManager>();
                 if (ssm != null) ssm.OpenGameSetting(); else CoreManager.Instance.LoadTestScene();
             }, out gt);
             K.Rounded((Image)open.targetGraphic, 8f);
@@ -606,7 +606,7 @@ public class SettingsWindow : MonoBehaviour
     private void BuildJudgePage(Transform page)
     {
         Section(page, "판정 글자");
-        SwitchRow(page, "JUST PERFECT 표시", "±15ms 안의 PERFECT 를 JUST PERFECT 로 표시 (끄면 PERFECT)",
+        SwitchRow(page, "JUST 표시", "±20ms 안의 PERFECT 를 JUST 로 표시 (흰 글자 + 빛번짐, 끄면 PERFECT)",
             () => S.ShowJustPerfect, on => { S.ShowJustPerfect = on; Changed(); });
 
         SwitchRow(page, "FAST / SLOW 표시", "판정 아래 오차 표시 (빠르면 -ms, 늦으면 +ms)",

@@ -11,7 +11,7 @@ using UnityEngine.UI;
 //
 //   ┌ 왼쪽: 타이밍 ─────────────┐                ┌ 오른쪽 ──────────────┐
 //   │ 노트 속도      [-]  x4.5  [+] │                │ FAST / SLOW     (●━) │
-//   │ 판정 오프셋    [-] +12ms  [+] │   레인 · 채보   │ JUST PERFECT    (●━) │
+//   │ 판정 오프셋    [-] +12ms  [+] │   레인 · 채보   │ JUST            (●━) │
 //   │ 오디오 오프셋  [-]   0ms  [+] │   (계속 반복)   │ 판정 그래프     (●━) │
 //   │ 최근 평균 -8.3ms → [반영]     │                │ AUTO PLAY       (●━) │
 //   └──────────────────────────────┘                │ [처음부터]  [나가기]  │
@@ -157,7 +157,7 @@ public class GameSettingPanel : MonoBehaviour
         y += 4f;
         y = ToggleRow(right, y, "FAST / SLOW", "판정 글자 아래에 오차를 보여 줍니다. 빨리 치면 -ms, 늦게 치면 +ms.",
             () => S.ShowFastSlow, v => S.ShowFastSlow = v);
-        y = ToggleRow(right, y, "JUST PERFECT", "±15ms 안에 친 PERFECT를 JUST PERFECT로 따로 표시합니다.",
+        y = ToggleRow(right, y, "JUST", "±20ms 안에 친 PERFECT를 JUST로 따로 표시합니다.",
             () => S.ShowJustPerfect, v => S.ShowJustPerfect = v);
         y = ToggleRow(right, y, "판정 그래프", "화면 아래에 칠 때 나타난 오차를 눈금으로 표시합니다.",
             () => S.ShowHitErrorBar, v => { S.ShowHitErrorBar = v; gm.SetHitErrorMeter(v); });

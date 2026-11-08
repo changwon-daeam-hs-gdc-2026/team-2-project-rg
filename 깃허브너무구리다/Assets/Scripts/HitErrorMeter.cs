@@ -81,7 +81,7 @@ public class HitErrorMeter : MonoBehaviour
         Band(wGood, JudgeColors[2]);
         Band(wGreat, JudgeColors[1]);
         Band(wPerfect, JudgeColors[0]);
-        Band(GameManager.JustWindowMs / 1000.0, new Color(1f, 1f, 1f, 1f));   // JUST PERFECT (±15ms) — 가장 안쪽 흰 띠
+        Band(GameManager.JustWindowMs / 1000.0, new Color(1f, 1f, 1f, 1f));   // JUST (±20ms, ULTIMATE ±13ms) — 가장 안쪽 흰 띠
 
         // 눈금 풀
         for (int i = 0; i < TickCount; i++)
@@ -135,7 +135,7 @@ public class HitErrorMeter : MonoBehaviour
             avgShown = Mathf.Lerp(avgShown, avgMs, 1f - Mathf.Exp(-dt * 10f));
             avgMarker.anchoredPosition = new Vector2(X(avgShown), avgMarker.anchoredPosition.y);
         }
-        float a = gm != null ? gm.EndUiAlpha : 1f;
+        float a = gm != null ? (gm.HideAllUi ? 0f : gm.EndUiAlpha) : 1f;   // UNKNOWN UI: 숨김
         if (!Mathf.Approximately(group.alpha, a)) group.alpha = a;
     }
 

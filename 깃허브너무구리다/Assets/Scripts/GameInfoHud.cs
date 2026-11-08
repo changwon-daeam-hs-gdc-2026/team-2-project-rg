@@ -11,7 +11,7 @@ using UnityEngine.UI;
 //   맨 위       곡 진행 막대 (흰색)
 //   왼쪽 위     곡명 · 작곡가 (레인을 침범하지 않도록 폭 자동 제한)
 //   오른쪽 위   난이도 (EZ / HD / INS + 수치) · 남은 시간 · 경과/전체 시간
-//   왼쪽 아래   AUTO · SPEED
+//   왼쪽 아래   이번 판의 게임 모드 (아이콘 + 점수 배율) · AUTO · SPEED
 //   오른쪽 아래 SCORE · 점수 · 정확도
 //
 //  - 설정 > GAMEPLAY > INFORMATION UI 로 켜고 끔 (게임 중에 바꿔도 바로 반영)
@@ -62,12 +62,64 @@ public class GameInfoHud : MonoBehaviour
         return hud;
     }
 
-    // 텍스트로 쓰는 짧은 난이도 표기: "<color=#..>INS</color>  15"
+    // 텍스트로 쓰는 난이도 표기: "<color=#..>INSANE</color>  15" (이름은 줄이지 않고 끝까지)
     public static string DifficultyLabel(SongData song, int level)
     {
-        Color dc = DifficultyHelper.GetColor(level);
-        return "<color=#" + ColorUtility.ToHtmlStringRGB(dc) + ">" + DifficultyHelper.GetShortName(level) + "</color>  "
-             + SongRowUI.FormatDifficulty(DifficultyHelper.GetValue(song, level));
+        return DifficultyLabel(level, SongRowUI.FormatDifficulty(DifficultyHelper.GetValue(song, level)));
+    }
+    // 값을 직접 넣는 판 (숨긴 난이도 공개 연출에서 씀)
+    public static string DifficultyLabel(int level, string value)
+    {
+        // SPECIAL 은 솜사탕 그라데이션 (글자마다 색)
+        return DifficultyHelper.ColoredText(level, DifficultyHelper.GetName(level)) + "  " + value;
+    }
+
+    // ---- 숨긴 난이도 공개 연출: ? → (숫자가 빠르게 돌다가) 실제 값으로 멈추며 툭 커졌다 제자리 ----
+    private SongData hudSong;
+    private int hudLevel = 2;
+    private bool diffRevealDone;
+    private float diffRevealT = -1f, diffShuffleTimer;
+    private const float RevealShuffle = 0.55f, RevealSettle = 0.35f;
+
+    private void UpdateDifficultyReveal(float dt)
+    {
+        if (diffText == null) return;
+        if (!diffRevealDone && gm.DifficultyRevealed) { diffRevealDone = true; diffRevealT = 0f; diffShuffleTimer = 0f; }
+        if (diffRevealT < 0f) return;
+        diffRevealT += dt;
+        string real = SongRowUI.FormatDifficulty(DifficultyHelper.GetRealValue(hudSong, hudLevel));
+        if (diffRevealT < RevealShuffle)
+        {
+            // 숫자 돌리기 (0.045초마다 아무 숫자)
+            diffShuffleTimer -= dt;
+            if (diffShuffleTimer <= 0f)
+            {
+                diffShuffleTimer = 0.045f;
+                diffText.text = DifficultyLabel(hudLevel, "<alpha=#AA>" + UnityEngine.Random.Range(1, 21));
+            }
+            diffText.rectTransform.localScale = Vector3.one * (1f + 0.04f * Mathf.Sin(diffRevealT * 60f));
+            return;
+        }
+        float k = Mathf.Clamp01((diffRevealT - RevealShuffle) / RevealSettle);
+        if (diffText.text.Contains("<alpha")) diffText.text = DifficultyLabel(hudLevel, real);   // 돌던 숫자 → 실제 값
+        diffText.rectTransform.localScale = Vector3.one * (1f + 0.32f * (1f - k) * (1f - k));
+        if (k >= 1f) { diffText.rectTransform.localScale = Vector3.one; diffRevealT = -1f; }
+    }
+
+    // ---- SIMPLE-DIVERSE: 레인 사라짐 / 드러남 때 위쪽 UI 전체가 위로 빨려 올라가고 / 위에서 내려옴 ----
+    private const float FoldLift = 320f;      // 화면 밖으로 완전히 나가는 높이
+    private void UpdateTopFold()
+    {
+        if (!diverse || hudRoot == null) return;
+        float up = 0f;
+        if (gm.HasLaneFolds)
+        {
+            bool hiding;
+            float p = gm.LaneHideProgress(gm.currentPlayTime, out hiding);
+            up = hiding ? p * p * p                    // 사라짐: 점점 빨라지며 위로 빨려 들어감 (레인 선과 같은 ease-in)
+                        : Mathf.Pow(1f - p, 3f);       // 드러남: 위에서 빠르게 내려와 부드럽게 멈춤 (ease-out)
+        }
+        hudRoot.anchoredPosition = new Vector2(0f, up * FoldLift);
     }
 
     private void Build()
@@ -116,6 +168,7 @@ public class GameInfoHud : MonoBehaviour
         SimpleSkinFonts F = gm.simpleSkinFonts ?? new SimpleSkinFonts();
         SongData song = CoreManager.Instance != null ? CoreManager.Instance.CurrentSongData : null;
         int level = CoreManager.Instance != null ? CoreManager.Instance.CurrentLevelId : 2;
+        hudSong = song; hudLevel = level;
 
         diverse = SimpleGameSkin.Active != null && SimpleGameSkin.Active.IsDiverse;
         if (diverse) { BuildDiverse(F, song, level); return; }
@@ -136,6 +189,8 @@ public class GameInfoHud : MonoBehaviour
         composerText = Text(song != null ? song.Composer ?? "" : "", 19, TextAlignmentOptions.TopLeft, TextSub, FontStyles.Normal, F.info);
         Place(composerText.rectTransform, new Vector2(0f, 1f), Margin, 76f, 760f, 28f);
         AutoShrink(composerText, 0.75f);
+        // 곡 정보 바로 아래: COMBO BREAK 로 점수를 못 얻는 동안 [아이콘] + 남은 시간 막대
+        BuildScoreLockRow(new Vector2(0f, 1f), Margin - 6f, 112f, F.label);
 
         // ---- 오른쪽 위: 난이도 + 남은 시간 ----
         diffText = Text(DifficultyLabel(song, level), 26, TextAlignmentOptions.TopRight, Color.white, FontStyles.Bold, F.info);
@@ -167,6 +222,109 @@ public class GameInfoHud : MonoBehaviour
         TextMeshProUGUI autoText = Text("AUTO", 20, TextAlignmentOptions.BottomLeft, new Color(1f, 0.85f, 0.4f), FontStyles.Bold, F.info);
         Place(autoText.rectTransform, new Vector2(0f, 0f), Margin, 62f, 200f, 30f);
         autoText.gameObject.SetActive(CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay);
+
+        // ---- 왼쪽 아래 (SPEED 위): 이번 판의 게임 모드 ----
+        BuildModeRow(new Vector2(0f, 0f), Margin, 66f, F.info);
+    }
+
+    // =====================================================================
+    //  COMBO BREAK: 콤보가 끊겨 점수를 못 얻는 동안 [아이콘] COMBO BREAK ━━━━━━━  2.4s
+    //   막대는 남은 시간만큼 (3초 → 0), 끝나면 사라짐. 결과창과 같은 모드 아이콘
+    // =====================================================================
+    private RectTransform lockRow;
+    private CanvasGroup lockGroup;
+    private Image lockFill;
+    private TextMeshProUGUI lockTime;
+    private float lockVis;
+
+    private void BuildScoreLockRow(Vector2 corner, float x, float y, TMP_FontAsset font)
+    {
+        if (!GameModes.Play.ComboBreak || gm.IsTestMode) return;
+        const float W = 320f, H = 44f, Icon = 30f;
+        GameModeInfo info = GameModes.Info(GameMode.ComboBreak);
+        Image box = SettingsUIKit.Img("ScoreLock", hudRoot, new Color(0.02f, 0.025f, 0.04f, 0.78f));
+        box.sprite = GameModes.BadgeSprite; box.type = Image.Type.Sliced; box.pixelsPerUnitMultiplier = 16f / 10f;
+        lockRow = box.rectTransform;
+        Place(lockRow, corner, x, y, W, H);
+        lockGroup = box.gameObject.AddComponent<CanvasGroup>();
+        lockGroup.alpha = 0f;
+
+        RectTransform b = GameModes.CreateBadge(lockRow, GameMode.ComboBreak, Icon);
+        b.anchorMin = b.anchorMax = b.pivot = new Vector2(0f, 0.5f);
+        b.anchoredPosition = new Vector2(8f, 0f);
+
+        TextMeshProUGUI label = Text("COMBO BREAK", 12, TextAlignmentOptions.BottomLeft, info.Color, FontStyles.Bold, font);
+        label.transform.SetParent(lockRow, false);
+        label.characterSpacing = 5f;
+        RectTransform lr = label.rectTransform;
+        lr.anchorMin = lr.anchorMax = lr.pivot = new Vector2(0f, 1f);
+        lr.anchoredPosition = new Vector2(Icon + 18f, -5f);
+        lr.sizeDelta = new Vector2(200f, 18f);
+
+        // 남은 시간 막대
+        Image track = SettingsUIKit.Img("Track", lockRow, new Color(1f, 1f, 1f, 0.14f));
+        RectTransform tr = track.rectTransform;
+        tr.anchorMin = tr.anchorMax = tr.pivot = new Vector2(0f, 0f);
+        tr.anchoredPosition = new Vector2(Icon + 18f, 10f);
+        tr.sizeDelta = new Vector2(W - Icon - 18f - 64f, 5f);
+        lockFill = SettingsUIKit.Img("Fill", tr, info.Color);
+        lockFill.rectTransform.anchorMin = Vector2.zero;
+        lockFill.rectTransform.anchorMax = new Vector2(1f, 1f);
+        lockFill.rectTransform.offsetMin = lockFill.rectTransform.offsetMax = Vector2.zero;
+
+        lockTime = Text("", 18, TextAlignmentOptions.MidlineRight, Color.white, FontStyles.Bold, font);
+        lockTime.transform.SetParent(lockRow, false);
+        RectTransform tt = lockTime.rectTransform;
+        tt.anchorMin = tt.anchorMax = tt.pivot = new Vector2(1f, 0.5f);
+        tt.anchoredPosition = new Vector2(-10f, 0f);
+        tt.sizeDelta = new Vector2(58f, H);
+    }
+
+    private void UpdateScoreLockRow(float dt)
+    {
+        if (lockRow == null) return;
+        double left = gm.ScoreLockLeft;
+        bool on = left > 0.0;
+        lockVis = Mathf.MoveTowards(lockVis, on ? 1f : 0f, dt / (on ? 0.12f : 0.3f));
+        lockGroup.alpha = lockVis;
+        lockRow.localScale = Vector3.one * Mathf.Lerp(0.96f, 1f, lockVis);
+        if (on)
+        {
+            float k = Mathf.Clamp01((float)(left / GameModes.ComboBreakLockSeconds));
+            lockFill.rectTransform.anchorMax = new Vector2(k, 1f);
+            lockTime.text = left.ToString("0.0", CultureInfo.InvariantCulture) + "s";
+        }
+    }
+
+    // 이번 판의 게임 모드 상자: 어두운 둥근 상자 안에 아이콘 배지들 + 최종 점수 배율 숫자
+    //  모드가 없으면 표시 안 함.  corner · x · y 는 Place 와 같은 기준 (그 귀퉁이에서 안쪽으로)
+    private void BuildModeRow(Vector2 corner, float x, float y, TMP_FontAsset font)
+    {
+        GameMode[] modes = GameModes.Play.Modes;
+        if (modes == null || modes.Length == 0 || gm.IsTestMode) return;
+        const float S = 32f, G = 6f, Pad = 8f;
+
+        Image box = SettingsUIKit.Img("GameModes", hudRoot, new Color(0.02f, 0.025f, 0.04f, 0.78f));
+        box.sprite = GameModes.BadgeSprite; box.type = Image.Type.Sliced; box.pixelsPerUnitMultiplier = 16f / 9f;
+        RectTransform row = box.rectTransform;
+
+        float iconsW = modes.Length * (S + G) - G;
+        for (int i = 0; i < modes.Length; i++)
+        {
+            RectTransform b = GameModes.CreateBadge(row, modes[i], S);
+            b.anchorMin = b.anchorMax = b.pivot = new Vector2(0f, 0.5f);
+            b.anchoredPosition = new Vector2(Pad + i * (S + G), 0f);
+        }
+        string label = GameModes.Percent(GameModes.Play.ScoreMultiplier);   // 배율 숫자만 (예: 406%)
+        TextMeshProUGUI k = Text(label, 20, TextAlignmentOptions.MidlineLeft, Color.white, FontStyles.Bold, font);
+        k.transform.SetParent(row, false);
+        k.characterSpacing = 2f;
+        float textW = k.GetPreferredValues(label).x + 2f;
+        RectTransform kr = k.rectTransform;
+        kr.anchorMin = kr.anchorMax = kr.pivot = new Vector2(0f, 0.5f);
+        kr.anchoredPosition = new Vector2(Pad + iconsW + 10f, 0f);
+        kr.sizeDelta = new Vector2(textW, S);
+        Place(row, corner, x, y, Pad + iconsW + 10f + textW + Pad + 4f, S + Pad * 2f);
     }
 
     void Update()
@@ -178,13 +336,15 @@ public class GameInfoHud : MonoBehaviour
 
         bool started = gm.LaneIntroStarted || gm.currentState == GameState.Playing;
         fadeIn = Mathf.MoveTowards(fadeIn, started ? 1f : 0f, dt / 0.35f);
-        group.alpha = shown ? fadeIn * gm.EndUiAlpha : 0f;
+        group.alpha = shown && !gm.HideAllUi ? fadeIn * gm.EndUiAlpha : 0f;   // UNKNOWN UI: 곡 정보 · 점수 등 모두 숨김
 
         // 일시정지 중에는 일시정지 UI 캔버스보다 아래, 플레이 중에는 게임 UI 위
         hostCanvas.sortingOrder = gm.currentState == GameState.Paused ? refSortingOrder - 1 : refSortingOrder + 1;
 
         if (!testApplied && gm.IsTestMode) ApplyTestMode();
         if (!practiceApplied && gm.IsMidStart) ApplyPractice();
+        UpdateTopFold();
+        UpdateDifficultyReveal(dt);
         if (group.alpha <= 0.001f) return;
 
         double start, end;
@@ -197,11 +357,12 @@ public class GameInfoHud : MonoBehaviour
                                                        : FormatTime(elapsed) + " / " + FormatTime(total));
         if (!practiceApplied && !testApplied)
         {
-            scoreText.text = gm.DisplayScore.ToString("N0", CultureInfo.InvariantCulture);   // UNKNOWN UI 면 무작위 값
+            scoreText.text = gm.DisplayScore.ToString("N0", CultureInfo.InvariantCulture);
             scoreText.alpha = gm.ScoreLocked ? 0.35f : 1f;                                       // COMBO BREAK: 점수를 못 얻는 동안 흐리게
             accText.text = gm.LiveAccuracy.ToString("F2", CultureInfo.InvariantCulture) + "%";
         }
 
+        UpdateScoreLockRow(dt);
         if (!diverse) LimitHeaderWidth();
     }
 
@@ -211,7 +372,7 @@ public class GameInfoHud : MonoBehaviour
     //   ┌────────────┐ ┌──────────────────────┐ ┌──────────────────┐
     //   │ INS 15  x4.5│ │      곡 제목          │ │ SCORE   987,654  │   ← 맨 위 띠 (어두운 반투명)
     //   └──────────╲  ╲━━━━━━ 진행 막대 ━━━━━━╱  ╱─────────────────┘   (선은 진행 막대 하나뿐)
-    //     -1:23 / 2:08      작곡가                         98.76%
+    //   [◎][≡][◇] 415%      작곡가                         98.76%      ← 왼쪽: 게임 모드 상자 (모드가 있을 때)
     // =====================================================================
     private bool diverse;
     private Sprite tabCenter, tabLeft, tabRight, vGrad;
@@ -242,13 +403,13 @@ public class GameInfoHud : MonoBehaviour
         sp.transform.SetParent(lt.transform, false);
         Place(sp.rectTransform, new Vector2(0f, 1f), 250f, 0f, 120f, BandH);
 
-        // 왼쪽 탭 아래: 남은 시간 / 전체 시간 (+ AUTO)
-        timeText = Text("", 20, TextAlignmentOptions.TopLeft, Color.white, FontStyles.Bold, F.number);
-        Place(timeText.rectTransform, new Vector2(0f, 1f), 44f, BandH + 12f, 360f, 30f);
+        // 왼쪽 탭 아래 (난이도 밑): 게임 모드 상자 또는 AUTO  (남은 시간 표시는 없음)
+        //  AUTO PLAY 면 모드가 적용되지 않으므로 둘이 함께 나오지 않음
         TextMeshProUGUI auto = Text("AUTO", 18, TextAlignmentOptions.TopLeft, new Color(1f, 0.85f, 0.4f), FontStyles.Bold, F.label);
         auto.characterSpacing = 8f;
-        Place(auto.rectTransform, new Vector2(0f, 1f), 44f, BandH + 44f, 200f, 26f);
+        Place(auto.rectTransform, new Vector2(0f, 1f), 44f, BandH + 12f, 200f, 26f);
         auto.gameObject.SetActive(CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay);
+        BuildModeRow(new Vector2(0f, 1f), 36f, BandH + 10f, F.info);
 
         // ---- 가운데 탭: 곡 제목 + 진행 막대 ----
         Image ct = Tab(tabCenter, dark, new Vector2(0.5f, 1f), 0f, 760f, BandH + 10f);
@@ -266,6 +427,8 @@ public class GameInfoHud : MonoBehaviour
         composerText = Text(song != null ? song.Composer ?? "" : "", 18, TextAlignmentOptions.Top, TextSub, FontStyles.Normal, F.info);
         Place(composerText.rectTransform, new Vector2(0.5f, 1f), 0f, BandH + 18f, 600f, 26f);
         AutoShrink(composerText, 0.75f);
+        // 곡 정보(제목 · 작곡가) 바로 아래 가운데: COMBO BREAK 남은 시간
+        BuildScoreLockRow(new Vector2(0.5f, 1f), 0f, BandH + 50f, F.label);
 
         // ---- 오른쪽 탭: SCORE + 점수 ----
         Image rt = Tab(tabRight, dark, new Vector2(1f, 1f), 0f, 520f, BandH);

@@ -9,7 +9,7 @@ using UnityEngine.UI;
 // 곡 선택 화면: 좌측 자켓 아래 플레이 설정 (코드로 생성, 씬 설정 필요 없음)
 //
 //   ┌──────────────────────────────────────────┐
-//   │    EASY    │    HARD    │   INSANE   │   ← 난이도 바: 위에 이름, 아래에 숫자 (있는 그대로)
+//   │    EASY    │    HARD    │   INSANE   │   ← 난이도 바: 위에 이름, 아래에 숫자 (있는 그대로). SPECIAL 이 있는 곡은 4칸
 //   │     3      │     7      │░░░  11  ░░░│      고른 칸: 아래에 난이도 색 그라데이션 밑줄 (가운데가 진하고 양끝으로 옅어짐)
 //   └────────────────────────━━━━━━━━━━━━━━┘      + 밑줄 위로 은은한 색 빛, 이름이 난이도 색으로 (칸 전체를 덮지 않음)
 //   ┌──────────────────────────────────────────┐
@@ -45,11 +45,12 @@ public class SongDetailPanel : MonoBehaviour
     private const float PadX = 18f;           // 칸 안 좌우 여백
     private const float BottomMargin = 28f;
 
-    public Action<int> OnSelectDifficulty;   // 1 EASY 2 HARD 3 INSANE
+    public Action<int> OnSelectDifficulty;   // 1 EASY 2 HARD 3 INSANE 4 SPECIAL
     public Action<double> OnSpeedDelta;      // 배속 증감 (0.1 단위)
     public Action OnToggleMv;
     public Action OnToggleAuto;
     public Action OnOpenModes;               // MODE 바 클릭 → 모드 설정창
+    public Action OnToggleRandom;            // (예전 MODE 바 옆 RANDOM 버튼 — 지금은 쓰지 않음. R 키 · 모드 설정창 버튼)
 
     private RectTransform rt;
     private RectTransform[] refs;
@@ -62,10 +63,16 @@ public class SongDetailPanel : MonoBehaviour
     private Image diffBlock;      // 고른 칸 아래 그라데이션 밑줄
     private Image diffGlow;       // 밑줄 위로 옅게 번지는 빛
     private const float GlowTop = 0.55f;  // 위로 번지는 빛이 닿는 높이 (칸 높이 비율, 1 = 칸 꼭대기까지) — 낮게
-    private readonly TextMeshProUGUI[] diffName = new TextMeshProUGUI[4];
-    private readonly TextMeshProUGUI[] diffValue = new TextMeshProUGUI[4];
-    private readonly Image[] diffSep = new Image[2];
-    private readonly bool[] diffAvailable = new bool[4];
+    // 난이도 칸: 보통 3칸, SPECIAL 이 있는 곡은 4칸, SPECIAL 하나뿐인 곡은 SPECIAL 1칸 (인덱스 = 난이도 번호 1 ~ 4)
+    private readonly TextMeshProUGUI[] diffName = new TextMeshProUGUI[5];
+    private readonly TextMeshProUGUI[] diffValue = new TextMeshProUGUI[5];
+    private readonly RectTransform[] diffHit = new RectTransform[5];
+    private readonly Image[] diffSep = new Image[3];
+    private readonly bool[] diffAvailable = new bool[5];
+    private int cellCount = 3;
+    private readonly int[] cellSlot = { -1, 0, 1, 2, -1 };   // 난이도 → 몇 번째 칸인가 (-1 = 안 보임)
+    private string cellLayout = "123";
+    private float cellW = -1f;                // 색 밑줄 · 빛의 폭 (칸 수가 바뀌면 부드럽게)
     private int selLevel;
     private float blockPos = -1f;
     private Color blockColor = Color.white, blockTarget = Color.white;
@@ -82,6 +89,7 @@ public class SongDetailPanel : MonoBehaviour
     private TextMeshProUGUI modeLabel, modeValue;
     private readonly GameModeBadge[] modeSlots = new GameModeBadge[GameModes.MaxSelected];
     private float modeFlash;                  // 3개가 차서 더 못 고를 때 잠깐 빨갛게
+    public static readonly Color RandomColor = new Color(1f, 0.82f, 0.36f, 1f);
 
     private string lastKey = "";
 
@@ -109,7 +117,7 @@ public class SongDetailPanel : MonoBehaviour
     {
         float y = 0f;
 
-        // ---- 난이도 바 (한 상자, 3칸) ----
+        // ---- 난이도 바 (한 상자, 3칸 / SPECIAL 이 있으면 4칸) ----
         //  상자 자체를 마스크로 써서 색 블록이 둥근 모서리 모양대로 잘림 → 바 안에 빈틈 없이 딱 맞게
         Image dbox = Box("Difficulty", 0f, 1f, y, DiffH, false);
         dbox.gameObject.AddComponent<Mask>().showMaskGraphic = true;
@@ -128,30 +136,20 @@ public class SongDetailPanel : MonoBehaviour
         diffBlock.rectTransform.pivot = new Vector2(0.5f, 0f);
         diffBlock.rectTransform.offsetMin = new Vector2(2f, 5f);
         diffBlock.rectTransform.offsetMax = new Vector2(-2f, 10f);
-        for (int i = 0; i < 2; i++)
-        {
+        for (int i = 0; i < diffSep.Length; i++)
             diffSep[i] = SettingsUIKit.Img("Sep", diffBox, LineColor);
-            RectTransform s = diffSep[i].rectTransform;
-            s.anchorMin = new Vector2((i + 1) / 3f, 0.25f);
-            s.anchorMax = new Vector2((i + 1) / 3f, 0.75f);
-            s.offsetMin = new Vector2(-0.5f, 0f);
-            s.offsetMax = new Vector2(0.5f, 0f);
-        }
-        for (int d = 1; d <= 3; d++)
+        for (int d = 1; d <= 4; d++)
         {
             int level = d;
-            float x0 = (d - 1) / 3f, x1 = d / 3f;
             // 두 줄: 위에 이름(작게), 아래에 숫자(크게 · 굵게), 둘 다 칸 가운데 정렬
             diffName[d] = Txt(diffBox, "", 14, TextAlignmentOptions.Bottom, TextSub);
             diffName[d].characterSpacing = 4f;
-            Span(diffName[d].rectTransform, x0, x1, 0.60f, 0.88f, 6f, 6f);
-            diffName[d].rectTransform.offsetMin = new Vector2(6f, NameValueGap * 0.5f);
+            diffName[d].enableAutoSizing = true; diffName[d].fontSizeMax = 14; diffName[d].fontSizeMin = 10;
             diffValue[d] = Txt(diffBox, "", 30, TextAlignmentOptions.Top, TextMain);
             diffValue[d].fontStyle = FontStyles.Bold;
-            Span(diffValue[d].rectTransform, x0, x1, 0.10f, 0.60f, 6f, 6f);
-            diffValue[d].rectTransform.offsetMax = new Vector2(-6f, -NameValueGap * 0.5f);
-            Hit(diffBox, x0, x1, () => { if (diffAvailable[level] && OnSelectDifficulty != null) OnSelectDifficulty(level); });
+            diffHit[d] = Hit(diffBox, 0f, 1f, () => { if (diffAvailable[level] && OnSelectDifficulty != null) OnSelectDifficulty(level); });
         }
+        LayoutDiffCells("123");
         y += DiffH + RowGap;
 
         // ---- 배속 (한 상자: 왼쪽 절반 -0.1 / 오른쪽 절반 +0.1) ----
@@ -187,6 +185,7 @@ public class SongDetailPanel : MonoBehaviour
             modeSlots[i] = br.GetComponent<GameModeBadge>();
             foreach (var g in br.GetComponentsInChildren<Graphic>()) g.raycastTarget = false;
         }
+        // (MODE RANDOM 켜고 끄기는 R 키 · 모드 설정창의 RANDOM 버튼)
         modeValue = Txt(mb, "", 20, TextAlignmentOptions.MidlineRight, TextMain);
         modeValue.fontStyle = FontStyles.Bold;
         Span(modeValue.rectTransform, 0f, 1f, 0f, 1f, PadX, PadX);
@@ -237,20 +236,25 @@ public class SongDetailPanel : MonoBehaviour
         if (key == lastKey) return;
         lastKey = key;
 
-        for (int d = 1; d <= 3; d++)
+        // 칸 구성: SPECIAL 하나뿐 → "4" / SPECIAL 도 있음 → "1234" / 보통 → "123"
+        string layout = DifficultyHelper.IsSpecialOnly(song) ? "4" : DifficultyHelper.HasSpecial(song) ? "1234" : "123";
+        if (layout != cellLayout) LayoutDiffCells(layout);
+        for (int d = 1; d <= 4; d++) diffAvailable[d] = false;
+        selLevel = 0;
+        for (int d = 1; d <= 4; d++)
         {
+            if (cellSlot[d] < 0) continue;
             string val = DifficultyHelper.GetValue(song, d);
             diffAvailable[d] = SongRowUI.IsDifficultyAvailable(val);
             bool sel = d == level && diffAvailable[d];
-            diffName[d].text = DifficultyHelper.GetName(d);
+            // SPECIAL 을 고르면 이름이 솜사탕 그라데이션 (글자마다 색)
+            diffName[d].text = d == DifficultyHelper.Special && sel ? DifficultyHelper.SpecialGradientText("SPECIAL") : DifficultyHelper.GetName(d);
             diffValue[d].text = diffAvailable[d] ? SongRowUI.FormatDifficulty(val) : "-";   // 있는 그대로 (9 → 9, 두 자리로 채우지 않음)
             Color dc = DifficultyHelper.GetColor(d);
-            diffName[d].color = sel ? new Color(dc.r, dc.g, dc.b, 1f) : (diffAvailable[d] ? TextSub : TextDim);
+            diffName[d].color = sel ? (d == DifficultyHelper.Special ? Color.white : new Color(dc.r, dc.g, dc.b, 1f)) : (diffAvailable[d] ? TextSub : TextDim);
             diffValue[d].color = diffAvailable[d] ? TextMain : TextDim;
             if (sel) { selLevel = d; blockTarget = DifficultyHelper.GetColor(d); }
         }
-        // 구분선은 항상 보임 (선택 표시가 칸을 덮지 않으므로)
-        for (int i = 0; i < 2; i++) diffSep[i].enabled = true;
 
         speedValue.text = speed.ToString("0.0", CultureInfo.InvariantCulture);
 
@@ -263,9 +267,11 @@ public class SongDetailPanel : MonoBehaviour
     private void ShowModes()
     {
         var sel = GameModes.Selected;
+        bool rnd = GameModes.RandomPick;
         for (int i = 0; i < modeSlots.Length; i++)
         {
-            if (i < sel.Count) modeSlots[i].Set(sel[i]);
+            if (rnd) modeSlots[i].SetMystery(RandomColor);          // MODE RANDOM: 시작할 때 정해지므로 물음표
+            else if (i < sel.Count) modeSlots[i].Set(sel[i]);
             else modeSlots[i].SetEmpty();
         }
         // AUTO PLAY 중: 모드를 고를 수 없고 적용도 안 됨 → 아이콘을 흐리게, 오른쪽에 AUTO PLAY
@@ -273,6 +279,7 @@ public class SongDetailPanel : MonoBehaviour
         for (int i = 0; i < modeSlots.Length; i++) modeSlots[i].SetDim(locked);
         double k = GameModes.MultiplierOf(sel);
         if (locked) { modeValue.text = "AUTO PLAY"; modeValue.color = TextDim; modeValue.fontSize = 14; }
+        else if (rnd) { modeValue.text = "???%"; modeValue.color = RandomColor; modeValue.fontSize = 20; }   // MODE RANDOM: 배율은 시작할 때 정해짐
         else if (sel.Count == 0) { modeValue.text = "NONE"; modeValue.color = TextDim; modeValue.fontSize = 16; }
         else
         {
@@ -308,18 +315,28 @@ public class SongDetailPanel : MonoBehaviour
         // 난이도 색 블록: 고른 칸으로 미끄러져 이동 + 색이 바뀜
         if (selLevel >= 1)
         {
-            float target = (selLevel - 1) / 3f;
+            float w = 1f / cellCount;                                   // 칸 폭 (3칸 / 4칸)
+            cellW = cellW < 0f ? w : Mathf.Lerp(cellW, w, k);
+            float target = Mathf.Max(0, cellSlot[selLevel]) * w;
             blockPos = blockPos < 0f ? target : Mathf.Lerp(blockPos, target, k);
             if (Mathf.Abs(blockPos - target) < 0.0005f) blockPos = target;
+            if (Mathf.Abs(cellW - w) < 0.0005f) cellW = w;
             diffBlock.rectTransform.anchorMin = new Vector2(blockPos, 0f);
-            diffBlock.rectTransform.anchorMax = new Vector2(blockPos + 1f / 3f, 0f);
+            diffBlock.rectTransform.anchorMax = new Vector2(blockPos + cellW, 0f);
             diffGlow.rectTransform.anchorMin = new Vector2(blockPos, 0f);
-            diffGlow.rectTransform.anchorMax = new Vector2(blockPos + 1f / 3f, GlowTop);
+            diffGlow.rectTransform.anchorMax = new Vector2(blockPos + cellW, GlowTop);
+            // SPECIAL: 밑줄 · 빛을 솜사탕 그라데이션 그림으로 바꾸고(왼쪽 → 오른쪽 분홍 · 라벤더 · 하늘 · 민트) 색은 흰색
+            bool sp = selLevel == DifficultyHelper.Special;
+            Sprite lineSp = sp ? SpecialArt.Tint(NoteArt.HBellSprite) : NoteArt.HBellSprite;
+            Sprite glowSp = sp ? SpecialArt.Tint(UpGlowSprite()) : UpGlowSprite();
+            if (diffBlock.sprite != lineSp) diffBlock.sprite = lineSp;
+            if (diffGlow.sprite != glowSp) diffGlow.sprite = glowSp;
+            if (sp) blockTarget = Color.white;
             blockColor = Color.Lerp(blockColor, blockTarget, k);
             diffBlock.color = new Color(blockColor.r, blockColor.g, blockColor.b, 1f);
             diffGlow.color = new Color(blockColor.r, blockColor.g, blockColor.b, 0.30f);
         }
-        diffBlock.enabled = diffGlow.enabled = selLevel >= 1 && diffAvailable[selLevel];
+        diffBlock.enabled = diffGlow.enabled = selLevel >= 1 && cellSlot[selLevel] >= 0 && diffAvailable[selLevel];
 
         TickSwitch(mv, k);
         TickSwitch(auto, k);
@@ -414,11 +431,46 @@ public class SongDetailPanel : MonoBehaviour
         r.offsetMax = new Vector2(0f, h);
     }
 
-    private void Hit(RectTransform parent, float x0, float x1, Action onClick)
+    private RectTransform Hit(RectTransform parent, float x0, float x1, Action onClick)
     {
         Image hit = SettingsUIKit.Img("Hit", parent, new Color(1f, 1f, 1f, 0f), true);
         Span(hit.rectTransform, x0, x1, 0f, 1f, 0f, 0f);
         AddButton(hit.gameObject, onClick);
+        return hit.rectTransform;
+    }
+
+    // 난이도 칸 나누기: layout = 보이는 난이도 번호를 순서대로 ("123" · "1234" · "4"). 칸은 같은 폭, 사이에 구분선
+    private void LayoutDiffCells(string layout)
+    {
+        cellLayout = layout;
+        int n = layout.Length;
+        cellCount = n;
+        for (int d = 1; d <= 4; d++) cellSlot[d] = layout.IndexOf((char)('0' + d));
+        for (int i = 0; i < diffSep.Length; i++)
+        {
+            bool on = i < n - 1;
+            diffSep[i].gameObject.SetActive(on);
+            if (!on) continue;
+            RectTransform s = diffSep[i].rectTransform;
+            s.anchorMin = new Vector2((i + 1f) / n, 0.25f);
+            s.anchorMax = new Vector2((i + 1f) / n, 0.75f);
+            s.offsetMin = new Vector2(-0.5f, 0f);
+            s.offsetMax = new Vector2(0.5f, 0f);
+        }
+        for (int d = 1; d <= 4; d++)
+        {
+            bool on = cellSlot[d] >= 0;
+            diffName[d].gameObject.SetActive(on);
+            diffValue[d].gameObject.SetActive(on);
+            diffHit[d].gameObject.SetActive(on);
+            if (!on) continue;
+            float x0 = (float)cellSlot[d] / n, x1 = (cellSlot[d] + 1f) / n;
+            Span(diffName[d].rectTransform, x0, x1, 0.60f, 0.88f, 6f, 6f);
+            diffName[d].rectTransform.offsetMin = new Vector2(6f, NameValueGap * 0.5f);
+            Span(diffValue[d].rectTransform, x0, x1, 0.10f, 0.60f, 6f, 6f);
+            diffValue[d].rectTransform.offsetMax = new Vector2(-6f, -NameValueGap * 0.5f);
+            Span(diffHit[d], x0, x1, 0f, 1f, 0f, 0f);
+        }
     }
 
     private static void AddButton(GameObject go, Action onClick)

@@ -18,6 +18,7 @@ using UnityEngine.UI;
 //  CLEAR       : "TRACK COMPLETE" — 번쩍임/반짝이/빛줄기 없이 띠가 열리고 글자가 조용히 떠오르는 약한 연출
 //  FAILED      : "TRACK CRASH" — 축하가 아닌 연출. 번쩍임/반짝이/빛줄기 없음. 화면이 어둡게 가라앉고,
 //                회색 띠 위로 바랜 빨간 글자가 위에서 무겁게 내려앉은 뒤 자간이 아주 조금씩 벌어짐
+//                특정 모드(RULE)로 TRACK CRASH 되었으면 띠 아래에 그 모드 아이콘 + 이름 (ClearEffect.FailCause)
 //
 //  효과음(선택): Resources/Audio/etc/allperfect, fullcombo, complete, failed 가 있으면 재생
 // ============================================================
@@ -74,6 +75,11 @@ public class ClearEffect : MonoBehaviour
     private readonly List<Texture2D> ownedTex = new List<Texture2D>();
     private bool IsComplete { get { return type == ClearType.Clear; } }
     private bool IsQuiet { get { return IsFailed || IsComplete; } } // 번쩍임·반짝이·빛줄기 없는 연출
+
+    // TRACK CRASH 의 원인 모드 (PERFECTIONIST · ONE CHANCE · STRICT+ …). 없으면 null — Play 전에 GameManager 가 정함
+    public static GameMode? FailCause;
+    private RectTransform causeRow;
+    private CanvasGroup causeGroup;
 
     public static ClearEffect Play(Transform parent, ClearType type, int maxCombo, float holdSeconds, Action onDone)
     {
@@ -179,6 +185,32 @@ public class ClearEffect : MonoBehaviour
         title.color = IsFailed ? FailText : MainColor;
         title.rectTransform.anchoredPosition = Vector2.zero;
         title.rectTransform.sizeDelta = new Vector2(1800f, BandH);
+
+        // TRACK CRASH 원인: 띠 아래 [아이콘] 모드 이름 (가운데 정렬)
+        if (IsFailed && FailCause.HasValue)
+        {
+            GameModeInfo ci = GameModes.Info(FailCause.Value);
+            causeRow = NewObj("Cause", transform).GetComponent<RectTransform>();
+            causeRow.anchorMin = causeRow.anchorMax = causeRow.pivot = new Vector2(0.5f, 0.5f);
+            causeGroup = causeRow.gameObject.AddComponent<CanvasGroup>();
+            causeGroup.alpha = 0f;
+            const float Icon = 44f;
+            TextMeshProUGUI cn = NewText("CauseName", causeRow, ci.Name, 24f, font, FontStyles.Bold);
+            cn.characterSpacing = 8f;
+            cn.color = new Color(0.92f, 0.92f, 0.95f, 0.9f);
+            cn.alignment = TextAlignmentOptions.MidlineLeft;
+            float nameW = cn.GetPreferredValues(ci.Name).x + 4f;
+            float total = Icon + 14f + nameW;
+            RectTransform br = GameModes.CreateBadge(causeRow, FailCause.Value, Icon);
+            br.anchorMin = br.anchorMax = br.pivot = new Vector2(0.5f, 0.5f);
+            br.anchoredPosition = new Vector2(-total * 0.5f + Icon * 0.5f, 0f);
+            cn.rectTransform.anchorMin = cn.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
+            cn.rectTransform.pivot = new Vector2(0f, 0.5f);
+            cn.rectTransform.sizeDelta = new Vector2(nameW, Icon);
+            cn.rectTransform.anchoredPosition = new Vector2(-total * 0.5f + Icon + 14f, 0f);
+            causeRow.sizeDelta = new Vector2(total, Icon);
+            causeRow.anchoredPosition = new Vector2(0f, CenterY - BandH * 0.5f - 58f);
+        }
 
         if (IsAllJust)
         {
@@ -316,6 +348,14 @@ public class ClearEffect : MonoBehaviour
             title.rectTransform.localScale = Vector3.one;
             title.alpha = drop; // 닫힐 때는 띠(마스크)에 위아래로 잘리며 사라짐
             title.characterSpacing = Mathf.Lerp(0f, 8f, Smooth((t - 0.5f) / (hold + 0.6f)));
+
+            // 원인 모드 아이콘: 글자가 내려앉은 뒤 아래에서 조용히 떠오름, 닫힐 때 함께 사라짐
+            if (causeRow != null)
+            {
+                float ca = Smooth((t - 0.55f) / 0.45f) * (1f - close);
+                causeGroup.alpha = ca;
+                causeRow.anchoredPosition = new Vector2(0f, CenterY - BandH * 0.5f - 58f - 10f * (1f - Smooth((t - 0.55f) / 0.45f)));
+            }
 
             group.alpha = 1f - Smooth((close - 0.75f) / 0.25f); // 다 닫힌 뒤 남은 선만 흐려짐
             yield return null;

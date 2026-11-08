@@ -37,7 +37,7 @@ public class SettingsData
     public bool ShowKeyMarkers = true; // SIMPLE 판정선 위 노트 모양 키 자리 켜기/끄기
     public bool ShowHitErrorBar = true; // 화면 아래 판정 오차 그래프 (osu! Hit Error Meter 처럼)
     public int EffectQuality = 1;      // 히트 이펙트: 0 = 낮음 (가벼움), 1 = 높음
-    public bool ShowJustPerfect = false; // ±15ms 안의 PERFECT 를 'JUST PERFECT' 로 표시 (끄면 그냥 PERFECT)
+    public bool ShowJustPerfect = false; // ±20ms 안의 PERFECT 를 'JUST' 로 표시 (끄면 그냥 PERFECT)
     public string[] LaneKeys = { "D", "F", "J", "K" }; // UnityEngine.InputSystem.Key 이름
     // 시작 타임 조정 (초, 0 = 처음부터). 예) 109.2 → 음악을 109.2초부터 틀고, 그 뒤 2초 안의 노트는 빼고 111.2초 노트부터 내려옴
     public double StartTime = 0.0;
@@ -66,6 +66,22 @@ public class SongData
     public string Difficulty_EASY;
     public string Difficulty_HARD;
     public string Difficulty_INSANE;
+    // SPECIAL (4번 난이도, 있는 곡만): "Difficulty_SPECIAL": "14"  — 비어 있으면 SPECIAL 없음
+    //  채보 {곡ID}_4.txt, 음원 {곡ID}_4.mp3 (없으면 {곡ID}.mp3)
+    public string Difficulty_SPECIAL;
+    // 숨긴 난이도: 난이도 값을 "?" 로 두면 곡 선택 · 게임 화면에서 ? 로 보이고, 실제 값은 아래 _REALVALUE 에 적음
+    //  "Difficulty_SPECIAL": "?", "Difficulty_SPECIAL_REALVALUE": "17"
+    //  게임 중 채보의 REVEAL 줄(에디터 G + 클릭) 시점부터 실제 값이 드러남 (없으면 끝까지 ?)
+    public string Difficulty_EASY_REALVALUE;
+    public string Difficulty_HARD_REALVALUE;
+    public string Difficulty_INSANE_REALVALUE;
+    public string Difficulty_SPECIAL_REALVALUE;
+    // SPECIAL 전용 곡 정보 (비어 있으면 기본 값을 씀)
+    //  "SPECIAL_Name": "東京テディベア", "SPECIAL_SubName": " (Tokino Mary Cover)", "SPECIAL_Vocal": ""
+    //  그림: Sprites/squareimg/{곡ID}_4 · Sprites/blurimg/{곡ID}_4 · Sprites/loadimg-large/{곡ID}_4 · 선택 바 {곡ID}_4 (없으면 기본 그림)
+    public string SPECIAL_Name;
+    public string SPECIAL_SubName;
+    public string SPECIAL_Vocal;
     public string Composer;
     public string illustration; 
     public string Vocal;
@@ -81,75 +97,154 @@ public class SongData
     public int NoteCount_EASY;
     public int NoteCount_HARD;
     public int NoteCount_INSANE;
+    public int NoteCount_SPECIAL;
     public int HasMV;
     public int ExistSongbar;
-    // 영역(Area) 채보: "Area": "deployed(INSANE)"  (여러 난이도면 "deployed(HARD,INSANE)")
-    //  영역 채보는 SIMPLE-DIVERSE 스킨 전용 (다른 스킨이면 그 판만 강제로 바뀜) + 영역 전용 에디터로 열림
-    public string Area;
+    // 난이도별 잠금: 4자리 "EASY HARD INSANE SPECIAL" (0 = 열림, 1 = 잠김). 없으면 모두 열림
+    //  "LockedValue": 1010 → EASY · INSANE 잠김.  숫자 · 글자("0010") 둘 다 됨 (SongJson.Normalize 가 글자로 바꿈)
+    //  4자리보다 짧으면 앞을 0 으로 채움 (10 → 0010)
+    public string LockedValue;
     // MV 주의 경고: 값이 있으면 MV 를 켠 채로 플레이할 때 경고창(주의)이 뜬다
     //  "MvWarning": "default"  → 기본 문구 (폭력적인 장면, 유혈 및 신체 훼손 …)
     //  "MvWarning": "직접 쓴 문구\n두 번째 줄"  → 그 문구 그대로 (\n = 줄바꿈)
     public string MvWarning;
+
+    // 이 난이도로 보여 줄 곡 정보: SPECIAL(4) 이면 SPECIAL_Name · SPECIAL_SubName · SPECIAL_Vocal 로 바꾼 복사본, 아니면 그대로
+    //  (SPECIAL_Name 이 있으면 부제는 SPECIAL_SubName 만 씀 — 기본 부제가 섞이지 않게)
+    public SongData ForLevel(int levelId)
+    {
+        if (levelId != DifficultyHelper.Special) return this;
+        bool hasName = !string.IsNullOrEmpty(SPECIAL_Name), hasSub = !string.IsNullOrEmpty(SPECIAL_SubName), hasVocal = !string.IsNullOrEmpty(SPECIAL_Vocal);
+        if (!hasName && !hasSub && !hasVocal) return this;
+        SongData c = (SongData)MemberwiseClone();
+        if (hasName) c.Name = SPECIAL_Name;
+        if (hasName || hasSub) c.SubName = SPECIAL_SubName ?? "";
+        if (hasVocal) c.Vocal = SPECIAL_Vocal;
+        return c;
+    }
 }
 
-public static class AreaHelper
+// SPECIAL 전용 솜사탕 그라데이션 그림 (글자 말고 막대 · 밑줄 · 빛 같은 그림에 씀 — Image.color 는 흰색으로)
+//  Bar      : 왼쪽 → 오른쪽 그라데이션 막대 (구분선 · 로딩 막대 등)
+//  Tint(그림): 그 그림의 모양(투명도)은 그대로, 색만 왼쪽 → 오른쪽 그라데이션으로 칠한 복사본 (밑줄 · 빛 등)
+public static class SpecialArt
 {
-    // 이 곡의 이 난이도(1: EASY, 2: HARD, 3: INSANE)가 영역 채보인가
-    public static bool IsAreaLevel(SongData song, int levelId)
+    private static Sprite bar;
+    private static readonly Dictionary<Sprite, Sprite> tinted = new Dictionary<Sprite, Sprite>();
+
+    public static Sprite Bar
     {
-        if (song == null || string.IsNullOrWhiteSpace(song.Area)) return false;
-        string a = song.Area.Trim();
-        if (!a.StartsWith("deployed", StringComparison.OrdinalIgnoreCase)) return false;
-        int open = a.IndexOf('('), close = a.LastIndexOf(')');
-        if (open < 0 || close <= open) return false;
-        string name = DifficultyHelper.GetName(levelId);
-        foreach (string part in a.Substring(open + 1, close - open - 1).Split(','))
-            if (string.Equals(part.Trim(), name, StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
+        get
+        {
+            if (bar != null) return bar;
+            const int W = 256, H = 4;
+            Texture2D tex = new Texture2D(W, H, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            Color32[] px = new Color32[W * H];
+            for (int x = 0; x < W; x++)
+            {
+                Color32 c = DifficultyHelper.SpecialAt(0.85f * x / (W - 1f));
+                for (int y = 0; y < H; y++) px[y * W + x] = c;
+            }
+            tex.SetPixels32(px); tex.Apply();
+            bar = Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect);
+            bar.name = "SpecialBar";
+            return bar;
+        }
     }
+
+    public static Sprite Tint(Sprite shape)
+    {
+        if (shape == null) return Bar;
+        Sprite t;
+        if (tinted.TryGetValue(shape, out t) && t != null) return t;
+        try
+        {
+            Rect r = shape.rect;
+            int w = Mathf.RoundToInt(r.width), h = Mathf.RoundToInt(r.height);
+            Color[] src = shape.texture.GetPixels(Mathf.RoundToInt(r.x), Mathf.RoundToInt(r.y), w, h);
+            Color[] dst = new Color[src.Length];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    Color s0 = src[y * w + x];
+                    Color g = DifficultyHelper.SpecialAt(0.85f * x / Mathf.Max(1f, w - 1f));
+                    dst[y * w + x] = new Color(s0.r * g.r, s0.g * g.g, s0.b * g.b, s0.a);
+                }
+            Texture2D tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            tex.SetPixels(dst); tex.Apply();
+            t = Sprite.Create(tex, new Rect(0, 0, w, h), shape.pivot / new Vector2(Mathf.Max(1f, w), Mathf.Max(1f, h)), shape.pixelsPerUnit, 0, SpriteMeshType.FullRect, shape.border);
+            t.name = shape.name + "_Special";
+        }
+        catch (Exception) { t = Bar; }   // 읽을 수 없는 그림이면 그냥 그라데이션 막대
+        tinted[shape] = t;
+        return t;
+    }
+}
+
+// 곡 그림 경로: SPECIAL(4) 이면 '{폴더}/{곡ID}_4' 가 있을 때 그것, 없으면 '{폴더}/{곡ID}'
+//  곡 ID 그림도 없으면 같은 폴더의 '{폴더}/None' 을 씀
+//  예) SongArt.Load("Sprites/blurimg", 8, 4) → Sprites/blurimg/8_4 → (없으면) Sprites/blurimg/8 → (없으면) Sprites/blurimg/None
+public static class SongArt
+{
+    public const string Fallback = "None";
+    private static readonly Dictionary<string, bool> exists = new Dictionary<string, bool>();
+
+    private static bool Exists(string path)
+    {
+        bool ok;
+        if (!exists.TryGetValue(path, out ok)) { ok = Resources.Load<Sprite>(path) != null; exists[path] = ok; }
+        return ok;
+    }
+
+    public static string Path(string folder, int songId, int levelId)
+    {
+        if (levelId == DifficultyHelper.Special)
+        {
+            string sp = folder + "/" + songId + "_4";
+            if (Exists(sp)) return sp;
+        }
+        return Path(folder, songId);
+    }
+
+    // 기본 그림 경로 ('{폴더}/{곡ID}', 없으면 '{폴더}/None')
+    public static string Path(string folder, int songId)
+    {
+        string p = folder + "/" + songId;
+        if (Exists(p)) return p;
+        return folder + "/" + Fallback;
+    }
+
+    public static Sprite Load(string folder, int songId, int levelId) { return Resources.Load<Sprite>(Path(folder, songId, levelId)); }
+    public static Sprite Load(string folder, int songId) { return Resources.Load<Sprite>(Path(folder, songId)); }
 }
 
 // 노트 종류 번호
-//  1 탭 · 2 롱노트 머리 · 3 롱노트 꼬리 · 4 마디선 · 7 화살표(>>> 밝은 파랑) · 8 화살표(<<< 밝은 노랑) · 11/12/13 RED
+//  1 탭 · 2 롱노트 머리 · 3 롱노트 꼬리 · 4 마디선 · 11/12/13 RED
 //  9 드래그 노트 · 10 드래그로 시작하는 롱노트 머리 (끝은 일반 롱노트 끝 3 으로 닫음 — 몸통 · 끝은 일반 롱노트 색)
-//  화살표 노트는 판정이 탭과 똑같은 장식 노트 (주로 영역 경계에 둠)
-//  드래그 노트: 판정은 JUST PERFECT / MISS 두 가지뿐.
+//  (7 · 8 화살표 노트는 삭제됨. 예전 채보에 남아 있으면 읽을 때 일반 탭 1 로 바꿈 → NoteTypes.Normalize)
+//  드래그 노트: 판정은 JUST / MISS 두 가지뿐.
 //   (1) 판정선에 닿을 때 그 레인 키가 눌려 있으면 성공  또는  (2) 일반 노트처럼 판정선에 닿을 때 키를 누르면 성공
 public static class NoteTypes
 {
-    public const int Tap = 1, LongHead = 2, LongTail = 3, Measure = 4, ArrowRight = 7, ArrowLeft = 8, Drag = 9, DragLongHead = 10;
-    public static bool IsArrow(int type) { return type == ArrowRight || type == ArrowLeft; }
+    public const int Tap = 1, LongHead = 2, LongTail = 3, Measure = 4, Drag = 9, DragLongHead = 10;
+    // 슬라이드(레인을 넘나드는 롱노트)의 중계점: 꺾이는 지점, 그 순간 눌려 있으면 JUST (노트 수에 들어감)
+    public const int SlideRelay = 14;
+    public static bool IsSlideRelay(int type) { return type == SlideRelay; }
+    // 예전 채보의 화살표 노트(7, 8)는 일반 탭으로
+    public static int Normalize(int type) { return type == 7 || type == 8 ? Tap : type; }
     public static bool IsDrag(int type) { return type == Drag || type == DragLongHead; }
     // 롱노트 머리 (일반 · RED · 드래그 시작)
     public static bool IsLongHead(int type) { return type == LongHead || type == 12 || type == DragLongHead; }
-    // 한 번 치고 끝나는 노트 (탭 · 화살표 · RED 탭 · 드래그)
-    public static bool IsTapLike(int type) { return type == Tap || type == 11 || IsArrow(type) || type == Drag; }
+    // 한 번 치고 끝나는 노트 (탭 · RED 탭 · 드래그)
+    public static bool IsTapLike(int type) { return type == Tap || type == 11 || type == Drag; }
 }
 
-// 영역: 이 시각부터 mask 의 레인들이 영역 (mask 0 = 영역 끝). 채보: AREA, 마디, 분자, 분모, 1100
-public class AreaEvent { public double Time; public int Mask; }
 // 레인 접기 / 펼치기. 채보: FOLD, 마디, 분자, 분모, 초  /  UNFOLD, 마디, 분자, 분모, 초
 public class LaneFoldEvent { public double Time; public bool Fold; public double Duration; }
-
-public static class AreaMask
-{
-    // "1100" → 레인 0,1 (왼쪽부터). 1 = 영역
-    public static int Parse(string s)
-    {
-        int m = 0;
-        if (string.IsNullOrEmpty(s)) return 0;
-        s = s.Trim();
-        for (int i = 0; i < s.Length && i < 4; i++) if (s[i] == '1') m |= 1 << i;
-        return m;
-    }
-    public static string Format(int mask)
-    {
-        char[] c = new char[4];
-        for (int i = 0; i < 4; i++) c[i] = (mask & (1 << i)) != 0 ? '1' : '0';
-        return new string(c);
-    }
-    public static bool Has(int mask, int lane) { return lane >= 0 && lane < 4 && (mask & (1 << lane)) != 0; }
-}
 
 // songs.json 읽기 전 손질
 public static class SongJson
@@ -163,6 +258,8 @@ public static class SongJson
         // "MvWarning": true / 1  →  "default" (기본 경고 문구),  false / 0 → "" (경고 없음)
         json = System.Text.RegularExpressions.Regex.Replace(json, "(\"MvWarning\"\\s*:\\s*)(true|1)(?=\\s*[,}])", "$1\"default\"");
         json = System.Text.RegularExpressions.Regex.Replace(json, "(\"MvWarning\"\\s*:\\s*)(false|0)(?=\\s*[,}])", "$1\"\"");
+        // "LockedValue": 1010 / 0010  →  "1010" / "0010" (앞의 0 이 사라지지 않게 글자로)
+        json = System.Text.RegularExpressions.Regex.Replace(json, "(\"LockedValue\"\\s*:\\s*)([0-9]+)", "$1\"$2\"");
         return json;
     }
 }
@@ -193,8 +290,8 @@ public class ResultData
     public int TotalNotes;          // 채보 전체 노트 수 (롱노트 중간 틱 포함)
     public bool IsFullCombo;        // MAX COMBO = 전체 노트 수
     public bool IsAllPerfect;       // + EXCELLENT 수 = 전체 노트 수 (표기: ALL PERFECT)
-    public bool IsAllJust;          // + 모든 판정이 JUST PERFECT (TP 100%) — ALL PERFECT 보다 위
-    public int JustPerfect;         // JUST PERFECT 수 (PERFECT 중 ±15ms 안, 롱노트 중간 판정 포함)
+    public bool IsAllJust;          // + 모든 판정이 JUST (TP 100%) — ALL PERFECT 보다 위
+    public int JustPerfect;         // JUST 수 (PERFECT 중 ±20ms 안, 롱노트 중간 판정 포함)
     public bool IsFailed;           // LIFE 가 0 이 되어 중간에 끝남 (SIMPLE 스킨)
 
     // 전체 판정 오차(ms). FAST = 음수(-), SLOW = 양수(+)
@@ -222,6 +319,7 @@ public class ResultData
     // 게임 모드 (GameMode 번호) · 점수 배율 (1 = 100%, 최대 3 = 300%)
     public int[] Modes = new int[0];
     public double ScoreMultiplier = 1.0;
+    public double RandomBonus = 0.0;    // MODE RANDOM 보너스 (0.25 = +25%p). ScoreMultiplier 에 이미 들어 있음
 
     // 화면에 보여 줄 클리어 등급 (높을수록 좋음): 0 FAILED  1 CLEAR  2 FULL COMBO  3 ALL PERFECT
     public int ClearRank { get { return IsFailed ? 0 : (IsAllPerfect ? 3 : (IsFullCombo ? 2 : 1)); } }
@@ -273,34 +371,136 @@ public class ResultData
 // 난이도 번호(1: EASY, 2: HARD, 3: INSANE) → 이름 / 수치 / 색
 public static class DifficultyHelper
 {
-    public static string GetName(int levelId)
+    // 그 난이도가 잠겼는가 (songs.json "LockedValue": 4자리, 앞부터 EASY · HARD · INSANE · SPECIAL, 1 = 잠김)
+    public static bool IsLevelLocked(SongData song, int levelId)
     {
-        switch (levelId) { case 1: return "EASY"; case 3: return "INSANE"; default: return "HARD"; }
+        if (song == null || string.IsNullOrWhiteSpace(song.LockedValue) || levelId < 1 || levelId > 4) return false;
+        string v = song.LockedValue.Trim();
+        var digits = new System.Text.StringBuilder();
+        foreach (char ch in v) if (ch >= '0' && ch <= '9') digits.Append(ch);
+        string d = digits.ToString();
+        if (d.Length == 0) return false;
+        if (d.Length < 4) d = new string('0', 4 - d.Length) + d;   // 10 → 0010
+        return d[levelId - 1] == '1';
     }
 
-    // 게임 화면용 짧은 표기: EZ / HD / INS
+    // 곡 전체 잠금(ExistSongbar 2) 또는 그 난이도 잠금
+    public static bool IsPlayLocked(SongData song, int levelId)
+    {
+        return song != null && (song.ExistSongbar == 2 || IsLevelLocked(song, levelId));
+    }
+
+    public static string GetName(int levelId)
+    {
+        switch (levelId) { case 1: return "EASY"; case 3: return "INSANE"; case 4: return "SPECIAL"; default: return "HARD"; }
+    }
+
+    public const int Special = 4;   // SPECIAL 난이도 번호
+    // 이 곡에 SPECIAL 이 있는가 ("Difficulty_SPECIAL" 값이 있고 "00" 이 아니면. 숫자 말고 "DIVERSITY" 같은 글자여도 됨)
+    public static bool HasSpecial(SongData song)
+    {
+        return song != null && SongRowUI.IsDifficultyAvailable(song.Difficulty_SPECIAL);
+    }
+
+    // SPECIAL 하나만 있는 곡 (EASY · HARD · INSANE 이 모두 없음) — 기존 3난이도 목록에는 나오지 않고 SPECIAL 목록에만 나옴
+    public static bool IsSpecialOnly(SongData song)
+    {
+        return HasSpecial(song)
+            && !SongRowUI.IsDifficultyAvailable(song.Difficulty_EASY)
+            && !SongRowUI.IsDifficultyAvailable(song.Difficulty_HARD)
+            && !SongRowUI.IsDifficultyAvailable(song.Difficulty_INSANE);
+    }
+    // 이 곡에서 고를 수 있는 가장 높은 난이도 번호 (SPECIAL 이 있으면 4, 없으면 3)
+    public static int MaxLevel(SongData song) { return HasSpecial(song) ? Special : 3; }
+
+    // 게임 화면용 짧은 표기: EZ / HD / INS / SP
     public static string GetShortName(int levelId)
     {
-        switch (levelId) { case 1: return "EZ"; case 3: return "INS"; default: return "HD"; }
+        switch (levelId) { case 1: return "EZ"; case 3: return "INS"; case 4: return "SP"; default: return "HD"; }
     }
 
     public static string GetValue(SongData song, int levelId)
     {
         if (song == null) return "";
-        switch (levelId) { case 1: return song.Difficulty_EASY; case 3: return song.Difficulty_INSANE; default: return song.Difficulty_HARD; }
+        switch (levelId) { case 1: return song.Difficulty_EASY; case 3: return song.Difficulty_INSANE; case 4: return song.Difficulty_SPECIAL; default: return song.Difficulty_HARD; }
+    }
+
+    // 숨긴 난이도인가 (값이 "?")
+    public static bool IsHidden(SongData song, int levelId)
+    {
+        string v = GetValue(song, levelId);
+        return v != null && v.Trim() == "?";
+    }
+
+    // 실제 난이도 값: 숨긴 난이도면 _REALVALUE (없으면 "?"), 아니면 보이는 값 그대로
+    public static string GetRealValue(SongData song, int levelId)
+    {
+        if (song == null) return "";
+        if (!IsHidden(song, levelId)) return GetValue(song, levelId);
+        string r;
+        switch (levelId)
+        {
+            case 1: r = song.Difficulty_EASY_REALVALUE; break;
+            case 3: r = song.Difficulty_INSANE_REALVALUE; break;
+            case 4: r = song.Difficulty_SPECIAL_REALVALUE; break;
+            default: r = song.Difficulty_HARD_REALVALUE; break;
+        }
+        return SongRowUI.IsDifficultyAvailable(r) ? r.Trim() : "?";
     }
 
     // 난이도별 노트 수 (없으면 구 NoteCount)
     public static int GetNoteCount(SongData song, int levelId)
     {
         if (song == null) return 0;
-        int v = levelId == 1 ? song.NoteCount_EASY : (levelId == 3 ? song.NoteCount_INSANE : song.NoteCount_HARD);
+        int v = levelId == 1 ? song.NoteCount_EASY : levelId == 3 ? song.NoteCount_INSANE : levelId == 4 ? song.NoteCount_SPECIAL : song.NoteCount_HARD;
         return v > 0 ? v : song.NoteCount;
+    }
+
+    // ----- SPECIAL 전용 색: 알록달록한 솜사탕 그라데이션 (분홍 → 라벤더 → 하늘 → 민트빛 → 분홍) -----
+    public static readonly Color[] SpecialStops =
+    {
+        new Color(1.00f, 0.62f, 0.85f),   // 솜사탕 분홍
+        new Color(0.84f, 0.66f, 1.00f),   // 라벤더
+        new Color(0.60f, 0.84f, 1.00f),   // 하늘
+        new Color(0.66f, 1.00f, 0.90f),   // 민트빛
+        new Color(1.00f, 0.80f, 0.92f),   // 연분홍
+    };
+
+    // 그라데이션의 t(0 ~ 1) 위치 색
+    public static Color SpecialAt(float t)
+    {
+        t = Mathf.Repeat(t, 1f) * (SpecialStops.Length - 1);
+        int i = Mathf.Min((int)t, SpecialStops.Length - 2);
+        return Color.Lerp(SpecialStops[i], SpecialStops[i + 1], t - i);
+    }
+
+    // 글자마다 그라데이션 색을 입힌 서식 글자 (TMP 서식). phase 로 색을 흘려 보낼 수 있음
+    public static string SpecialGradientText(string text, float phase = 0f)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        var sb = new System.Text.StringBuilder();
+        int n = Mathf.Max(1, text.Length - 1);
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == ' ') { sb.Append(' '); continue; }
+            Color c = SpecialAt(phase + 0.85f * i / n);
+            sb.Append("<color=#").Append(ColorUtility.ToHtmlStringRGB(c)).Append('>').Append(text[i]).Append("</color>");
+        }
+        return sb.ToString();
+    }
+
+    // 난이도 이름(또는 아무 글자)을 난이도 색으로: SPECIAL 은 솜사탕 그라데이션, 나머지는 한 가지 색
+    public static string ColoredText(int levelId, string text)
+    {
+        if (levelId == Special) return SpecialGradientText(text);
+        return "<color=#" + ColorUtility.ToHtmlStringRGB(GetColor(levelId)) + ">" + text + "</color>";
     }
 
     public static Color GetColor(int levelId)
     {
-        string hex = levelId == 1 ? "#5ce1e6" : (levelId == 3 ? "#ff3131" : "#ff751f");
+        // EASY 하늘색 · HARD 주황 · INSANE 빨강 · SPECIAL 솜사탕 (대표 색 = 라벤더 분홍, 글자는 ColoredText 로 그라데이션)
+        if (levelId == Special) return Color.Lerp(SpecialStops[0], SpecialStops[1], 0.5f);
+        string hex = levelId == 1 ? "#5ce1e6" : levelId == 3 ? "#ff3131" : "#ff751f";
         Color c = Color.white;
         ColorUtility.TryParseHtmlString(hex, out c);
         return c;
@@ -418,6 +618,13 @@ public class NoteData
     public bool DragTail = false;   // 드래그로 시작한 롱노트의 끝인지 (판정 · 색은 일반 롱노트 끝과 같음)
     public bool IsFake = false;     // 게임 모드 FAKE 의 가짜 노트 (치면 LIFE 감소, 판정 · 노트 수에 안 들어감)
 
+    // 슬라이드 (레인을 넘나드는 롱노트, 채보 칸 "종류[_폭]~번호[곡선]")
+    //  머리: Slide = 경로 (머리 · 중계점 · 끝),  중계점 · 끝: SlideHead = 머리
+    public int SlideId = 0;           // 채보의 슬라이드 번호 (0 = 슬라이드 아님)
+    public int Curve = SlideCurve.Straight;   // 이 점 → 다음 점 구간의 곡선
+    public SlidePath Slide;
+    public NoteData SlideHead;
+
     // 층 정보 (NoteLayer.Bottom = 1층: 괄호 안 / NoteLayer.Top = 2층: 괄호 밖)
     // 기존 채보(괄호 없음)는 전부 Top(2층)으로 취급되어 동작이 바뀌지 않는다.
     public int Layer = 2;
@@ -472,6 +679,8 @@ public static class NoteCellParser
         if (string.IsNullOrWhiteSpace(token)) return false;
         token = token.Trim();
         if (token == "0") return false;
+        int sl = token.IndexOf('~');                     // 슬라이드 표시("~번호")는 떼고 읽음
+        if (sl >= 0) token = token.Substring(0, sl).Trim();
 
         if (token.Contains("_"))
         {
@@ -486,6 +695,99 @@ public static class NoteCellParser
 
         if (!int.TryParse(token, out type)) return false;
         return type != 0;
+    }
+
+    // 슬라이드 표시 떼기: "2_3~5i" → core "2_3", id 5, curve EaseIn  /  "2" → core "2", id 0
+    //  (TryParseToken 은 이 표시를 알아서 떼고 읽음 → 슬라이드를 모르는 곳에서는 그냥 일반 노트로 보임)
+    public static string SplitSlide(string token, out int slideId, out int curve)
+    {
+        slideId = 0; curve = SlideCurve.Straight;
+        if (string.IsNullOrEmpty(token)) return token;
+        int k = token.IndexOf('~');
+        if (k < 0) return token;
+        string tail = token.Substring(k + 1).Trim();
+        string core = token.Substring(0, k).Trim();
+        int end = 0;
+        while (end < tail.Length && char.IsDigit(tail[end])) end++;
+        if (end > 0) int.TryParse(tail.Substring(0, end), out slideId);
+        string c = tail.Substring(end).Trim().ToLowerInvariant();
+        curve = c == "i" ? SlideCurve.EaseIn : c == "o" ? SlideCurve.EaseOut : SlideCurve.Straight;
+        return core;
+    }
+
+    // 슬라이드 표시 붙이기: ("2_3", 5, EaseIn) → "2_3~5i"
+    public static string SlideToken(string core, int slideId, int curve)
+    {
+        if (slideId <= 0) return core;
+        return core + "~" + slideId + (curve == SlideCurve.EaseIn ? "i" : curve == SlideCurve.EaseOut ? "o" : "");
+    }
+}
+
+// ============================================================
+// 슬라이드 (레인을 넘나드는 롱노트)
+//  채보: 롱노트 머리 · 중계점(14) · 끝(3)에 같은 번호를 붙임  예) 2~1  →  14~1i  →  3~1
+//   번호 뒤 글자 = 그 점에서 다음 점까지의 곡선:  (없음) 직선 · i 처음 천천히(ease-in) · o 끝 천천히(ease-out)
+//  같은 번호(같은 층)의 점들을 시간 순으로 이음: 처음 = 머리, 마지막 = 끝, 가운데 = 중계점
+//  판정: 판정선에 닿은 지점이 덮는 레인 키 중 하나를 누르고 있어야 함 (옮겨 잡는 순간은 짧게 봐줌)
+// ============================================================
+public static class SlideCurve
+{
+    public const int Straight = 0, EaseIn = 1, EaseOut = 2;
+    public static float Ease(int curve, float u)
+    {
+        u = u < 0f ? 0f : u > 1f ? 1f : u;
+        switch (curve)
+        {
+            case EaseIn: return u * u;
+            case EaseOut: return 1f - (1f - u) * (1f - u);
+            default: return u;
+        }
+    }
+    public static string Name(int curve) { return curve == EaseIn ? "IN" : curve == EaseOut ? "OUT" : "LINE"; }
+    public static int Next(int curve) { return (curve + 1) % 3; }
+}
+
+public class SlidePoint
+{
+    public double Time;
+    public int Lane, Width = 1;
+    public int Curve;          // 이 점 → 다음 점
+    public NoteData Note;
+}
+
+public class SlidePath
+{
+    public readonly List<SlidePoint> Points = new List<SlidePoint>();
+    public double StartTime { get { return Points.Count > 0 ? Points[0].Time : 0.0; } }
+    public double EndTime { get { return Points.Count > 0 ? Points[Points.Count - 1].Time : 0.0; } }
+
+    // 시각 t 에서 슬라이드가 덮는 범위 (레인 단위: 왼쪽 끝 left ~ 오른쪽 끝 right, 1칸 = 1)
+    public void Evaluate(double t, out float left, out float right)
+    {
+        if (Points.Count == 0) { left = 0f; right = 1f; return; }
+        SlidePoint a = Points[0], b = Points[Points.Count - 1];
+        if (t <= a.Time) { left = a.Lane; right = a.Lane + a.Width; return; }
+        if (t >= b.Time) { left = b.Lane; right = b.Lane + b.Width; return; }
+        for (int i = 0; i < Points.Count - 1; i++)
+        {
+            if (t <= Points[i + 1].Time) { a = Points[i]; b = Points[i + 1]; break; }
+        }
+        double span = b.Time - a.Time;
+        float u = span <= 1e-9 ? 1f : (float)((t - a.Time) / span);
+        float e = SlideCurve.Ease(a.Curve, u);
+        left = Mathf.Lerp(a.Lane, b.Lane, e);
+        right = Mathf.Lerp(a.Lane + a.Width, b.Lane + b.Width, e);
+    }
+
+    // 시각 t 에 덮는 레인들 (조금이라도 걸치면 포함, 아주 살짝 걸친 건 제외)
+    public void CoveredLanes(double t, bool[] outLanes)
+    {
+        Evaluate(t, out float l, out float r);
+        for (int lane = 0; lane < outLanes.Length; lane++)
+        {
+            float overlap = Mathf.Min(r, lane + 1f) - Mathf.Max(l, lane);
+            if (overlap > 0.2f) outLanes[lane] = true;
+        }
     }
 }
 

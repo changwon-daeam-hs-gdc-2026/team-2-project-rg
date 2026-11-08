@@ -693,6 +693,7 @@ MonoBehaviour:
   lockedStatusPanel: {fileID: 935151050}
   songListViewport: {fileID: 232751607}
   songRowPrefab: {fileID: 7883862138358111084, guid: 278d0b7f3c7f37a45954efb40c01efd7, type: 3}
+  specialRowPrefab: {fileID: 7883862138358111084, guid: 160c2a7cbc295e843b9aca8375cb9a1e, type: 3}
   rowFont: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   visibleRowCount: 8
   selectedSlot: 3
@@ -732,7 +733,11 @@ MonoBehaviour:
   previewFallbackStartRatio: 0.35
   showDetailPanel: 1
   detailFont: {fileID: 11400000, guid: 374c5492305579b499304268efdfe845, type: 2}
-  areaNoticeFont: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
+  listSwitchSlide: 48
+  listSwitchDuration: 0.28
+  specialHeaderTextColor: {r: 0.12, g: 0.1, b: 0.2, a: 1}
+  settingsFont: {fileID: 0}
+  settingsBoldFont: {fileID: 0}
   dialogFont: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
 --- !u!4 &260078938
 Transform:
@@ -2226,6 +2231,7 @@ MonoBehaviour:
   skew: 14
   fillAmount: 1
   fillFromRight: 0
+  specialGradient: 0
 --- !u!222 &958902520
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -2581,6 +2587,7 @@ MonoBehaviour:
   skew: 14
   fillAmount: 0
   fillFromRight: 0
+  specialGradient: 0
 --- !u!222 &1150718348
 CanvasRenderer:
   m_ObjectHideFlags: 0

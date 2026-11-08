@@ -17,6 +17,12 @@ public class CoreManager : MonoBehaviour
     // 가장 최근에 끝난 한 판의 결과 (게임 씬 → 결과 씬으로 전달)
     public ResultData LastResult;
 
+    [Header("곡 배경 (원본 → 흐리게 + 검은 막)")]
+    [Tooltip("흐린 배경 위 검은 막 진하기 (0 = 없음 ~ 1 = 완전 검정)\n플레이 중에 바꾸면 다음에 그려지는 배경부터 적용 (곡을 바꾸거나 화면을 옮기면 보임)")]
+    [Range(0f, 1f)] public float backgroundDim = 0.15f;
+    [Tooltip("흐림 세기 (작은 그림 320px 기준 반지름, 0 = 흐리지 않음)")]
+    [Range(0f, 20f)] public float backgroundBlurRadius = 6f;
+
     private string currentActiveScene = "";
     private bool isTransitioning = false; // 전환 중 중복 호출(연타) 방지
 
@@ -26,6 +32,7 @@ public class CoreManager : MonoBehaviour
         {
             Instance = this;
             DontDestroyOnLoad(gameObject);
+            ApplyBackgroundLook();
             LoadSettings();
             SettingsStore.ApplyAll(); // 볼륨 / 프레임 제한 / 화면 모드 / FPS 표시
             Shader.WarmupAllShaders(); // 처음 쓰는 셰이더를 그 순간 컴파일하느라 멈칫하는 것 방지
@@ -34,6 +41,17 @@ public class CoreManager : MonoBehaviour
         {
             Destroy(gameObject);
         }
+    }
+
+    // 인스펙터의 배경 값 → BackgroundBlur (바뀌었으면 만들어 둔 흐린 그림을 버리고 다음부터 새 값으로)
+    private void ApplyBackgroundLook()
+    {
+        BackgroundBlur.SetLook(backgroundDim, backgroundBlurRadius);
+    }
+
+    void OnValidate()
+    {
+        if (Application.isPlaying && Instance == this) ApplyBackgroundLook();
     }
 
     // settings.json(기본값·개발용) 위에 user_settings.json(설정창에서 바꾼 값)을 덮어써서 읽는다

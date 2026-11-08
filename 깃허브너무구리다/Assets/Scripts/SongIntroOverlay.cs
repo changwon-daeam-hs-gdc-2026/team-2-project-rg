@@ -152,7 +152,7 @@ public class SongIntroOverlay : MonoBehaviour
         // 배경: 곡의 blurimg + 어둡게
         bgImage = K.Img("Background", contentRt, Color.white);
         K.Stretch(bgImage.rectTransform);
-        Sprite bg = Resources.Load<Sprite>("Sprites/blurimg/" + song.Id);
+        Sprite bg = BackgroundBlur.Get(SongArt.Load("Sprites/blurimg", song.Id, level));   // SPECIAL 이면 {곡ID}_4 (없으면 기본), 원본 → 흐리게
         if (bg != null)
         {
             bgImage.sprite = bg;
@@ -175,7 +175,7 @@ public class SongIntroOverlay : MonoBehaviour
         K.Center(jacketRt, new Vector2(-420f, 20f), new Vector2(520f, 520f));
         jacket = K.Img("Jacket", jacketRt, Color.white);
         K.Stretch(jacket.rectTransform);
-        Sprite js = Resources.Load<Sprite>("Sprites/squareimg/" + song.Id);
+        Sprite js = SongArt.Load("Sprites/squareimg", song.Id, level);        // SPECIAL 이면 {곡ID}_4 (없으면 기본)
         jacket.sprite = js;
         jacket.preserveAspect = false; // 정사각형 자켓이 마스크를 꽉 채우도록
         if (js == null) jacket.color = new Color(0.12f, 0.13f, 0.17f, 1f);
@@ -188,7 +188,11 @@ public class SongIntroOverlay : MonoBehaviour
         float y = 250f;
         // 난이도 태그
         // 난이도: 이름만, 난이도 대표 색 (예: INSANE)
-        TextMeshProUGUI diff = K.Txt("Difficulty", infoRoot, gameSetting ? "UNKNOWN" : DifficultyHelper.GetName(level), 32, TextAlignmentOptions.Left, dc, FontStyles.Bold);
+        // SPECIAL: 솜사탕 그라데이션 (글자마다 색)
+        bool special = !gameSetting && level == DifficultyHelper.Special;
+        TextMeshProUGUI diff = K.Txt("Difficulty", infoRoot, gameSetting ? "UNKNOWN" : special ? DifficultyHelper.SpecialGradientText("SPECIAL") : DifficultyHelper.GetName(level),
+                                     32, TextAlignmentOptions.Left, special ? Color.white : dc, FontStyles.Bold);
+        diff.richText = true;
         diff.font = fDiff;
         diff.characterSpacing = 8f;
         FitText(diff, 32f, 16f);
@@ -205,7 +209,7 @@ public class SongIntroOverlay : MonoBehaviour
         y -= 78f;
         if (!string.IsNullOrWhiteSpace(song.SubName))
         {
-            TextMeshProUGUI sub = K.Txt("SubName", infoRoot, song.SubName.Trim(), 28, TextAlignmentOptions.Left, new Color(1f, 1f, 1f, 0.75f));
+            TextMeshProUGUI sub = K.Txt("SubName", infoRoot, song.SubName.Trim(), 28, TextAlignmentOptions.Left, InfoSubColor);
             sub.font = fSub;
             FitText(sub, 28f, 14f);
             LeftTop(sub.rectTransform, 0f, y, InfoWidth, 40f);
@@ -215,7 +219,8 @@ public class SongIntroOverlay : MonoBehaviour
 
         // 구분선
         y -= 14f;
-        Image line = K.Img("Divider", infoRoot, dc);
+        Image line = K.Img("Divider", infoRoot, special ? Color.white : dc);
+        if (special) line.sprite = SpecialArt.Bar;                              // SPECIAL: 솜사탕 그라데이션 구분선
         divider = line.rectTransform;
         LeftTop(divider, 0f, y, 0f, 3f);
         y -= 30f;
@@ -240,20 +245,27 @@ public class SongIntroOverlay : MonoBehaviour
         string opt = (gameSetting ? "GAME SETTING     " : "") + "SPEED  x" + s.SettingSpeed.ToString("0.0", CultureInfo.InvariantCulture);
         if (CoreManager.Instance != null && CoreManager.Instance.IsMvOn && song.HasMV == 1) opt += "     MV ON";
         if (CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay) opt += "     AUTO PLAY";
-        TextMeshProUGUI optText = K.Txt("Options", contentRt, opt, 20, TextAlignmentOptions.BottomLeft, K.TextSub);
+        TextMeshProUGUI optText = K.Txt("Options", contentRt, opt, 20, TextAlignmentOptions.BottomLeft, InfoSubColor);
         optText.font = fOptions;
         FitText(optText, 20f, 12f);
         K.Place(optText.rectTransform, Vector2.zero, new Vector2(0.6f, 0f), new Vector2(64f, 44f), new Vector2(0f, 80f));
         AddStagger(optText.rectTransform, false);
 
-        statusText = K.Txt("Status", contentRt, "LOADING", 20, TextAlignmentOptions.BottomRight, K.TextSub, FontStyles.Bold);
+        statusText = K.Txt("Status", contentRt, "LOADING", 20, TextAlignmentOptions.BottomRight, InfoSubColor, FontStyles.Bold);
         statusText.font = fStatus;
         statusText.characterSpacing = 10f;
         K.Place(statusText.rectTransform, new Vector2(0.6f, 0f), new Vector2(1f, 0f), new Vector2(0f, 44f), new Vector2(-64f, 80f));
 
+        // 곡 정보 · 아래 글자 모두 뒤에 부드러운 그림자 (어중간한 밝기의 배경에서도 또렷하게)
+        foreach (var tx in infoRoot.GetComponentsInChildren<TextMeshProUGUI>(true)) Readable(tx);
+        Readable(optText);
+        Readable(statusText);
+
         Image barBg = K.Img("LoadBarBg", contentRt, new Color(1f, 1f, 1f, 0.08f));
         K.Place(barBg.rectTransform, Vector2.zero, new Vector2(1f, 0f), Vector2.zero, new Vector2(0f, 4f));
-        loadBar = K.Img("LoadBar", barBg.rectTransform, dc);
+        bool spBar = !gameSetting && level == DifficultyHelper.Special;
+        loadBar = K.Img("LoadBar", barBg.rectTransform, spBar ? Color.white : dc);
+        if (spBar) loadBar.sprite = SpecialArt.Bar;                             // SPECIAL: 솜사탕 그라데이션 로딩 막대
         loadBar.rectTransform.anchorMin = Vector2.zero;
         loadBar.rectTransform.anchorMax = new Vector2(0f, 1f);
         loadBar.rectTransform.offsetMin = Vector2.zero;
@@ -285,12 +297,31 @@ public class SongIntroOverlay : MonoBehaviour
     }
 
     // "LABEL   값" 한 줄. 값이 비어 있으면 줄을 만들지 않음
+    // 정보 라벨(MUSIC · ILLUST · VOCAL · BPM) · 아래 설정 / LOADING 글자 색: 예전 회색(흰색 반투명)은 중간 밝기 배경에 묻혀서 밝게
+    private static readonly Color InfoLabelColor = new Color(0.86f, 0.90f, 1f, 0.92f);
+    private static readonly Color InfoSubColor = new Color(1f, 1f, 1f, 0.88f);
+
+    // 글자 뒤 부드러운 그림자 (TMP Underlay): 밝은 배경 위에서도 글자 테두리가 보이게
+    private static void Readable(TextMeshProUGUI t)
+    {
+        if (t == null || t.font == null) return;
+        Material m = t.fontMaterial;   // 이 글자 전용 재질 (글꼴을 바꾼 뒤에 불러야 함)
+        if (m == null || !m.HasProperty(ShaderUtilities.ID_UnderlayColor)) return;
+        m.EnableKeyword(ShaderUtilities.Keyword_Underlay);
+        m.SetColor(ShaderUtilities.ID_UnderlayColor, new Color(0f, 0f, 0f, 0.75f));
+        m.SetFloat(ShaderUtilities.ID_UnderlayOffsetX, 0.35f);
+        m.SetFloat(ShaderUtilities.ID_UnderlayOffsetY, -0.45f);
+        m.SetFloat(ShaderUtilities.ID_UnderlayDilate, 0.25f);
+        m.SetFloat(ShaderUtilities.ID_UnderlaySoftness, 0.55f);
+        t.fontMaterial = m;
+    }
+
     private float InfoRow(string label, string value, float y, TMP_FontAsset labelFont, TMP_FontAsset valueFont)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Trim() == "-" || value.Trim() == "0") return y;
         RectTransform row = K.Rect("Row_" + label, infoRoot);
         LeftTop(row, 0f, y, InfoWidth, 40f);
-        TextMeshProUGUI l = K.Txt("Label", row, label, 17, TextAlignmentOptions.Left, K.TextSub, FontStyles.Bold);
+        TextMeshProUGUI l = K.Txt("Label", row, label, 17, TextAlignmentOptions.Left, InfoLabelColor, FontStyles.Bold);   // 회색 → 밝은 색 (어중간한 배경에서도 보이게)
         l.font = labelFont;
         l.characterSpacing = 8f;
         K.Place(l.rectTransform, Vector2.zero, new Vector2(0f, 1f), Vector2.zero, new Vector2(130f, 0f));

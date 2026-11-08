@@ -15,6 +15,9 @@ using UnityEngine.UI;
 //  - 우측: 악곡 정렬표 (뷰포트 밖으로 나간 줄은 RectMask2D 로 잘림)
 //  - ← → : 곡 이동 (길게 누르면 연속 이동)   ↑ ↓ : 난이도 변경
 //  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속   ESC : 설정창   T : GAME SETTING   M : 게임 모드
+//  - TAB : 기존 3난이도 목록 ↔ SPECIAL 목록 (SPECIAL 이 있는 곡만, SPECIAL 하나뿐인 곡은 SPECIAL 목록에만 나옴)
+//          4난이도 곡은 ↑ ↓ 로도 SPECIAL 에 들어가고 나옴 (INSANE ↑ → SPECIAL, SPECIAL ↓ → INSANE)
+//  - R : MODE RANDOM 켜고 끄기 (MODE 바 옆 RANDOM 버튼과 같음) — 켜져 있으면 시작할 때 모드 3개를 무작위로 고르는 연출 뒤 시작
 // ============================================================
 public class SongSelectManager : MonoBehaviour
 {
@@ -64,13 +67,19 @@ public class SongSelectManager : MonoBehaviour
     public float indicatorMoveDuration = 0.25f;
 
     [Header("잠긴 곡 UI")]
+    [Tooltip("(예전) 장면에 직접 만든 잠금 패널. 아래 'Use Code Locked Overlay' 가 켜져 있으면 쓰지 않고 숨김")]
     public RectTransform lockedStatusPanel;
+    [Tooltip("왼쪽 큰 자켓 위에 코드로 만든 잠금 연출 (어두운 막 · 사선 줄무늬 · 자물쇠 배지 · LOCKED)")]
+    public bool useCodeLockedOverlay = true;
+    private LockedJacketOverlay lockedOverlay;
 
     [Header("우측 악곡 정렬표")]
     [Tooltip("행들이 들어갈 영역. 이 영역 밖은 잘려서 안 보인다 (RectMask2D 자동 추가)")]
     public RectTransform songListViewport;
     [Tooltip("비워 두면 코드로 기본 행을 만든다")]
     public SongRowUI songRowPrefab;
+    [Tooltip("SPECIAL 목록 전용 Songbar 프리팹 (난이도 하나 — Special Text, 비우면 Hard Text). 비워 두면 코드로 기본 행을 만든다")]
+    public SongRowUI specialRowPrefab;
     public TMP_FontAsset rowFont;
     public int visibleRowCount = 8;
     [Tooltip("선택된 곡이 놓이는 줄 (0부터). 3 = 위에서 4번째")]
@@ -131,24 +140,31 @@ public class SongSelectManager : MonoBehaviour
     private readonly Dictionary<int, Vector2> previewFromChart = new Dictionary<int, Vector2>(); // 초 (x < 0 = 없음)
     private AudioClip previewClip;
 
-    private readonly List<SongData> songList = new List<SongData>();
+    private readonly List<SongData> allSongs = new List<SongData>();       // songs.json 의 표시할 곡 전부
+    private readonly List<SongData> normalSongs = new List<SongData>();    // 기존 3난이도 목록 (SPECIAL 하나뿐인 곡 제외)
+    private readonly List<SongData> specialSongs = new List<SongData>();   // SPECIAL 목록 (SPECIAL 이 있는 곡만)
+    private List<SongData> songList;                                       // 지금 보이는 목록 (둘 중 하나)
+    private bool specialList;                                              // true = SPECIAL 목록 (난이도는 SPECIAL 고정)
+    private int lastNormalDifficulty = 2;                                  // SPECIAL 목록에서 돌아올 때 되돌릴 난이도
     private readonly Dictionary<int, string> lengthOverride = new Dictionary<int, string>();
     private readonly Dictionary<int, float> lengthCache = new Dictionary<int, float>();
     private readonly Dictionary<int, Sprite> squareCache = new Dictionary<int, Sprite>();
     private readonly Dictionary<int, Sprite> blurCache = new Dictionary<int, Sprite>();
     private readonly Dictionary<int, Sprite> jacketCache = new Dictionary<int, Sprite>();
-    private readonly List<SongRowUI> rows = new List<SongRowUI>();
+    private List<SongRowUI> rows = new List<SongRowUI>();                  // 지금 쓰는 줄 묶음 (아래 둘 중 하나)
+    private readonly List<SongRowUI> normalRows = new List<SongRowUI>();
+    private readonly List<SongRowUI> specialRows = new List<SongRowUI>();
 
-    private readonly Sprite[] diffOn = new Sprite[4];
-    private readonly Sprite[] diffOff = new Sprite[4];
-    private readonly Color[] diffColors = new Color[4];
+    private readonly Sprite[] diffOn = new Sprite[5];      // [1] EASY [2] HARD [3] INSANE [4] SPECIAL
+    private readonly Sprite[] diffOff = new Sprite[5];
+    private readonly Color[] diffColors = new Color[5];
     private Color colorDisabled;
     private Sprite selectedBarSprite;
     private Sprite lockedSprite;
 
     private int currentVirtualIndex = 0;
     private float visualSongIndex = 0f;
-    private int currentDifficulty = 2; // 1: EASY, 2: HARD, 3: INSANE
+    private int currentDifficulty = 2; // 1: EASY, 2: HARD, 3: INSANE, 4: SPECIAL (있는 곡만)
     private bool isMvOn = false;
     private bool useLoop = false;
     private bool isCurrentlyLocked = false;
@@ -166,6 +182,11 @@ public class SongSelectManager : MonoBehaviour
     private bool leftInfoPosInit = false;
 
     private readonly Dictionary<int, Sprite> selectedBarCache = new Dictionary<int, Sprite>();
+    // SPECIAL 전용 그림 ({곡ID}_4 — 없으면 기본 그림을 씀). SPECIAL 이 있는 곡만 읽음
+    private readonly Dictionary<int, Sprite> spSquareCache = new Dictionary<int, Sprite>();
+    private readonly Dictionary<int, Sprite> spBlurCache = new Dictionary<int, Sprite>();
+    private readonly Dictionary<int, Sprite> spBarCache = new Dictionary<int, Sprite>();
+    private bool IsSpecialNow { get { return specialList; } }
     private readonly Dictionary<int, Color> songColors = new Dictionary<int, Color>();
     private Coroutine diffRoutine, indicatorRoutine;
     private Vector2 diffBasePos;
@@ -179,12 +200,13 @@ public class SongSelectManager : MonoBehaviour
     public bool showDetailPanel = true;
     [Tooltip("패널 글꼴 (비우면 정렬표 글꼴 → 기본 글꼴)")]
     public TMP_FontAsset detailFont;
+    [Header("Mode Window")]
+    [Tooltip("모드 창 제목 \"MODE\" 글꼴 (비우면 기본 굵은 글꼴)")]
+    public TMP_FontAsset modeTitleFont;
+    [Tooltip("모드 창 제목 \"MODE\" 글자 크기")]
+    public float modeTitleFontSize = 42f;
     private SongDetailPanel detailPanel;
 
-    [Header("영역 채보 경고 (SIMPLE-DIVERSE 전용 채보를 다른 스킨으로 골랐을 때)")]
-    [Tooltip("한글이 들어 있는 글꼴 (비우면 곡 제목 글꼴)")]
-    public TMP_FontAsset areaNoticeFont;
-    private AreaNoticeBanner areaNotice;
 
     private void CreateDetailPanel()
     {
@@ -211,6 +233,7 @@ public class SongSelectManager : MonoBehaviour
         detailPanel.OnToggleMv = () => { if (CurrentSong.HasMV == 1) isMvOn = !isMvOn; };
         detailPanel.OnToggleAuto = ToggleAutoPlayMode;
         detailPanel.OnOpenModes = OpenModeWindow;
+        detailPanel.OnToggleRandom = ToggleRandomMode;
     }
 
     // AUTO PLAY 는 게임 모드와 따로. 켜져 있는 동안은 모드를 고를 수 없고, 고른 모드도 적용되지 않음
@@ -219,6 +242,18 @@ public class SongSelectManager : MonoBehaviour
         if (CoreManager.Instance == null) return;
         CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
         Debug.Log(CoreManager.Instance.IsAutoPlay ? "AUTO PLAY 개시 (게임 모드 잠금)" : "AUTO PLAY 종료");
+    }
+
+    // R 키 / RANDOM 버튼: MODE RANDOM 켜고 끄기 (AUTO PLAY 중이면 MODE 바를 깜빡임)
+    private void ToggleRandomMode()
+    {
+        if (GameModeWindow.BlocksInput || SettingsWindow.BlocksGameInput || isLeaving || GameModeRoulette.IsOpen) return;
+        if (GameModes.Locked)
+        {
+            if (detailPanel != null) detailPanel.FlashModeFull();
+            return;
+        }
+        GameModes.SetRandomPick(!GameModes.RandomPick);
     }
 
     // M 키 / MODE 바 클릭: 게임 모드 설정창 (AUTO PLAY 중이면 열지 않고 MODE 바를 깜빡임)
@@ -230,6 +265,8 @@ public class SongSelectManager : MonoBehaviour
             if (detailPanel != null) detailPanel.FlashModeFull();
             return;
         }
+        GameModeWindow.TitleFont = modeTitleFont;            // 제목 "MODE" 글꼴 · 크기 (인스펙터)
+        GameModeWindow.TitleFontSize = modeTitleFontSize;
         GameModeWindow.Open(gameObject.scene, detailFont != null ? detailFont : rowFont);
     }
 
@@ -238,34 +275,155 @@ public class SongSelectManager : MonoBehaviour
     {
         SongData song = CurrentSong;
         if (level == currentDifficulty || !SongRowUI.IsDifficultyAvailable(GetDifficultyValue(song, level))) return;
+        // SPECIAL 칸 ↔ 나머지 칸: 목록 자체가 바뀜 (TAB 과 같음, 같은 곡 그대로)
+        if (level == DifficultyHelper.Special) { if (!specialList) ToggleSpecialList(); return; }
+        if (specialList) { lastNormalDifficulty = level; ToggleSpecialList(); return; }
         int dir = level > currentDifficulty ? 1 : -1;
+        int prev = currentDifficulty;
         currentDifficulty = level;
+        lastNormalDifficulty = level;
         UpdateDifficultyUI(song, dir);
         ApplyRowDifficultyColors();
         MoveHeaderIndicator(false);
+        OnDifficultyChanged(prev, dir);
+    }
+
+    // SPECIAL 로 들어가거나 나올 때: 곡 정보(SPECIAL_Name 등) · 자켓 · 배경 · 선택 바 그림을 바꾸고 미리듣기를 다시 재생
+    private void OnDifficultyChanged(int prev, int dir)
+    {
+        bool was = prev == DifficultyHelper.Special, now = IsSpecialNow;
+        if (was == now) return;
+        SongData song = CurrentSong;
+        UpdateLeftInfo(song);
+        UpdateBackground(song.Id, dir, false);
+        RebindRows();
+        PlayPreviewMusic();
+    }
+
+    // 보이는 곡 바들을 다시 그림 (선택된 곡의 선택 바 그림이 SPECIAL 전용으로 바뀌도록)
+    private void RebindRows()
+    {
+        foreach (var r in rows)
+            if (r.boundVirtualIndex != int.MinValue && r.gameObject.activeSelf) BindRow(r, r.boundVirtualIndex);
     }
 
     void LateUpdate()
     {
-        if (detailPanel != null && songList.Count > 0) detailPanel.Show(CurrentSong, currentDifficulty, isMvOn, CurrentSong.HasMV == 1);
+        if (detailPanel != null && songList != null && songList.Count > 0) detailPanel.Show(CurrentSong, currentDifficulty, isMvOn, CurrentSong.HasMV == 1);
+        UpdateHeaderMode();
+    }
 
-        // 영역 채보(SIMPLE-DIVERSE 전용)인데 지금 스킨이 다르면 경고 띠
-        if (songList.Count > 0)
+    // =====================================================================
+    //  SPECIAL 목록 (TAB)
+    //   기존 목록 → SPECIAL: 지금 곡에 SPECIAL 이 있으면 그 곡, 없으면 곡 ID 가 가장 가까운 SPECIAL 곡
+    //   SPECIAL → 기존 목록: 같은 곡 (SPECIAL 하나뿐인 곡이면 곡 ID 가 가장 가까운 곡), 난이도는 SPECIAL 로 오기 전 것
+    // =====================================================================
+    [Header("SPECIAL 목록")]
+    [Tooltip("목록이 바뀔 때 곡 바들이 옆에서 들어오는 거리(px)")]
+    public float listSwitchSlide = 48f;
+    [Tooltip("목록이 바뀌는 연출 시간(초)")]
+    public float listSwitchDuration = 0.28f;
+
+    private float listSwitchT = 1f;                 // 0 → 1 : 목록이 바뀐 직후 연출
+    private int listSwitchDir = 1;
+    private CanvasGroup rowsGroup;
+
+    private void ToggleSpecialList() { ToggleSpecialList(0); }
+
+    // animDir: 좌측 난이도 판이 들어오는 방향 (0 이면 SPECIAL 로 갈 때 +1, 나올 때 -1)
+    private void ToggleSpecialList(int animDir)
+    {
+        if (isLeaving || songList == null || songList.Count == 0) return;
+        bool toSpecial = !specialList;
+        List<SongData> target = toSpecial ? specialSongs : normalSongs;
+        if (target.Count == 0) return;                                   // 옮겨 갈 곡이 없으면 그대로
+
+        SongData cur = CurrentSong;
+        int idx = target.FindIndex(x => x.Id == cur.Id);
+        if (idx < 0) idx = NearestIndex(target, cur.Id);
+
+        if (toSpecial) { if (currentDifficulty <= 3) lastNormalDifficulty = currentDifficulty; currentDifficulty = DifficultyHelper.Special; }
+        else currentDifficulty = Mathf.Clamp(lastNormalDifficulty, 1, 3);
+
+        SwitchList(toSpecial, idx);
+        int dir = animDir != 0 ? animDir : (toSpecial ? 1 : -1);
+        RefreshSelectedSong(dir, false);
+        PlayDiffChangeAnim(dir);
+    }
+
+    // 목록 · 줄 묶음 바꾸기 (선택 곡 = idx)
+    private void SwitchList(bool toSpecial, int idx)
+    {
+        foreach (var r in rows)
         {
-            bool need = AreaHelper.IsAreaLevel(CurrentSong, currentDifficulty) && SettingsStore.Current.GameSkin != GameSkins.Diverse;
-            if (need && areaNotice == null) CreateAreaNotice();
-            if (areaNotice != null) areaNotice.SetVisible(need && !isLeaving);
+            r.boundVirtualIndex = int.MinValue;
+            r.SetSelected(false, 0f);
+            if (r.gameObject.activeSelf) r.gameObject.SetActive(false);
+        }
+        bool changed = specialList != toSpecial;
+        SetList(toSpecial);
+        currentVirtualIndex = Mathf.Clamp(idx, 0, Mathf.Max(0, songList.Count - 1));
+        visualSongIndex = currentVirtualIndex;                         // 스크롤하지 않고 바로 그 곡
+        if (changed) { listSwitchT = 0f; listSwitchDir = toSpecial ? 1 : -1; }
+    }
+
+    private void SetList(bool special)
+    {
+        specialList = special;
+        songList = special ? specialSongs : normalSongs;
+        useLoop = loopList && songList.Count >= visibleRowCount;       // 곡 수가 줄 수보다 적으면 루프하지 않음
+        rows = special ? specialRows : normalRows;
+    }
+
+    // 곡 ID 가 가장 가까운 곡 (같으면 ID 가 작은 쪽)
+    private static int NearestIndex(List<SongData> list, int id)
+    {
+        int best = 0, bestD = int.MaxValue;
+        for (int i = 0; i < list.Count; i++)
+        {
+            int d = Math.Abs(list[i].Id - id);
+            if (d < bestD || (d == bestD && list[i].Id < list[best].Id)) { best = i; bestD = d; }
+        }
+        return best;
+    }
+
+    // ----- 우측 헤더: 기존 EZ · HD · INS + 평행사변형 ↔ SPECIAL 목록에서는 아무것도 없음 -----
+    //  (예전의 SPECIAL 평행사변형은 지움 — SPECIAL 로 바뀌면 기존 헤더가 사라지기만 함)
+    private CanvasGroup[] normalHeaderGroups;
+    private float headerBlend = -1f;                // 0 = 기존, 1 = SPECIAL
+
+    private void BuildSpecialHeader()
+    {
+        var groups = new List<CanvasGroup>();
+        foreach (RectTransform r in new[] { headerIndicator, headerEasyLabel, headerHardLabel, headerInsaneLabel })
+            if (r != null) groups.Add(GetOrAdd<CanvasGroup>(r.gameObject));
+        normalHeaderGroups = groups.ToArray();
+    }
+
+    // 매 프레임: 헤더 전환 · 목록 전환 연출
+    private void UpdateHeaderMode()
+    {
+        float target = specialList ? 1f : 0f;
+        headerBlend = headerBlend < 0f ? target : Mathf.MoveTowards(headerBlend, target, UiTime.Delta / 0.22f);
+        float e = headerBlend * headerBlend * (3f - 2f * headerBlend);
+        if (normalHeaderGroups != null)
+            foreach (var g in normalHeaderGroups) if (g != null) g.alpha = 1f - e;
+
+        // 목록 전환: 새 곡 바들이 옆에서 미끄러져 들어오며 나타남 (위치는 UpdateRows 에서)
+        if (listSwitchT < 1f) listSwitchT = Mathf.Min(1f, listSwitchT + UiTime.Delta / Mathf.Max(0.01f, listSwitchDuration));
+        if (songListViewport != null)
+        {
+            if (rowsGroup == null) rowsGroup = GetOrAdd<CanvasGroup>(songListViewport.gameObject);
+            rowsGroup.alpha = ListSwitchEase;
         }
     }
 
-    private void CreateAreaNotice()
+    private float ListSwitchEase { get { return 1f - Mathf.Pow(1f - Mathf.Clamp01(listSwitchT), 3f); } }
+
+    private static void StretchFull(RectTransform r)
     {
-        Canvas c = selectedJacketImg != null ? selectedJacketImg.canvas : FindObjectOfType<Canvas>();
-        if (c == null) return;
-        Transform root = c.rootCanvas != null ? c.rootCanvas.transform : c.transform;
-        TMP_FontAsset font = areaNoticeFont != null ? areaNoticeFont
-                           : (selectedSongTitleText != null ? selectedSongTitleText.font : rowFont);
-        areaNotice = AreaNoticeBanner.Create(root, font);
+        r.anchorMin = Vector2.zero; r.anchorMax = Vector2.one;
+        r.offsetMin = Vector2.zero; r.offsetMax = Vector2.zero;
     }
 
     private SongData CurrentSong { get { return songList[DataIndex(currentVirtualIndex)]; } }
@@ -284,6 +442,7 @@ public class SongSelectManager : MonoBehaviour
         ColorUtility.TryParseHtmlString("#5ce1e6", out diffColors[1]);
         ColorUtility.TryParseHtmlString("#ff751f", out diffColors[2]);
         ColorUtility.TryParseHtmlString("#ff3131", out diffColors[3]);
+        diffColors[4] = DifficultyHelper.GetColor(DifficultyHelper.Special);
         ColorUtility.TryParseHtmlString("#545454", out colorDisabled);
 
         visibleRowCount = Mathf.Max(1, visibleRowCount);
@@ -294,27 +453,47 @@ public class SongSelectManager : MonoBehaviour
 
         LoadSongList();
         LoadSprites();
-        if (songList.Count == 0) { Debug.LogWarning("[SongSelect] 표시할 곡이 없습니다."); return; }
-
-        // 곡 수가 화면 줄 수보다 적으면 같은 곡이 반복돼 보이므로 루프하지 않는다
-        useLoop = loopList && songList.Count >= visibleRowCount;
-
-        foreach (var s in songList)
+        // 두 목록: 기존 3난이도 목록 (SPECIAL 하나뿐인 곡 제외) / SPECIAL 목록 (SPECIAL 이 있는 곡)
+        foreach (var x in allSongs)
         {
-            squareCache[s.Id] = Resources.Load<Sprite>($"Sprites/squareimg/{s.Id}");
-            blurCache[s.Id] = Resources.Load<Sprite>($"Sprites/blurimg/{s.Id}");
+            if (!DifficultyHelper.IsSpecialOnly(x)) normalSongs.Add(x);
+            if (DifficultyHelper.HasSpecial(x)) specialSongs.Add(x);
+        }
+        SetList(normalSongs.Count == 0);                                  // 기존 목록이 비었으면 SPECIAL 목록으로 시작
+        if (songList.Count == 0) { Debug.LogWarning("[SongSelect] 표시할 곡이 없습니다."); return; }
+        if (specialList) currentDifficulty = DifficultyHelper.Special;
+
+        foreach (var s in allSongs)
+        {
+            // 곡 ID 그림이 없으면 같은 폴더의 None.png (SongArt)
+            squareCache[s.Id] = SongArt.Load("Sprites/squareimg", s.Id);
+            blurCache[s.Id] = SongArt.Load("Sprites/blurimg", s.Id);
             jacketCache[s.Id] = squareCache[s.Id];
-            selectedBarCache[s.Id] = Resources.Load<Sprite>($"{selectedBarFolder}/{s.Id}");
+            selectedBarCache[s.Id] = SongArt.Load(selectedBarFolder, s.Id);
+            if (DifficultyHelper.HasSpecial(s))
+            {
+                spSquareCache[s.Id] = Resources.Load<Sprite>($"Sprites/squareimg/{s.Id}_4");
+                spBlurCache[s.Id] = Resources.Load<Sprite>($"Sprites/blurimg/{s.Id}_4");
+                spBarCache[s.Id] = Resources.Load<Sprite>($"{selectedBarFolder}/{s.Id}_4");
+            }
         }
 
         RestoreLastSelection();
         SetupViewport();
         BuildRows();
+        SetList(specialList);                                             // 줄 묶음도 고른 목록에 맞춤
+        BuildSpecialHeader();
         CreateDetailPanel();
 
         visualSongIndex = currentVirtualIndex;
-        isCurrentlyLocked = CurrentSong.ExistSongbar == 2;
-        if (lockedStatusPanel != null)
+        isCurrentlyLocked = DifficultyHelper.IsPlayLocked(CurrentSong, currentDifficulty);
+        if (useCodeLockedOverlay && selectedJacketImg != null)
+        {
+            lockedOverlay = LockedJacketOverlay.Create(selectedJacketImg.rectTransform, detailFont != null ? detailFont : rowFont);
+            if (lockedOverlay != null) lockedOverlay.Show(isCurrentlyLocked, true);
+            if (lockedStatusPanel != null) lockedStatusPanel.gameObject.SetActive(false);   // 예전 패널은 숨김
+        }
+        else if (lockedStatusPanel != null)
         {
             lockedStatusPanel.gameObject.SetActive(true);
             CanvasGroup cg = GetOrAdd<CanvasGroup>(lockedStatusPanel.gameObject);
@@ -331,7 +510,7 @@ public class SongSelectManager : MonoBehaviour
     {
         yield return null;
         yield return null;
-        // 설정창 글꼴 (한글): 인스펙터 Settings Font / Settings Bold Font. 비우면 확인 창 글꼴(Dialog Font → Area Notice Font …)
+        // 설정창 글꼴 (한글): 인스펙터 Settings Font / Settings Bold Font. 비우면 확인 창 글꼴(Dialog Font → 곡 제목 글꼴)
         SettingsWindow.SetFonts(settingsFont != null ? settingsFont : DialogFont, settingsBoldFont);
         SettingsWindow.Prewarm(); // 설정창 UI 미리 생성
 
@@ -339,7 +518,7 @@ public class SongSelectManager : MonoBehaviour
         const string common = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;!?%+-/()[]&'\"#*_<>=~";
         var fonts = new HashSet<TMP_FontAsset>();
         foreach (var t in GetComponentsInChildren<TextMeshProUGUI>(true)) if (t.font != null) fonts.Add(t.font);
-        foreach (var t in FindObjectsOfType<TextMeshProUGUI>(true)) if (t.font != null) fonts.Add(t.font);
+        foreach (var t in FindObjectsByType<TextMeshProUGUI>(FindObjectsInactive.Include, FindObjectsSortMode.None)) if (t.font != null) fonts.Add(t.font);
         if (rowFont != null) fonts.Add(rowFont);
         SettingsUIKit.EnsureFont();
         if (SettingsUIKit.Font != null) fonts.Add(SettingsUIKit.Font);
@@ -347,7 +526,8 @@ public class SongSelectManager : MonoBehaviour
         {
             if (f.atlasPopulationMode != AtlasPopulationMode.Dynamic) continue;
             string all = common;
-            foreach (var s in songList) all += (s.Name ?? "") + (s.SubName ?? "") + (s.Composer ?? ""); // 곡명·작곡가 글자도 미리
+            foreach (var s in allSongs) all += (s.Name ?? "") + (s.SubName ?? "") + (s.Composer ?? "")
+                                             + (s.SPECIAL_Name ?? "") + (s.SPECIAL_SubName ?? "") + (s.Difficulty_SPECIAL ?? ""); // 곡명·작곡가 · SPECIAL 글자도 미리
             f.TryAddCharacters(all);
             yield return null;
         }
@@ -360,7 +540,7 @@ public class SongSelectManager : MonoBehaviour
 
         string json = SongJson.Normalize(File.ReadAllText(path, System.Text.Encoding.UTF8)); // "BPM": 132 → "132"
         SongData[] arr = JsonHelper.FromJson<SongData>(json);
-        if (arr != null) songList.AddRange(arr.Where(s => s.ExistSongbar == 1 || s.ExistSongbar == 2));
+        if (arr != null) allSongs.AddRange(arr.Where(s => s.ExistSongbar == 1 || s.ExistSongbar == 2));
 
         // (선택) songs.json 의 "Length": "3:39" 또는 219.5 (초) — DataModels 를 고치지 않고 따로 읽는다
         try
@@ -396,12 +576,12 @@ public class SongSelectManager : MonoBehaviour
         if (sheet.Count == 0)
             Debug.LogWarning($"[SongSelect] Resources/{difficultySheetPath} 에서 스프라이트를 찾지 못했습니다. (Texture Type = Sprite, Sprite Mode = Multiple 인지 확인)");
 
-        string[] names = { "", "EASY", "HARD", "INSANE" };
-        for (int d = 1; d <= 3; d++)
+        string[] names = { "", "EASY", "HARD", "INSANE", "SPECIAL" };
+        for (int d = 1; d <= 4; d++)
         {
             diffOn[d] = LoadDifficultySprite(names[d], "ON", sheet);
             diffOff[d] = LoadDifficultySprite(names[d], "OFF", sheet);
-            if (diffOn[d] == null || diffOff[d] == null)
+            if ((diffOn[d] == null || diffOff[d] == null) && d <= 3)   // SPECIAL 그림은 없어도 됨 (왼쪽 패널이 글자로 표시)
                 Debug.LogWarning($"[SongSelect] {names[d]}_ON / {names[d]}_OFF 스프라이트를 찾지 못했습니다. (Level.png 의 스프라이트 이름 확인)");
         }
 
@@ -441,10 +621,17 @@ public class SongSelectManager : MonoBehaviour
         var core = CoreManager.Instance;
         if (core == null || core.CurrentSongData == null) return;
 
-        int idx = songList.FindIndex(s => s.Id == core.CurrentSongData.Id);
-        if (idx < 0) return;
+        // SPECIAL 로 플레이했으면 SPECIAL 목록으로 돌아옴
+        int lv = Mathf.Clamp(core.CurrentLevelId, 1, DifficultyHelper.Special);
+        int id = core.CurrentSongData.Id;
+        if (lv == DifficultyHelper.Special && specialSongs.Count > 0) SetList(true);
+        else if (lv != DifficultyHelper.Special && normalSongs.Count > 0) SetList(false);
+
+        int idx = songList.FindIndex(s => s.Id == id);
+        if (idx < 0) idx = NearestIndex(songList, id);
         currentVirtualIndex = idx;
-        currentDifficulty = Mathf.Clamp(core.CurrentLevelId, 1, 3);
+        if (specialList) currentDifficulty = DifficultyHelper.Special;
+        else { currentDifficulty = lv == DifficultyHelper.Special ? 3 : lv; lastNormalDifficulty = currentDifficulty; }
         isMvOn = core.IsMvOn && songList[idx].HasMV == 1;
     }
 
@@ -464,6 +651,7 @@ public class SongSelectManager : MonoBehaviour
         if (songListViewport == null) return;
 
         // 보이는 줄 + 위아래로 스크롤 중 잠깐 보이는 줄 2개씩
+        //  기존 목록용 / SPECIAL 목록용 (SPECIAL 전용 Songbar) 두 묶음
         int poolSize = visibleRowCount + 4;
         for (int i = 0; i < poolSize; i++)
         {
@@ -471,18 +659,41 @@ public class SongSelectManager : MonoBehaviour
                 ? Instantiate(songRowPrefab, songListViewport, false)
                 : SongRowUI.CreateDefault(songListViewport, rowFont, rowHeight);
             row.name = $"SongRow_{i}";
+            row.isSpecialRow = false;
             row.InitLayout(rowHeight, selectedBarSprite);
             row.gameObject.SetActive(false);
-            rows.Add(row);
+            normalRows.Add(row);
+        }
+        if (specialSongs.Count == 0) return;
+        for (int i = 0; i < poolSize; i++)
+        {
+            SongRowUI row = specialRowPrefab != null
+                ? Instantiate(specialRowPrefab, songListViewport, false)
+                : SongRowUI.CreateDefault(songListViewport, rowFont, rowHeight, true);
+            row.name = $"SpecialRow_{i}";
+            row.isSpecialRow = true;
+            row.InitLayout(rowHeight, selectedBarSprite);
+            row.gameObject.SetActive(false);
+            specialRows.Add(row);
         }
     }
 
     // =====================================================================
     //  매 프레임
     // =====================================================================
+    private int blurVersion = -1;
+
     void Update()
     {
-        if (songList.Count == 0 || isLeaving) return;
+        if (songList == null || songList.Count == 0 || isLeaving) return;
+        // CoreManager 인스펙터에서 배경 검은 막 · 흐림 값을 바꾸면 지금 배경을 바로 새 값으로 (조정하면서 보기)
+        UpdateLockedPanel(CurrentSong);   // 난이도를 바꿔도 잠금 표시가 따라가게 (값이 바뀔 때만 연출)
+        if (blurVersion != BackgroundBlur.Version)
+        {
+            bool firstCheck = blurVersion < 0;
+            blurVersion = BackgroundBlur.Version;
+            if (!firstCheck && CurrentSong != null) UpdateBackground(CurrentSong.Id, 0, true);
+        }
         var kb = Keyboard.current;
         if (kb == null) return;
 
@@ -490,7 +701,8 @@ public class SongSelectManager : MonoBehaviour
 
         // 설정창이 열려 있으면(또는 이번 프레임에 닫혔으면) 곡 선택 조작은 막고 화면 연출만 계속한다
         // 설정창 또는 플레이 확인 창(경고 · 알림)이 열려 있으면 곡 선택 조작을 막음
-        bool inputBlocked = SettingsWindow.BlocksGameInput || PlayConfirmDialog.IsOpen || GameModeWindow.BlocksInput;   // 모드 설정창이 열려 있어도 막음
+        bool inputBlocked = SettingsWindow.BlocksGameInput || PlayConfirmDialog.IsOpen || GameModeWindow.BlocksInput   // 모드 설정창이 열려 있어도 막음
+                         || GameModeRoulette.IsOpen;                                                                // MODE RANDOM 연출 중에도
         if (!inputBlocked && kb.escapeKey.wasPressedThisFrame)
         {
             SettingsWindow.Open();
@@ -505,7 +717,13 @@ public class SongSelectManager : MonoBehaviour
             if (kb.upArrowKey.wasPressedThisFrame) ChangeDifficulty(1);
             if (kb.downArrowKey.wasPressedThisFrame) ChangeDifficulty(-1);
 
+            // TAB : 기존 3난이도 목록 ↔ SPECIAL 목록
+            if (kb.tabKey.wasPressedThisFrame) ToggleSpecialList();
+
             if (kb.aKey.wasPressedThisFrame && CoreManager.Instance != null) ToggleAutoPlayMode();
+
+            // R : MODE RANDOM 켜고 끄기
+            if (kb.rKey.wasPressedThisFrame) ToggleRandomMode();
 
             // M : 게임 모드 설정창 (MIRROR · RANDOM · HARD … 최대 3개)
             if (kb.mKey.wasPressedThisFrame) { OpenModeWindow(); return; }
@@ -581,11 +799,13 @@ public class SongSelectManager : MonoBehaviour
         SongData song = CurrentSong;
 
         ValidateCurrentDifficulty(song);
+        if (!specialList) lastNormalDifficulty = currentDifficulty;
         UpdateLeftInfo(song);
         UpdateDifficultyUI(song, 0);
         ApplyRowDifficultyColors();
         MoveHeaderIndicator(instant); // 곡에 없는 난이도라 자동으로 바뀐 경우에도 이동
         UpdateBackground(song.Id, dir, instant);
+        RebindRows();
         UpdateLockedPanel(song);
         UpdateSongLength(song);
         if (!instant) PlayLeftInfoAnim(dir);
@@ -595,13 +815,17 @@ public class SongSelectManager : MonoBehaviour
     private void ChangeDifficulty(int direction)
     {
         SongData song = CurrentSong;
+        // 4난이도 곡: ↑ ↓ 로 SPECIAL 까지 돎 (SPECIAL 에 들어가면 목록도 SPECIAL 목록으로, 나오면 기존 목록으로)
+        bool four = DifficultyHelper.HasSpecial(song) && !DifficultyHelper.IsSpecialOnly(song);
+        if (specialList && !four) return;                // SPECIAL 하나뿐인 곡: 바꿀 난이도가 없음 (기존 목록은 TAB)
         int prev = currentDifficulty;
         int next = currentDifficulty;
-        for (int i = 0; i < 3; i++)
+        int max = four ? DifficultyHelper.Special : 3;
+        for (int i = 0; i < max; i++)
         {
             next += direction;
-            if (next > 3) next = 1;
-            if (next < 1) next = 3;
+            if (next > max) next = 1;
+            if (next < 1) next = max;
             if (SongRowUI.IsDifficultyAvailable(GetDifficultyValue(song, next)))
             {
                 currentDifficulty = next;
@@ -609,16 +833,30 @@ public class SongSelectManager : MonoBehaviour
             }
         }
         if (currentDifficulty == prev) return; // 고를 수 있는 난이도가 하나뿐이면 아무 연출 없음
+        if (currentDifficulty == DifficultyHelper.Special || specialList)
+        {
+            // SPECIAL 로 들어가거나 SPECIAL 에서 나옴 → 같은 곡 그대로 목록 전환
+            int to = currentDifficulty;
+            currentDifficulty = prev;
+            if (to != DifficultyHelper.Special) lastNormalDifficulty = to;
+            ToggleSpecialList(direction);
+            return;
+        }
 
+        lastNormalDifficulty = currentDifficulty;
         UpdateDifficultyUI(song, direction);
         ApplyRowDifficultyColors();
         MoveHeaderIndicator(false);
+        OnDifficultyChanged(prev, direction);
     }
 
-    // 현재 난이도가 이 곡에 없으면 HARD → EASY → INSANE 순으로 대체
+    // 현재 난이도가 이 곡에 없으면 HARD → EASY → INSANE 순으로 대체 (SPECIAL 이 없는 곡으로 넘어가면 INSANE 부터)
     private void ValidateCurrentDifficulty(SongData song)
     {
+        if (specialList) { currentDifficulty = DifficultyHelper.Special; return; }   // SPECIAL 목록 = SPECIAL 고정
+        if (currentDifficulty == DifficultyHelper.Special) currentDifficulty = 3;
         if (SongRowUI.IsDifficultyAvailable(GetDifficultyValue(song, currentDifficulty))) return;
+        if (currentDifficulty == DifficultyHelper.Special && SongRowUI.IsDifficultyAvailable(song.Difficulty_INSANE)) { currentDifficulty = 3; return; }
         if (SongRowUI.IsDifficultyAvailable(song.Difficulty_HARD)) currentDifficulty = 2;
         else if (SongRowUI.IsDifficultyAvailable(song.Difficulty_EASY)) currentDifficulty = 1;
         else if (SongRowUI.IsDifficultyAvailable(song.Difficulty_INSANE)) currentDifficulty = 3;
@@ -630,6 +868,7 @@ public class SongSelectManager : MonoBehaviour
         if (diff == 1) return song.Difficulty_EASY;
         if (diff == 2) return song.Difficulty_HARD;
         if (diff == 3) return song.Difficulty_INSANE;
+        if (diff == 4) return song.Difficulty_SPECIAL;
         return "00";
     }
 
@@ -663,7 +902,14 @@ public class SongSelectManager : MonoBehaviour
             if (!row.gameObject.activeSelf) row.gameObject.SetActive(true);
 
             float slot = (v - visualSongIndex) + selectedSlot;
-            row.rect.anchoredPosition = new Vector2(0f, -(clipPadding + rowHeight * 0.5f + slot * spacing));
+            // 목록이 막 바뀌었으면 옆에서 미끄러져 들어옴 (아래 줄일수록 살짝 늦게)
+            float slide = 0f;
+            if (listSwitchT < 1f)
+            {
+                float lt = Mathf.Clamp01(listSwitchT * 1.3f - Mathf.Clamp(slot, 0f, visibleRowCount) * 0.035f);
+                slide = listSwitchDir * listSwitchSlide * Mathf.Pow(1f - lt, 3f);
+            }
+            row.rect.anchoredPosition = new Vector2(slide, -(clipPadding + rowHeight * 0.5f + slot * spacing));
             row.SetSelected(v == currentVirtualIndex, selectedBarDrawDuration);
         }
     }
@@ -673,6 +919,13 @@ public class SongSelectManager : MonoBehaviour
         SongData s = songList[DataIndex(virtualIndex)];
         squareCache.TryGetValue(s.Id, out Sprite sq);
         selectedBarCache.TryGetValue(s.Id, out Sprite bar);
+        if (specialList)
+        {
+            // SPECIAL 목록: 곡명은 SPECIAL_Name 등, 자켓 · 선택 바는 SPECIAL 전용 그림 ({곡ID}_4) 이 있으면 그것
+            if (spSquareCache.TryGetValue(s.Id, out Sprite spSq) && spSq != null) sq = spSq;
+            if (spBarCache.TryGetValue(s.Id, out Sprite spBar) && spBar != null) bar = spBar;
+            s = s.ForLevel(DifficultyHelper.Special);
+        }
         if (bar == null) bar = selectedBarSprite;
         Color barColor = songColors.TryGetValue(s.Id, out Color c) ? c : defaultSongColor;
         row.Bind(virtualIndex, s, sq, BuildComposerLine(s), s.ExistSongbar == 2, lockedSprite, bar, barColor);
@@ -701,15 +954,19 @@ public class SongSelectManager : MonoBehaviour
     // =====================================================================
     //  좌측 패널
     // =====================================================================
-    private void UpdateLeftInfo(SongData song)
+    private void UpdateLeftInfo(SongData baseSong)
     {
+        // SPECIAL 이면 SPECIAL_Name · SPECIAL_Vocal 과 전용 자켓 ({곡ID}_4)
+        SongData song = baseSong.ForLevel(currentDifficulty);
         // 좌측: "Name" 만 표시 (SubName 제외). 우측 정렬표는 SongRowUI 에서 Name + SubName 표시
         if (selectedSongTitleText != null) selectedSongTitleText.text = song.Name ?? "";
         if (selectedComposerText != null) selectedComposerText.text = BuildComposerLine(song);
 
         if (selectedJacketImg != null)
         {
-            jacketCache.TryGetValue(song.Id, out Sprite jacket);
+            Sprite jacket = null;
+            if (IsSpecialNow) spSquareCache.TryGetValue(song.Id, out jacket);
+            if (jacket == null) jacketCache.TryGetValue(song.Id, out jacket);
             selectedJacketImg.sprite = jacket;
             selectedJacketImg.color = jacket != null ? Color.white : new Color(0.1f, 0.1f, 0.1f, 1f);
             UpdateJacketBlur(jacket);
@@ -862,6 +1119,7 @@ public class SongSelectManager : MonoBehaviour
     private void MoveHeaderIndicator(bool instant)
     {
         if (headerIndicator == null) return;
+        if (specialList) return;                     // SPECIAL 목록: 기존 표시는 숨겨 둠 (돌아올 때 그 난이도로 이동)
         int to = Mathf.Clamp(currentDifficulty, 1, 3);
         if (!instant && to == indicatorDiff) return;
 
@@ -1003,8 +1261,11 @@ public class SongSelectManager : MonoBehaviour
     private void UpdateBackground(int songId, int direction, bool instant)
     {
         if (selectScreenImg == null) return;
-        blurCache.TryGetValue(songId, out Sprite s);
+        Sprite s = null;
+        if (IsSpecialNow) spBlurCache.TryGetValue(songId, out s);        // SPECIAL 전용 배경 ({곡ID}_4)
+        if (s == null) blurCache.TryGetValue(songId, out s);
         if (s == null) return; // 이미지가 없으면 기존 배경 유지
+        s = BackgroundBlur.Get(s);  // 원본 배경 → 흐리게 (처음 볼 때 한 번 만들고 기억)
 
         // 연타로 이전 연출이 진행 중이면 즉시 정리하고 원위치
         if (bgSlideRoutine != null) { StopCoroutine(bgSlideRoutine); bgSlideRoutine = null; }
@@ -1081,12 +1342,14 @@ public class SongSelectManager : MonoBehaviour
     }
 
     // ===== 잠긴 곡 패널 =====
+    //  곡 전체 잠금(ExistSongbar 2) 또는 지금 고른 난이도가 잠김(LockedValue) → 왼쪽 자켓 잠금 표시
     private void UpdateLockedPanel(SongData song)
     {
-        bool locked = song.ExistSongbar == 2;
+        bool locked = DifficultyHelper.IsPlayLocked(song, currentDifficulty);
         if (locked == isCurrentlyLocked) return;
         isCurrentlyLocked = locked;
 
+        if (lockedOverlay != null) { lockedOverlay.Show(locked, false); return; }
         if (lockedStatusPanel == null) return;
         if (lockedPanelRoutine != null) StopCoroutine(lockedPanelRoutine);
         lockedPanelRoutine = StartCoroutine(AnimateLockedPanel(locked));
@@ -1123,7 +1386,7 @@ public class SongSelectManager : MonoBehaviour
         if (previewAudioSource == null) return;
         previewAudioSource.Stop();
         if (previewRoutine != null) StopCoroutine(previewRoutine);
-        previewRoutine = StartCoroutine(LoadAndPlayPreview(CurrentSong.Id));
+        previewRoutine = StartCoroutine(LoadAndPlayPreview(CurrentSong.Id, IsSpecialNow));
     }
 
     // =====================================================================
@@ -1132,13 +1395,24 @@ public class SongSelectManager : MonoBehaviour
     //                      → 곡 길이의 35% 지점
     //   시작은 부드럽게 커지고(fade in) 끝은 부드럽게 작아진 뒤(fade out) 잠깐 쉬고 다시 시작한다.
     // =====================================================================
-    private IEnumerator LoadAndPlayPreview(int songId)
+    //  SPECIAL: 전용 음원(Audio/Full/{id}_4)이 있으면 그것, 미리듣기 구간도 SPECIAL 채보의 PREVIEW 줄을 먼저 봄
+    private IEnumerator LoadAndPlayPreview(int songId, bool special)
     {
         yield return new WaitForSecondsRealtime(previewDelay);
         if (CurrentSong.Id != songId) yield break;
 
-        ResourceRequest req = Resources.LoadAsync<AudioClip>($"Audio/Full/{songId}");
-        yield return req;
+        ResourceRequest req = null;
+        if (special)
+        {
+            req = Resources.LoadAsync<AudioClip>($"Audio/Full/{songId}_{DifficultyHelper.Special}");
+            yield return req;
+            if (req.asset == null) req = null;
+        }
+        if (req == null)
+        {
+            req = Resources.LoadAsync<AudioClip>($"Audio/Full/{songId}");
+            yield return req;
+        }
         AudioClip clip = req.asset as AudioClip;
         if (clip == null) { Debug.LogWarning($"[SongSelect] Resources/Audio/Full/{songId} 이 없습니다."); previewRoutine = null; yield break; }
         if (CurrentSong.Id != songId) { ReleaseUnusedClip(clip); yield break; }
@@ -1151,10 +1425,10 @@ public class SongSelectManager : MonoBehaviour
         }
 
         SetPreviewClip(clip);
-        if (!lengthCache.ContainsKey(songId)) lengthCache[songId] = clip.length;
+        if (!special && !lengthCache.ContainsKey(songId)) lengthCache[songId] = clip.length;
 
         float start, end;
-        GetPreviewRange(songId, clip.length, out start, out end);
+        GetPreviewRange(songId, special, clip.length, out start, out end);
 
         while (true)
         {
@@ -1219,12 +1493,13 @@ public class SongSelectManager : MonoBehaviour
     }
 
     // 미리듣기 구간(초)
-    private void GetPreviewRange(int songId, float clipLength, out float start, out float end)
+    private void GetPreviewRange(int songId, bool special, float clipLength, out float start, out float end)
     {
         Vector2 r;
         if (!previewOverride.TryGetValue(songId, out r))
         {
-            if (!previewFromChart.TryGetValue(songId, out r)) { r = ReadPreviewFromCharts(songId); previewFromChart[songId] = r; }
+            int key = special ? -songId - 1 : songId;          // SPECIAL 은 따로 기억
+            if (!previewFromChart.TryGetValue(key, out r)) { r = ReadPreviewFromCharts(songId, special); previewFromChart[key] = r; }
         }
 
         start = (r.x >= 0f && r.x < clipLength - 2f) ? r.x : clipLength * previewFallbackStartRatio;
@@ -1232,9 +1507,10 @@ public class SongSelectManager : MonoBehaviour
     }
 
     // StreamingAssets/chart/{id}_{난이도}.txt 의 "PREVIEW, 시작ms" (끝ms 는 선택) — 현재 난이도 → INSANE → HARD → EASY 순으로 찾음
-    private Vector2 ReadPreviewFromCharts(int songId)
+    private Vector2 ReadPreviewFromCharts(int songId, bool special)
     {
-        int[] order = { currentDifficulty, 3, 2, 1 };
+        // SPECIAL: SPECIAL 채보 → INSANE → HARD → EASY,  그 밖: 지금 난이도 → INSANE → HARD → EASY
+        int[] order = special ? new[] { DifficultyHelper.Special, 3, 2, 1 } : new[] { Mathf.Min(currentDifficulty, 3), 3, 2, 1 };
         foreach (int lv in order)
         {
             string path = Path.Combine(Application.streamingAssetsPath, "chart", $"{songId}_{lv}.txt");
@@ -1258,30 +1534,37 @@ public class SongSelectManager : MonoBehaviour
         return new Vector2(-1f, -1f);
     }
 
+    // 잠긴 곡에서 ENTER: 지금 곡 줄의 자물쇠를 흔듦
+    private void PulseLockedRow()
+    {
+        foreach (var r in rows)
+            if (r != null && r.boundVirtualIndex == currentVirtualIndex) r.PulseLock();
+        if (lockedOverlay != null) lockedOverlay.Shake();
+    }
+
     private void TryEnter(bool toEditor)
     {
         SongData song = CurrentSong;
-        if (song.ExistSongbar == 2) return;
+        // 잠긴 곡 (ExistSongbar 2) · 잠긴 난이도 (LockedValue): 플레이 불가, 편집(G + ENTER)만 가능
+        if (DifficultyHelper.IsPlayLocked(song, currentDifficulty) && !toEditor) { PulseLockedRow(); return; }
         if (CoreManager.Instance == null) return;
 
         bool anyAvailable = SongRowUI.IsDifficultyAvailable(song.Difficulty_EASY)
                          || SongRowUI.IsDifficultyAvailable(song.Difficulty_HARD)
-                         || SongRowUI.IsDifficultyAvailable(song.Difficulty_INSANE);
+                         || SongRowUI.IsDifficultyAvailable(song.Difficulty_INSANE)
+                         || SongRowUI.IsDifficultyAvailable(song.Difficulty_SPECIAL);
         if (!anyAvailable) return;
         if (!toEditor && !SongRowUI.IsDifficultyAvailable(GetDifficultyValue(song, currentDifficulty))) return;
 
-        if (toEditor) { BeginLeave(); CoreManager.Instance.LoadEditorScene(song, currentDifficulty); return; }
+        if (toEditor) { BeginLeave(); CoreManager.Instance.LoadEditorScene(song.ForLevel(currentDifficulty), currentDifficulty); return; }
 
         // 플레이 전 확인 창
         //  · 경고창: MV 를 켠 채로, songs.json 에 "MvWarning" 이 있는 곡   → [돌아가기] [MV를 끈 채로 진행하기] [그대로 진행하기]
-        //  · 알림창: 영역 채보(SIMPLE-DIVERSE 전용)를 다른 스킨으로          → [돌아가기] [진행하기]
-        //  둘 다면 경고창 → 알림창 순서. 하나도 없으면 바로 시작
+        //  없으면 바로 시작
         var pages = new List<PlayConfirmDialog.Page>();
-        string label = SongLabel(song);
+        string label = SongLabel(song.ForLevel(currentDifficulty));
         if (isMvOn && song.HasMV == 1 && !string.IsNullOrWhiteSpace(song.MvWarning))
             pages.Add(PlayConfirmDialog.WarningPage(label, song.MvWarning));
-        if (AreaHelper.IsAreaLevel(song, currentDifficulty) && SettingsStore.Current.GameSkin != GameSkins.Diverse)
-            pages.Add(PlayConfirmDialog.AreaNoticePage(label));
 
         if (pages.Count == 0) { StartGame(song, isMvOn); return; }
         int level = currentDifficulty;
@@ -1315,10 +1598,17 @@ public class SongSelectManager : MonoBehaviour
         CoreManager.Instance.LoadTestScene();
     }
 
+    // MODE RANDOM 이 켜져 있으면: 지난 조합을 버리고 시작 → 게임 화면에서 레인이 다 펼쳐진 뒤 새로 고르는 연출
     private void StartGame(SongData song, bool mv)
     {
+        if (GameModes.RandomPick && !GameModes.Locked) GameModes.ClearRandomResult();
+        LaunchGame(song, mv);
+    }
+
+    private void LaunchGame(SongData song, bool mv)
+    {
         BeginLeave();
-        CoreManager.Instance.LoadGameScene(song, mv, currentDifficulty);
+        CoreManager.Instance.LoadGameScene(song.ForLevel(currentDifficulty), mv, currentDifficulty);   // SPECIAL 이면 SPECIAL_Name 등으로 바뀐 곡 정보
     }
 
     // 확인 창 가운데 상자: "작곡가 - 곡 이름 (부제)"
@@ -1334,15 +1624,14 @@ public class SongSelectManager : MonoBehaviour
     [Tooltip("설정창 강조 글자(제목 · 항목 이름 · 버튼 · 탭) 글꼴. 비우면 일반 글꼴을 굵게")]
     public TMP_FontAsset settingsBoldFont;
 
-    // 확인 창 글꼴: 인스펙터 Dialog Font → Area Notice Font → 곡 제목 글꼴 순 (한글 · 일본어가 들어 있는 글꼴이어야 함)
-    [Tooltip("플레이 확인 창(경고 · 알림) 글꼴. 비우면 Area Notice Font → 곡 제목 글꼴")]
+    // 확인 창 글꼴: 인스펙터 Dialog Font → 곡 제목 글꼴 순 (한글 · 일본어가 들어 있는 글꼴이어야 함)
+    [Tooltip("플레이 확인 창(경고 · 알림) 글꼴. 비우면 곡 제목 글꼴")]
     public TMP_FontAsset dialogFont;
     private TMP_FontAsset DialogFont
     {
         get
         {
             if (dialogFont != null) return dialogFont;
-            if (areaNoticeFont != null) return areaNoticeFont;
             return selectedSongTitleText != null ? selectedSongTitleText.font : rowFont;
         }
     }

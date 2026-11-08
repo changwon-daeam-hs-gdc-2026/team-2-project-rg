@@ -10,12 +10,14 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 // ============================================================
-// 영역(Area) 채보 전용 에디터 — 기존 채보 에디터와 별개
+// 채보 에디터 (새 디자인) — 이제 모든 곡 · 모든 난이도(SPECIAL 포함)를 이 에디터로 연다
+//  (클래스 이름은 예전 '영역 전용 에디터' 그대로. 영역(AREA) · 화살표 노트 기능은 삭제됨)
 //
-//  songs.json 에 "Area": "deployed(INSANE)" 가 있는 곡 · 난이도를 에디터로 열면
-//  ChartEditorManager 대신 이 에디터가 열린다 (같은 3_Editor 씬, 화면 · 조작 · 그리기 모두 따로).
+//  ChartEditorManager 가 이 에디터를 띄운다 (같은 3_Editor 씬, 화면 · 조작 · 그리기 모두 따로).
+//   ChartEditorManager 인스펙터의 Use New Editor 를 끄면 예전 에디터 화면으로 열림
 //   - 노트는 SIMPLE 스킨 모양(둥근 단색 노트 · 빛나는 RED 노트 · 반투명 롱노트 몸통)으로 통일
-//   - 영역(AREA), 레인 사라짐/드러남(채보 줄 FOLD/UNFOLD — 예전 이름 접기/펼치기), 화살표 노트(7 >>>, 8 <<<) 편집
+//   - 레인 사라짐/드러남(채보 줄 FOLD/UNFOLD = HIDE/SHOW) 편집
+//   - 예전 채보의 AREA 줄은 읽지 않고(저장하면 지워짐), 화살표 노트(7 · 8)는 일반 탭으로 바뀜
 //   - 화면: 위 막대(곡 · 재생 시간 · 저장 상태) · 왼쪽 도구 · 오른쪽 정보 · 미니맵 · 아래 단축키 → AreaChartEditorHud.cs
 //   - 일반 노트 · 롱노트 · RED 노트 · 층(1층/2층) · 마디선 · BPM · 변속 · STOP/START · 오프셋도 편집 가능
 //   - 저장 형식은 게임과 같은 채보 txt. 이 에디터가 모르는 줄(PREVIEW, DEATHAREA 등)은 그대로 보존
@@ -24,12 +26,17 @@ using UnityEngine.UI;
 //   마우스 좌클릭 : 노트 놓기       우클릭 : 노트 지우기      휠 : 이동 (SHIFT = 1마디)
 //   1 탭  2 롱노트 시작  3 롱노트 끝  4 마디선   5 RED 노트 켜기/끄기   6 드래그 노트 켜기/끄기
 //     (드래그 켜짐: 1 = 드래그 노트(9), 2 = 드래그로 시작하는 롱노트(10), 끝은 3 그대로)
-//   노트 폭: 클릭한 채 오른쪽으로 끌면 1~4칸 (RED 뿐 아니라 일반 탭 · 롱노트 · 화살표 모두) → 저장 형식 "1_3" (3칸 탭)
+//   노트 폭: 클릭한 채 오른쪽으로 끌면 1~4칸 (RED 뿐 아니라 일반 탭 · 롱노트 모두) → 저장 형식 "1_3" (3칸 탭)
 //   Q 층 전환 (2층 ↔ 1층)
-//   Z + 클릭 : >>> 화살표 노트 (밝은 파랑)     X + 클릭 : <<< 화살표 노트 (밝은 노랑)
-//   A + 드래그 : 영역 그리기 (가로 = 1~4칸, 세로 = 길이 — RED 노트처럼 쭉 늘림, 여러 개 동시에 가능)
-//   A + 영역 위/아래 끝 드래그 : 길이 조절      A + 우클릭 : 그 영역 삭제      C + 클릭 : 그 박에서 영역 자르기
+//   7 슬라이드 편집 켜기/끄기 (레인을 넘나드는 롱노트, 프로세카처럼 곡선)
+//     롱노트(머리 · 몸통 · 끝)를 클릭 = 고름 · 점(머리 · 중계점 · 끝)을 끌면 레인 이동
+//     고른 롱노트의 머리 ~ 끝 사이 빈 곳 클릭 = 중계점 추가 (바로 끌 수 있음) · 중계점 우클릭 = 삭제
+//     C = 마우스가 있는 구간의 곡선 바꾸기 (직선 → 처음 천천히 IN → 끝 천천히 OUT)
+//     저장 형식: 같은 번호를 붙인 점들  예) 2~1  14~1i  3~1   (14 = 중계점, i / o = 그 점 → 다음 점 곡선)
 //   V + 클릭 : 레인 사라짐 (시간 입력)         B + 클릭 : 레인 드러남    (V/B + 우클릭 : 삭제)
+//   U + 클릭 : 그 박의 변속에 게임 SPEED UP / DOWN 글자 표시 켜고 끄기 (채보 줄 끝 ", SHOW")
+//   G + 클릭 : 난이도 공개 (숨긴 난이도 "?" 가 이 시점부터 실제 값으로, 채보에 하나만)   G + 우클릭 : 삭제
+//     저장 형식: REVEAL, 마디, 분자, 분모, LEVEL
 //   H : 단축키 도움말
 //   D + 클릭 : BPM    F + 클릭 : 변속 (편집 중인 층만, SHIFT+F = 두 층 모두)    E + 클릭 : STOP    R + 클릭 : START   (+ 우클릭 : 삭제)
 //   SPACE 재생/정지   ← → 박자 단위   ↑ ↓ 확대/축소   PAGE UP/DOWN 1마디   HOME 처음으로
@@ -44,29 +51,23 @@ public partial class AreaChartEditor : MonoBehaviour
         public double Beat { get { return (M - 1) * 4.0 + (double)N / Math.Max(1, D) * 4.0; } }
         public bool Same(Pos o) { return Math.Abs(Beat - o.Beat) < 1e-6; }
     }
-    private class ANote : Pos { public int Lane, Type, Width = 1, Layer = NoteLayer.Top; public bool Red; public ANote Tail, Head; }
+    private class ANote : Pos
+    {
+        public int Lane, Type, Width = 1, Layer = NoteLayer.Top; public bool Red; public ANote Tail, Head;
+        public int SlideId, Curve;            // 슬라이드: 번호 (0 = 아님) · 이 점 → 다음 점 곡선
+        public List<ANote> SlidePts;          // 슬라이드 머리에만: 머리 · 중계점들 · 끝 (박 순서)
+    }
     private class ABpm : Pos { public double Bpm; public double AnchorMs = double.NaN; public bool HasAnchor { get { return !double.IsNaN(AnchorMs); } } }
     private class ASpeed : Pos { public int Layer; public double Value; public bool Show; }
     private class AMark : Pos { public bool IsStop; }
-    // 영역 = 직사각형 하나 (시작 박 ~ 끝 박, 레인 Lane ~ Lane+Width-1). 여러 개를 동시에 둘 수 있음
-    //  저장할 때는 게임 형식(AREA, 마디, 분자, 분모, 1010 — 그 박부터의 '영역 레인 합집합')으로 바꿔 쓴다
-    private class AArea
-    {
-        public Pos Start, End;             // End == null : 끝 없음 (예전 채보에서 끝이 안 정해진 영역)
-        public int Lane, Width = 1;
-        public double StartBeat { get { return Start.Beat; } }
-        public double EndBeat { get { return End == null ? double.PositiveInfinity : End.Beat; } }
-        public bool HasLane(int lane) { return lane >= Lane && lane < Lane + Width; }
-        public int Mask { get { int m = 0; for (int i = Lane; i < Lane + Width && i < 4; i++) m |= 1 << i; return m; } }
-    }
     private class AFold : Pos { public bool Fold; public double Duration; }
 
     private readonly List<ANote> notes = new List<ANote>();
     private readonly List<ABpm> bpms = new List<ABpm>();
     private readonly List<ASpeed> speeds = new List<ASpeed>();
     private readonly List<AMark> marks = new List<AMark>();
-    private readonly List<AArea> areas = new List<AArea>();
     private readonly List<AFold> folds = new List<AFold>();
+    private Pos reveal;                                          // 난이도 공개 시점 (없으면 null)
     private readonly List<string> others = new List<string>();   // 이 에디터가 편집하지 않는 줄 (그대로 저장)
     private double initialBpm = 120.0, initialSpeed = 1.0;
     private double audioStart = 0.0;                             // 차트 시계에서 음악이 시작되는 시각 (= -MUSICOFFSET/1000)
@@ -86,13 +87,12 @@ public partial class AreaChartEditor : MonoBehaviour
     private bool dragMode = false;   // 6: 드래그 노트 (RED 와 동시에 켤 수 없음)
     private int editLayer = NoteLayer.Top;
     private float beatSpacing = 2.4f;         // 1박의 화면 길이 (월드 유닛)
-    private ANote draggingWide;              // 폭을 끌어서 정하는 중인 노트 (RED · 일반 · 화살표 모두 1~4칸)
-    // 영역 드래그: 0 = 새로 그리기, 1 = 끝(위쪽) 늘이기, 2 = 시작(아래쪽) 옮기기
-    private AArea areaDrag;
-    private int areaDragMode;
-    private int areaDragLane0;
-    private double areaDragBeat0;
-    private bool draggingArea { get { return areaDrag != null; } }
+    private ANote draggingWide;              // 폭을 끌어서 정하는 중인 노트 (RED · 일반 모두 1~4칸)
+    // 7: 슬라이드 편집 (레인을 넘나드는 롱노트)
+    private bool slideMode = false;
+    private ANote selSlide;                  // 고른 롱노트의 머리
+    private ANote draggingPoint;             // 레인을 옮기는 중인 점 (머리 · 중계점 · 끝)
+    private static readonly Color SlideUiColor = new Color(0.62f, 0.86f, 1f, 1f);
     private int escCount; private float escTimer;
     private string status = ""; private float statusTimer;
 
@@ -212,7 +212,9 @@ public partial class AreaChartEditor : MonoBehaviour
         hitClip = Resources.Load<AudioClip>("Audio/etc/hitsound");
         // [버그 수정] 탭음 데이터를 미리 올려 둠 (첫 PlayOneShot 때 아직 안 올라와 있으면 첫 소리가 나지 않음)
         if (hitClip != null && hitClip.loadState == AudioDataLoadState.Unloaded) hitClip.LoadAudioData();
-        AudioClip clip = Resources.Load<AudioClip>($"Audio/Full/{songId}");
+        // 난이도 전용 음원(Audio/Full/{곡ID}_{난이도})이 있으면 그것, 없으면 기존 음원
+        AudioClip clip = Resources.Load<AudioClip>($"Audio/Full/{songId}_{levelId}");
+        if (clip == null) clip = Resources.Load<AudioClip>($"Audio/Full/{songId}");
         if (clip != null)
         {
             bgm.clip = clip;
@@ -222,7 +224,7 @@ public partial class AreaChartEditor : MonoBehaviour
         BuildHud();
         LoadChart();
         MarkSaved();
-        SetStatus(T("영역 전용 에디터  ·  ", "AREA EDITOR  ·  ") + ChartPath());
+        SetStatus(T("채보 에디터  ·  ", "CHART EDITOR  ·  ") + ChartPath());
     }
 
     private string ChartPath() { return Path.Combine(Application.streamingAssetsPath, "chart", $"{songId}_{levelId}.txt"); }
@@ -235,13 +237,13 @@ public partial class AreaChartEditor : MonoBehaviour
 
     private void LoadChart()
     {
-        notes.Clear(); bpms.Clear(); speeds.Clear(); marks.Clear(); areas.Clear(); folds.Clear(); others.Clear();
+        notes.Clear(); bpms.Clear(); speeds.Clear(); marks.Clear(); folds.Clear(); others.Clear();
+        reveal = null;
         initialBpm = 120.0; initialSpeed = 1.0; audioStart = 0.0;
         string path = ChartPath();
         if (!File.Exists(path)) { SetStatus(T("새 채보: ", "New chart: ") + path); return; }
 
         bool hasMusicOffset = false;
-        var areaLines = new List<KeyValuePair<Pos, int>>();       // AREA 줄 (박, 레인 합집합) → 영역 사각형으로 바꿈
         foreach (string raw in File.ReadAllLines(path, System.Text.Encoding.UTF8))
         {
             int hash = raw.IndexOf('#');
@@ -267,87 +269,25 @@ public partial class AreaChartEditor : MonoBehaviour
                                             Show = d.Length >= 7 && d[6].Trim().ToUpperInvariant() == "SHOW" });
                 else if (type == "SPEED" && d.Length >= 5) speeds.Add(new ASpeed { M = L(d[1]), N = L(d[2]), D = L(d[3]), Layer = 0, Value = Dbl(d[4]) });
                 else if ((type == "STOP" || type == "START") && d.Length >= 4) marks.Add(new AMark { M = L(d[1]), N = L(d[2]), D = L(d[3]), IsStop = type == "STOP" });
-                else if (type == "AREA" && d.Length >= 5) areaLines.Add(new KeyValuePair<Pos, int>(new Pos { M = L(d[1]), N = L(d[2]), D = L(d[3]) }, AreaMask.Parse(d[4])));
+                else if (type == "AREA") { }                                                           // 삭제된 기능 (영역) — 저장하면 지워짐
                 else if ((type == "FOLD" || type == "UNFOLD" || type == "HIDE" || type == "SHOW") && d.Length >= 5)
                     folds.Add(new AFold { M = L(d[1]), N = L(d[2]), D = L(d[3]), Fold = type == "FOLD" || type == "HIDE", Duration = Dbl(d[4]) });   // 레인 사라짐 / 드러남
+                else if (type == "REVEAL" && d.Length >= 4)                                            // 난이도 공개 (가장 앞 하나만)
+                {
+                    Pos rp = new Pos { M = L(d[1]), N = L(d[2]), D = L(d[3]) };
+                    if (reveal == null || rp.Beat < reveal.Beat) reveal = rp;
+                }
                 else if (type == "NOTE" && d.Length >= 5) ParseNoteLine(d);
                 else if (type == "FREEKEY") { }                                                        // 삭제된 기능
                 else if (type == "UI" && d.Length >= 2 && (d[1].Trim() == "BasicUI" || d[1].Trim() == "FREEKEYUI")) { }
                 else others.Add(line);
             }
-            catch (Exception e) { Debug.LogWarning("[AreaEditor] 읽지 못한 줄: " + line + " (" + e.Message + ")"); others.Add(line); }
+            catch (Exception e) { Debug.LogWarning("[ChartEditor] 읽지 못한 줄: " + line + " (" + e.Message + ")"); others.Add(line); }
         }
         // 0박의 BPM 줄은 첫 BPM 으로
         var zero = bpms.FirstOrDefault(b => b.Beat <= 1e-9);
         if (zero != null) { initialBpm = zero.Bpm; bpms.Remove(zero); }
-        AreasFromMaskLines(areaLines);
         SortAll();
-    }
-
-    // AREA 줄들(박마다 '지금 영역인 레인 전체') → 영역 사각형들
-    //  레인마다 켜짐 ~ 꺼짐 구간을 찾고, 시작 · 끝이 같은 이웃 레인끼리는 한 사각형으로 합친다
-    //  예) AREA 1010 → 0000 : 1번 레인 영역 + 3번 레인 영역 (2개)
-    private void AreasFromMaskLines(List<KeyValuePair<Pos, int>> lines)
-    {
-        areas.Clear();
-        // 같은 박에 여러 줄이면 마지막 줄 (게임과 같음)
-        var ev = new List<KeyValuePair<Pos, int>>();
-        foreach (var e in lines.OrderBy(x => x.Key.Beat))
-        {
-            if (ev.Count > 0 && ev[ev.Count - 1].Key.Same(e.Key)) ev[ev.Count - 1] = e;
-            else ev.Add(e);
-        }
-        var spans = new List<AArea>();
-        Pos[] open = new Pos[4];
-        int prev = 0;
-        foreach (var e in ev)
-        {
-            for (int lane = 0; lane < 4; lane++)
-            {
-                bool was = AreaMask.Has(prev, lane), now = AreaMask.Has(e.Value, lane);
-                if (!was && now) open[lane] = e.Key;
-                else if (was && !now) { spans.Add(new AArea { Start = open[lane], End = e.Key, Lane = lane, Width = 1 }); open[lane] = null; }
-            }
-            prev = e.Value;
-        }
-        for (int lane = 0; lane < 4; lane++)
-            if (open[lane] != null) spans.Add(new AArea { Start = open[lane], End = null, Lane = lane, Width = 1 });
-
-        foreach (var sp in spans.OrderBy(x => x.StartBeat).ThenBy(x => x.Lane))
-        {
-            AArea join = areas.FirstOrDefault(a => a.Lane + a.Width == sp.Lane && a.Start.Same(sp.Start) && SameEnd(a.End, sp.End));
-            if (join != null) join.Width++;
-            else areas.Add(sp);
-        }
-    }
-
-    private static bool SameEnd(Pos a, Pos b) { return (a == null && b == null) || (a != null && b != null && a.Same(b)); }
-
-    // 이 박에서 영역인 레인 전체 (여러 영역의 합집합) — 게임이 쓰는 값과 같음
-    private int AreaMaskAtBeat(double beat)
-    {
-        int m = 0;
-        foreach (var a in areas)
-            if (a.StartBeat <= beat + 1e-6 && beat < a.EndBeat - 1e-6) m |= a.Mask;
-        return m;
-    }
-
-    // 영역 사각형들 → AREA 줄 (영역이 시작하거나 끝나는 박마다, 합집합이 바뀔 때만)
-    private List<KeyValuePair<Pos, int>> AreaMaskLines()
-    {
-        var bounds = new List<Pos>();
-        foreach (var a in areas) { bounds.Add(a.Start); if (a.End != null) bounds.Add(a.End); }
-        var outLines = new List<KeyValuePair<Pos, int>>();
-        int prev = 0;
-        Pos last = null;
-        foreach (var b in bounds.OrderBy(x => x.Beat))
-        {
-            if (last != null && last.Same(b)) continue;
-            last = b;
-            int m = AreaMaskAtBeat(b.Beat);
-            if (m != prev) { outLines.Add(new KeyValuePair<Pos, int>(b, m)); prev = m; }
-        }
-        return outLines;
     }
 
     private void ParseNoteLine(string[] d)
@@ -359,7 +299,7 @@ public partial class AreaChartEditor : MonoBehaviour
             for (int i = 0; i < val.Length && i < 4; i++)
             {
                 if (val[i] == '0' || !char.IsDigit(val[i])) continue;
-                int t = val[i] - '0';
+                int t = NoteTypes.Normalize(val[i] - '0');   // 예전 화살표(7 · 8) → 탭
                 if (t == 5 || t == 6) continue;
                 notes.Add(new ANote { M = m, N = n, D = den, Lane = i, Type = t });
             }
@@ -375,8 +315,10 @@ public partial class AreaChartEditor : MonoBehaviour
 
     private void AddToken(string token, long m, long n, long den, int lane, int layer)
     {
-        if (!NoteCellParser.TryParseToken(token, out int type, out int width, out bool red)) return;
-        notes.Add(new ANote { M = m, N = n, D = den, Lane = lane, Type = type, Width = Mathf.Clamp(width, 1, 4 - lane), Red = red, Layer = layer });
+        string core = NoteCellParser.SplitSlide(token, out int slideId, out int curve);   // 슬라이드 표시 "~번호[곡선]"
+        if (!NoteCellParser.TryParseToken(core, out int type, out int width, out bool red)) return;
+        notes.Add(new ANote { M = m, N = n, D = den, Lane = lane, Type = NoteTypes.Normalize(type), Width = Mathf.Clamp(width, 1, 4 - lane), Red = red, Layer = layer,
+                              SlideId = slideId, Curve = curve });   // 예전 화살표(7 · 8) → 탭
     }
 
     private void SortAll()
@@ -384,7 +326,6 @@ public partial class AreaChartEditor : MonoBehaviour
         bpms.Sort((a, b) => a.Beat.CompareTo(b.Beat));
         speeds.Sort((a, b) => a.Beat.CompareTo(b.Beat));
         marks.Sort((a, b) => a.Beat.CompareTo(b.Beat));
-        areas.Sort((a, b) => a.StartBeat.CompareTo(b.StartBeat));
         folds.Sort((a, b) => a.Beat.CompareTo(b.Beat));
         linksDirty = true;
     }
@@ -408,8 +349,8 @@ public partial class AreaChartEditor : MonoBehaviour
             else o.Add($"SPEED, {s.M}, {s.N}, {s.D}, {s.Layer}, {v}" + (s.Show ? ", SHOW" : ""));
         }
         foreach (var k in marks) o.Add($"{(k.IsStop ? "STOP" : "START")}, {k.M}, {k.N}, {k.D}");
-        foreach (var a in AreaMaskLines()) o.Add($"AREA, {a.Key.M}, {a.Key.N}, {a.Key.D}, {AreaMask.Format(a.Value)}");
         foreach (var f in folds) o.Add($"{(f.Fold ? "FOLD" : "UNFOLD")}, {f.M}, {f.N}, {f.D}, {f.Duration.ToString("0.###", CultureInfo.InvariantCulture)}");
+        if (reveal != null) o.Add($"REVEAL, {reveal.M}, {reveal.N}, {reveal.D}, LEVEL");
         o.AddRange(others);
 
         foreach (var g in notes.GroupBy(n => new { n.M, n.N, n.D }).OrderBy(g => g.First().Beat))
@@ -420,6 +361,7 @@ public partial class AreaChartEditor : MonoBehaviour
                 if (n.Lane < 0 || n.Lane > 3) continue;
                 // RED 는 항상 "종류_폭", 일반 노트는 2칸 이상일 때만 "종류_폭" (예: 1_3 = 3칸 탭)
                 string token = (n.Red || n.Width > 1) ? $"{n.Type}_{n.Width}" : n.Type.ToString(CultureInfo.InvariantCulture);
+                token = NoteCellParser.SlideToken(token, n.SlideId, n.Curve);   // 슬라이드: "~번호[곡선]"
                 if (n.Layer == NoteLayer.Bottom) bottom[n.Lane] = token; else top[n.Lane] = token;
             }
             string[] cells = new string[4];
@@ -448,7 +390,8 @@ public partial class AreaChartEditor : MonoBehaviour
         if (r.Ok && CoreManager.Instance != null && CoreManager.Instance.CurrentSongData != null && CoreManager.Instance.CurrentSongData.Id == songId)
         {
             SongData s = CoreManager.Instance.CurrentSongData;
-            if (levelId == 1) s.NoteCount_EASY = r.Total; else if (levelId == 3) s.NoteCount_INSANE = r.Total; else s.NoteCount_HARD = r.Total;
+            if (levelId == 1) s.NoteCount_EASY = r.Total; else if (levelId == 3) s.NoteCount_INSANE = r.Total;
+            else if (levelId == DifficultyHelper.Special) s.NoteCount_SPECIAL = r.Total; else s.NoteCount_HARD = r.Total;
         }
         MarkSaved();
         SetStatus(T($"저장됨  ·  노트 {notes.Count}개  ·  전체 판정 수 {(r.Ok ? r.Total : 0)}", $"SAVED  ·  {notes.Count} notes  ·  total judge {(r.Ok ? r.Total : 0)}"));
@@ -538,6 +481,8 @@ public partial class AreaChartEditor : MonoBehaviour
         if (kb.digit5Key.wasPressedThisFrame || kb.numpad5Key.wasPressedThisFrame) { redMode = !redMode; if (redMode) dragMode = false; }
         if (kb.digit6Key.wasPressedThisFrame || kb.numpad6Key.wasPressedThisFrame) { dragMode = !dragMode; if (dragMode) redMode = false; }
         if (kb.qKey.wasPressedThisFrame) editLayer = editLayer == NoteLayer.Top ? NoteLayer.Bottom : NoteLayer.Top;
+        if (kb.digit7Key.wasPressedThisFrame || kb.numpad7Key.wasPressedThisFrame) ToggleSlideMode();
+        if (kb.cKey.wasPressedThisFrame && slideMode && !playing) CycleSlideCurve();
 
         if (kb.leftArrowKey.wasPressedThisFrame) snapIndex = Mathf.Max(0, snapIndex - 1);
         if (kb.rightArrowKey.wasPressedThisFrame) snapIndex = Mathf.Min(SnapDivs.Length - 1, snapIndex + 1);
@@ -557,7 +502,7 @@ public partial class AreaChartEditor : MonoBehaviour
         if (kb.equalsKey.wasPressedThisFrame || kb.numpadPlusKey.wasPressedThisFrame) AdjustOffset(step);
         if (kb.oKey.wasPressedThisFrame && !playing) OpenPrompt(PromptKind.Offset, null);
 
-        if (kb.sKey.wasPressedThisFrame && !kb.aKey.isPressed) Save();
+        if (kb.sKey.wasPressedThisFrame) Save();
         // 음량: F1 / F2 음악,  F3 / F4 탭음 (5% 단위),  F5 롱노트 끝 탭음 켜기/끄기
         if (kb.f1Key.wasPressedThisFrame || kb.f2Key.wasPressedThisFrame)
         {
@@ -645,10 +590,23 @@ public partial class AreaChartEditor : MonoBehaviour
             }
             return;
         }
-        if (draggingArea)
+
+        // 슬라이드 점 끌기 (레인만 바뀜)
+        if (draggingPoint != null)
         {
-            UpdateAreaDrag(Mathf.Clamp(lane, 0, 3));
-            if (lUp || !lHeld) EndAreaDrag();
+            if (w.x >= Left - LaneW && w.x <= Right + LaneW)
+            {
+                int pl = Mathf.Clamp(Mathf.FloorToInt((w.x - Left) / LaneW), 0, 4 - Mathf.Max(1, draggingPoint.Width));
+                if (pl != draggingPoint.Lane) { draggingPoint.Lane = pl; linksDirty = true; }
+            }
+            if (lUp || !lHeld)
+            {
+                ANote h = draggingPoint.Head ?? draggingPoint;
+                draggingPoint = null;
+                linksDirty = true;
+                RebuildLinks();
+                NormalizeSlide(h);
+            }
             return;
         }
 
@@ -658,26 +616,30 @@ public partial class AreaChartEditor : MonoBehaviour
         if (!ld && !rd) return;
         Pos p = PosOf(hoverBeat);
 
-        if (kb.aKey.isPressed)
+        if (kb.uKey.isPressed)
         {
-            if (hoverLane < 0) return;
-            AArea under = AreaAt(hoverLane, hoverBeat);
-            if (rd) { if (under != null) { areas.Remove(under); SetStatus(T("영역 삭제", "AREA deleted")); } return; }
-            BeginAreaDrag(hoverLane, hoverBeat);
+            // U + 클릭 : 그 박의 변속(지금 편집 중인 층 · 두 층 모두)에 SPEED UP / DOWN 표시 켜고 끄기
+            if (!ld) return;
+            var hit = speeds.Where(x => x.Same(p) && (x.Layer == 0 || x.Layer == editLayer)).ToList();
+            if (hit.Count == 0) hit = speeds.Where(x => x.Same(p)).ToList();
+            if (hit.Count == 0) { SetStatus(T("이 박에는 변속이 없음 (F + 클릭으로 먼저 변속)", "No speed change on this beat (F + click first)")); return; }
+            bool on = !hit.Any(x => x.Show);
+            foreach (var sp in hit) sp.Show = on;
+            SetStatus(on ? T("SPEED UP / DOWN 표시 켬", "SPEED UP / DOWN notice ON") : T("SPEED UP / DOWN 표시 끔", "SPEED UP / DOWN notice OFF"));
             return;
         }
-        if (kb.cKey.isPressed)
+        if (kb.gKey.isPressed)
         {
-            if (!ld) return;
-            // 커서 아래 영역을 이 박에서 자름. 영역 밖이면 이 박을 지나는 모든 영역을 자름
-            AArea under = hoverLane >= 0 ? AreaAt(hoverLane, hoverBeat) : null;
-            int cut = 0;
-            foreach (var a in areas)
+            // G + 클릭 : 난이도 공개 위치 (하나만 — 새로 찍으면 옮겨짐),  G + 우클릭 : 삭제
+            if (rd) { if (reveal != null && reveal.Same(p)) { reveal = null; SetStatus(T("난이도 공개 삭제", "LEVEL REVEAL removed")); } }
+            else
             {
-                if (under != null && a != under) continue;
-                if (a.StartBeat < hoverBeat - 1e-6 && hoverBeat < a.EndBeat - 1e-6) { a.End = p; cut++; }
+                reveal = new Pos { M = p.M, N = p.N, D = p.D };
+                SongData sd = CoreManager.Instance != null ? CoreManager.Instance.CurrentSongData : null;
+                bool hidden = sd != null && DifficultyHelper.IsHidden(sd, levelId);
+                SetStatus(hidden ? T("난이도 공개: ? → ", "LEVEL REVEAL: ? → ") + DifficultyHelper.GetRealValue(sd, levelId)
+                                 : T("난이도 공개 위치 (이 난이도는 ? 가 아니라 게임에서는 변화 없음)", "LEVEL REVEAL (this level is not \"?\" — no effect in game)"));
             }
-            SetStatus(cut > 0 ? T($"영역 {cut}개를 여기서 끝냄", $"{cut} area(s) ended here") : T("자를 영역이 없습니다", "No area to cut here"));
             return;
         }
         if (kb.vKey.isPressed || kb.bKey.isPressed)
@@ -710,15 +672,25 @@ public partial class AreaChartEditor : MonoBehaviour
             SortAll(); return;
         }
 
+        if (slideMode) { HandleSlideClick(ld, rd, p); return; }   // 7: 슬라이드 편집
+
         if (hoverLane < 0) return;
         ANote exist = NoteAt(hoverLane, p, editLayer);
-        if (rd) { if (exist != null) { notes.Remove(exist); linksDirty = true; } return; }
+        if (rd)
+        {
+            if (exist != null)
+            {
+                // 슬라이드의 점을 지우면 그 슬라이드 전체 (머리 · 중계점 · 끝)
+                if (exist.SlideId > 0) { int id = exist.SlideId, ly = exist.Layer; notes.RemoveAll(x => x.SlideId == id && x.Layer == ly); }
+                else notes.Remove(exist);
+                linksDirty = true;
+            }
+            return;
+        }
 
         if (exist != null) notes.Remove(exist);
         // 모든 노트(마디선 제외)는 RED 처럼 오른쪽으로 끌어 폭 1~4칸 (클릭만 하면 1칸)
-        if (kb.zKey.isPressed || kb.xKey.isPressed)
-            draggingWide = new ANote { M = p.M, N = p.N, D = p.D, Lane = hoverLane, Type = kb.zKey.isPressed ? NoteTypes.ArrowRight : NoteTypes.ArrowLeft, Width = 1, Layer = editLayer };
-        else if (noteType == 4)
+        if (noteType == 4)
         {
             notes.Add(new ANote { M = p.M, N = p.N, D = p.D, Lane = hoverLane, Type = 4, Layer = editLayer });
             linksDirty = true;
@@ -736,68 +708,253 @@ public partial class AreaChartEditor : MonoBehaviour
         linksDirty = true;
     }
 
-    // ----- 영역 그리기 / 늘이기 -----
-    // 커서 아래 영역 (레인이 겹치고, 박이 시작 ~ 끝 안). 나중에 그린 것이 우선
-    private AArea AreaAt(int lane, double beat)
+    // =====================================================================
+    //  슬라이드 편집 (7)
+    // =====================================================================
+    private void ToggleSlideMode()
     {
-        for (int i = areas.Count - 1; i >= 0; i--)
+        slideMode = !slideMode;
+        draggingPoint = null;
+        if (!slideMode) selSlide = null;
+        SetStatus(slideMode ? T("슬라이드 편집: 롱노트를 클릭해 고른 뒤, 머리 ~ 끝 사이를 클릭해 중계점 추가 · 점을 끌어 레인 이동 · C 곡선",
+                                "SLIDE EDIT: click a long note, click between its ends to add a point · drag points · C curve")
+                            : T("슬라이드 편집 끔", "SLIDE EDIT OFF"));
+    }
+
+    private int NewSlideId() { int m = 0; foreach (var n in notes) if (n.SlideId > m) m = n.SlideId; return m + 1; }
+
+    // 롱노트의 점들 (슬라이드면 머리 · 중계점 · 끝, 일반 롱노트면 머리 · 끝)
+    private static List<ANote> PointsOf(ANote head)
+    {
+        if (head == null) return null;
+        if (head.SlidePts != null) return head.SlidePts;
+        if (head.Tail != null) return new List<ANote> { head, head.Tail };
+        return null;
+    }
+
+    // 일반 롱노트를 슬라이드로 (머리 · 끝에 같은 번호)
+    private void EnsureSlide(ANote head)
+    {
+        if (head == null || head.Tail == null || head.SlideId > 0) return;
+        int id = NewSlideId();
+        head.SlideId = id; head.Tail.SlideId = id;
+        RebuildLinks();
+    }
+
+    // 중계점이 없고 머리 · 끝이 같은 레인 · 폭이면 다시 일반 롱노트로 (파일을 깔끔하게)
+    private void NormalizeSlide(ANote head)
+    {
+        if (head == null || head.SlidePts == null) return;
+        var pts = head.SlidePts;
+        if (pts.Count != 2) return;
+        if (pts[0].Lane != pts[1].Lane || pts[0].Width != pts[1].Width) return;
+        foreach (var x in pts) { x.SlideId = 0; x.Curve = SlideCurve.Straight; }
+        RebuildLinks();
+    }
+
+    // 시각 비율로 그 박의 범위 (레인 단위 left ~ right) — 게임과 같은 계산 (시간 기준 곡선)
+    private void SlideAt(List<ANote> pts, double beat, out float l, out float r)
+    {
+        ANote a = pts[0], b = pts[pts.Count - 1];
+        if (beat <= a.Beat) { l = a.Lane; r = a.Lane + a.Width; return; }
+        if (beat >= b.Beat) { l = b.Lane; r = b.Lane + b.Width; return; }
+        for (int i = 0; i < pts.Count - 1; i++) if (beat <= pts[i + 1].Beat) { a = pts[i]; b = pts[i + 1]; break; }
+        double ta = TimeOf(a.Beat), tb = TimeOf(b.Beat), t = TimeOf(beat);
+        float u = tb - ta <= 1e-9 ? 1f : (float)((t - ta) / (tb - ta));
+        float e = SlideCurve.Ease(a.Curve, u);
+        l = Mathf.Lerp(a.Lane, b.Lane, e);
+        r = Mathf.Lerp(a.Lane + a.Width, b.Lane + b.Width, e);
+    }
+
+    // 마우스 위치의 롱노트 머리 (편집 중인 층) — 점 위 또는 몸통 위
+    private ANote LongNoteAt(double beat, float wx, out ANote point)
+    {
+        point = null;
+        float lanePos = (wx - Left) / LaneW;
+        foreach (var n in notes)
         {
-            AArea a = areas[i];
-            if (a.HasLane(lane) && beat >= a.StartBeat - 1e-6 && beat <= a.EndBeat + 1e-6) return a;
+            if (n.Layer != editLayer || n.Tail == null || !NoteTypes.IsLongHead(n.Type)) continue;
+            var pts = PointsOf(n);
+            if (pts == null || beat < n.Beat - 1e-6 || beat > n.Tail.Beat + 1e-6) continue;
+            foreach (var pt in pts)
+                if (Math.Abs(pt.Beat - beat) < 1e-6 && lanePos >= pt.Lane && lanePos <= pt.Lane + Mathf.Max(1, pt.Width)) { point = pt; return n; }
+            SlideAt(pts, beat, out float l, out float r);
+            if (lanePos >= l - 0.05f && lanePos <= r + 0.05f) return n;
         }
         return null;
     }
 
-    private void BeginAreaDrag(int lane, double beat)
+    private void HandleSlideClick(bool ld, bool rd, Pos p)
     {
-        double tol = Step * 0.5 + 1e-6;
-        // 이미 있는 영역의 위 끝 / 아래 끝을 잡으면 길이 조절
-        for (int i = areas.Count - 1; i >= 0; i--)
+        Vector2 mp = Mouse.current.position.ReadValue();
+        float wx = cam.ScreenToWorldPoint(new Vector3(mp.x, mp.y, 10f)).x;
+        ANote head = LongNoteAt(hoverBeat, wx, out ANote point);
+
+        if (rd)
         {
-            AArea a = areas[i];
-            if (!a.HasLane(lane)) continue;
-            if (a.End != null && Math.Abs(a.EndBeat - beat) <= tol) { areaDrag = a; areaDragMode = 1; return; }
-            if (Math.Abs(a.StartBeat - beat) <= tol && (a.End == null || a.EndBeat - a.StartBeat > tol * 2)) { areaDrag = a; areaDragMode = 2; return; }
+            // 중계점 우클릭 = 삭제
+            if (point != null && NoteTypes.IsSlideRelay(point.Type))
+            {
+                ANote h = point.Head;
+                notes.Remove(point);
+                RebuildLinks();
+                NormalizeSlide(h);
+                SetStatus(T("중계점 삭제", "point removed"));
+            }
+            return;
         }
-        // 새 영역: 누른 칸 · 박에서 시작
-        areaDragMode = 0;
-        areaDragLane0 = lane;
-        areaDragBeat0 = beat;
-        areaDrag = new AArea { Start = PosOf(beat), End = PosOf(beat), Lane = lane, Width = 1 };
-        areas.Add(areaDrag);
+        if (!ld) return;
+
+        if (point != null)
+        {
+            // 점을 누름: 그 롱노트를 고르고 끌기 시작 (일반 롱노트였으면 슬라이드로)
+            selSlide = head;
+            EnsureSlide(head);
+            draggingPoint = point;
+            return;
+        }
+        if (selSlide != null && selSlide.Tail != null && hoverLane >= 0 && hoverBeat > selSlide.Beat + 1e-6 && hoverBeat < selSlide.Tail.Beat - 1e-6
+            && (head == null || head == selSlide))
+        {
+            // 고른 롱노트의 머리 ~ 끝 사이: 중계점 추가 (폭은 바로 앞 점과 같게) → 바로 끌 수 있음
+            EnsureSlide(selSlide);
+            var pts = PointsOf(selSlide);
+            ANote prev = pts[0];
+            foreach (var x in pts) if (x.Beat < hoverBeat - 1e-6) prev = x;
+            if (pts.Exists(x => Math.Abs(x.Beat - hoverBeat) < 1e-6)) return;   // 그 박에 이미 점이 있음
+            int wdt = Mathf.Max(1, prev.Width);
+            var relay = new ANote { M = p.M, N = p.N, D = p.D, Lane = Mathf.Clamp(hoverLane, 0, 4 - wdt), Width = wdt, Type = NoteTypes.SlideRelay,
+                                    Red = selSlide.Red, Layer = selSlide.Layer, SlideId = selSlide.SlideId, Curve = prev.Curve };
+            notes.Add(relay);
+            RebuildLinks();
+            draggingPoint = relay;
+            SetStatus(T("중계점 추가 — 끌어서 레인 이동", "point added — drag to move"));
+            return;
+        }
+        selSlide = head;                                   // 롱노트 몸통을 누름 = 고름 (빈 곳 = 고르기 취소)
     }
 
-    private void UpdateAreaDrag(int lane)
+    // C: 마우스가 있는 구간의 곡선 (직선 → IN → OUT)
+    private void CycleSlideCurve()
     {
-        AArea a = areaDrag;
-        double beat = hoverBeat;
-        if (areaDragMode == 0)
+        Vector2 mp = Mouse.current != null ? Mouse.current.position.ReadValue() : Vector2.zero;
+        float wx = cam != null ? cam.ScreenToWorldPoint(new Vector3(mp.x, mp.y, 10f)).x : 0f;
+        ANote head = LongNoteAt(hoverBeat, wx, out ANote _);
+        if (head == null) head = selSlide;
+        if (head == null || head.Tail == null) { SetStatus(T("곡선을 바꿀 롱노트 위에서 C", "hover a long note and press C")); return; }
+        EnsureSlide(head);
+        var pts = PointsOf(head);
+        int seg = 0;
+        for (int i = 0; i < pts.Count - 1; i++) if (hoverBeat >= pts[i].Beat - 1e-6) seg = i;
+        pts[seg].Curve = SlideCurve.Next(pts[seg].Curve);
+        selSlide = head;
+        SetStatus(T("곡선: ", "CURVE: ") + (pts[seg].Curve == SlideCurve.EaseIn ? T("처음 천천히 (IN)", "ease in (IN)")
+                                         : pts[seg].Curve == SlideCurve.EaseOut ? T("끝 천천히 (OUT)", "ease out (OUT)") : T("직선", "straight")));
+        RebuildLinks();
+        NormalizeSlide(head);
+    }
+
+    // 슬라이드 몸통: 가로 조각들로 채우고, 양쪽 테두리는 부드러운 선
+    private void DrawSlideBody(ANote head, float alpha)
+    {
+        var pts = head.SlidePts;
+        Color lc = SimpleGameSkin.LaneColor(head.Lane);
+        if (head.Red) lc = new Color(1f, 0.38f, 0.45f);
+        bool sel = slideMode && head == selSlide;
+        int order = NoteLayer.BodyOrder(head.Layer);
+        float inset = 0.025f;
+        for (int i = 0; i < pts.Count - 1; i++)
         {
-            // 가로: 누른 칸 ~ 지금 칸 (RED 노트 폭처럼),  세로: 누른 박 ~ 지금 박 (롱노트처럼 쭉)
-            int l0 = Mathf.Min(areaDragLane0, lane), l1 = Mathf.Max(areaDragLane0, lane);
-            a.Lane = l0; a.Width = l1 - l0 + 1;
-            double s0 = Math.Min(areaDragBeat0, beat), s1 = Math.Max(areaDragBeat0, beat);
-            a.Start = PosOf(s0); a.End = PosOf(s1);
-        }
-        else if (areaDragMode == 1) a.End = PosOf(Math.Max(beat, a.StartBeat + Step));
-        else
-        {
-            double lim = a.End == null ? double.PositiveInfinity : a.EndBeat - Step;
-            a.Start = PosOf(Math.Max(0.0, Math.Min(beat, lim)));
+            ANote a = pts[i], b = pts[i + 1];
+            bool moves = a.Lane != b.Lane || a.Width != b.Width;
+            int steps = !moves ? 1 : a.Curve == SlideCurve.Straight ? 10 : 18;
+            float pl = 0f, pr = 0f, py = 0f;
+            for (int k = 0; k <= steps; k++)
+            {
+                double beat = a.Beat + (b.Beat - a.Beat) * k / steps;
+                SlideAt(pts, beat, out float l, out float r);
+                float y = Y(beat);
+                float xl = Left + l * LaneW + inset, xr = Left + r * LaneW - inset;
+                if (k > 0)
+                {
+                    float midL = (pl + xl) * 0.5f, midR = (pr + xr) * 0.5f;
+                    Box((midL + midR) * 0.5f, (py + y) * 0.5f, midR - midL, Mathf.Abs(y - py) + 0.01f, new Color(lc.r, lc.g, lc.b, (sel ? 0.42f : 0.30f) * alpha), order);
+                    Color ec = sel ? new Color(1f, 1f, 1f, 0.95f * alpha) : new Color(lc.r, lc.g, lc.b, 0.85f * alpha);
+                    SlideLine(pl, py, xl, y, 0.035f, ec, order + 1);
+                    SlideLine(pr, py, xr, y, 0.035f, ec, order + 1);
+                }
+                pl = xl; pr = xr; py = y;
+            }
         }
     }
 
-    private void EndAreaDrag()
+    // 선 하나 (돌린 가는 막대)
+    private void SlideLine(float x0, float y0, float x1, float y1, float thick, Color c, int order)
     {
-        AArea a = areaDrag;
-        areaDrag = null;
-        if (a == null) return;
-        // 세로로 끌지 않고 클릭만 했으면 1마디 길이
-        if (areaDragMode == 0 && a.End != null && a.EndBeat - a.StartBeat < 1e-6) a.End = PosOf(a.StartBeat + 4.0);
-        SortAll();
-        int lanes = a.Width;
-        SetStatus(T($"영역  {a.Lane + 1}~{a.Lane + lanes}번 레인  ·  {(a.End == null ? "끝 없음" : (a.EndBeat - a.StartBeat).ToString("0.###", CultureInfo.InvariantCulture) + "박")}",
-                    $"AREA  lane {a.Lane + 1}-{a.Lane + lanes}  ·  {(a.End == null ? "open" : (a.EndBeat - a.StartBeat).ToString("0.###", CultureInfo.InvariantCulture) + " beats")}"));
+        float dx = x1 - x0, dy = y1 - y0;
+        float len = Mathf.Sqrt(dx * dx + dy * dy);
+        if (len < 1e-4f) return;
+        SpriteRenderer sr = pool.Get(NoteArt.WhiteSprite, order);
+        sr.drawMode = SpriteDrawMode.Simple;
+        sr.transform.position = new Vector3((x0 + x1) * 0.5f, (y0 + y1) * 0.5f, 0f);
+        sr.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(dy, dx) * Mathf.Rad2Deg);
+        sr.transform.localScale = new Vector3(len + thick * 0.5f, thick, 1f);
+        sr.color = c;
+    }
+
+    // 슬라이드 편집 중: 고른 롱노트의 점 손잡이 · 고른 일반 롱노트 강조 · 중계점 놓일 자리 미리보기
+    private void DrawSlideEditOverlay()
+    {
+        if (selSlide != null && !notes.Contains(selSlide)) selSlide = null;
+        if (selSlide != null)
+        {
+            var pts = PointsOf(selSlide);
+            if (pts != null)
+            {
+                if (selSlide.SlidePts == null)
+                {
+                    // 일반 롱노트를 고름: 몸통 위에 흰 테두리
+                    float x0 = Left + selSlide.Lane * LaneW + 0.025f, x1 = Left + (selSlide.Lane + Mathf.Max(1, selSlide.Width)) * LaneW - 0.025f;
+                    float y0 = Y(selSlide.Beat), y1 = Y(selSlide.Tail.Beat);
+                    SlideLine(x0, y0, x0, y1, 0.035f, new Color(1f, 1f, 1f, 0.9f), 40);
+                    SlideLine(x1, y0, x1, y1, 0.035f, new Color(1f, 1f, 1f, 0.9f), 40);
+                }
+                foreach (var pt in pts)
+                {
+                    float cx = Left + (pt.Lane + Mathf.Max(1, pt.Width) * 0.5f) * LaneW;
+                    SpriteRenderer g = pool.Get(NoteArt.DragGemSprite, 45);
+                    g.drawMode = SpriteDrawMode.Simple;
+                    Vector2 gsz = NoteArt.DragGemSprite.bounds.size;
+                    float s = pt == draggingPoint ? 0.36f : 0.28f;
+                    g.transform.localScale = new Vector3(s / gsz.x, s / gsz.y, 1f);
+                    g.transform.position = new Vector3(cx, Y(pt.Beat), 0f);
+                    g.color = pt == draggingPoint ? Color.white : SlideUiColor;
+                }
+                // 중계점 놓일 자리
+                if (draggingPoint == null && hoverLane >= 0 && hoverBeat > selSlide.Beat + 1e-6 && hoverBeat < selSlide.Tail.Beat - 1e-6)
+                {
+                    ANote prev = pts[0];
+                    foreach (var x in pts) if (x.Beat < hoverBeat - 1e-6) prev = x;
+                    int wdt = Mathf.Max(1, prev.Width);
+                    int ln = Mathf.Clamp(hoverLane, 0, 4 - wdt);
+                    Note(Left + (ln + wdt * 0.5f) * LaneW, Y(hoverBeat), (wdt - 1) * 0.8f + 0.8f * 0.95f, SimpleGameSkin.TailHeight * 2f, new Color(SlideUiColor.r, SlideUiColor.g, SlideUiColor.b, 0.45f), 15);
+                }
+            }
+        }
+    }
+
+    // 슬라이드 편집 중: 고른 롱노트의 구간마다 곡선 이름 (HUD 글자)
+    private void DrawSlideLabels()
+    {
+        if (!slideMode || selSlide == null || selSlide.SlidePts == null) return;
+        var pts = selSlide.SlidePts;
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            double mid = (pts[i].Beat + pts[i + 1].Beat) * 0.5;
+            SlideAt(pts, mid, out float l, out float r);
+            Color c = pts[i].Curve == SlideCurve.Straight ? new Color(1f, 1f, 1f, 0.5f) : SlideUiColor;
+            LabelCenter(Left + r * LaneW + 0.35f, Y(mid), SlideCurve.Name(pts[i].Curve), c);
+        }
     }
 
     private ANote NoteAt(int lane, Pos p, int layer)
@@ -982,7 +1139,7 @@ public partial class AreaChartEditor : MonoBehaviour
         foreach (var n in notes)
         {
             if (n.Type == 4) continue;
-            if (!longHitSound && (n.Type == 3 || n.Type == 13)) continue;   // 롱노트 끝 판정(꼬리) 탭음 끔 — 시작은 그대로
+            if (!longHitSound && (n.Type == 3 || n.Type == 13 || NoteTypes.IsSlideRelay(n.Type))) continue;   // 롱노트 끝 · 슬라이드 중계점 탭음 끔 — 시작은 그대로
             double t = TimeOf(n.Beat);
             if (t < playFromTime - 1e-6) continue;                               // 시작 위치보다 앞 노트는 소리 안 냄
             if (t > lastHitCheck && t <= now) { hit = true; break; }
@@ -1007,12 +1164,22 @@ public partial class AreaChartEditor : MonoBehaviour
 
     private void RebuildLinks()
     {
-        foreach (var n in notes) { n.Tail = null; n.Head = null; }
+        foreach (var n in notes) { n.Tail = null; n.Head = null; n.SlidePts = null; }
+        // 슬라이드: 같은 번호 · 같은 층의 점들을 박 순서로 (처음 = 머리, 마지막 = 끝, 가운데 = 중계점)
+        foreach (var g in notes.Where(x => x.SlideId > 0).GroupBy(x => x.Layer * 100000 + x.SlideId))
+        {
+            var pts = g.OrderBy(x => x.Beat).ToList();
+            if (pts.Count < 2) continue;
+            ANote head = pts[0];
+            head.SlidePts = pts;
+            head.Tail = pts[pts.Count - 1];
+            for (int i = 1; i < pts.Count; i++) pts[i].Head = head;
+        }
         for (int lane = 0; lane < 4; lane++)
             for (int layer = 1; layer <= 2; layer++)
             {
                 ANote head = null;
-                foreach (var n in notes.Where(x => x.Lane == lane && x.Layer == layer).OrderBy(x => x.Beat))
+                foreach (var n in notes.Where(x => x.Lane == lane && x.Layer == layer && x.SlideId == 0).OrderBy(x => x.Beat))
                 {
                     if (NoteTypes.IsLongHead(n.Type)) head = n;
                     else if ((n.Type == 3 || n.Type == 13) && head != null) { if (head.Red == n.Red) { head.Tail = n; n.Head = head; } head = null; }
@@ -1033,18 +1200,14 @@ public partial class AreaChartEditor : MonoBehaviour
         DrawFoldBar(b0, b1);     // 오른쪽 여백: 레인이 사라진 정도 (사라짐 · 드러남 미리보기)
         // 레인 밑 남색 덮개: 레인이 사라진 상태에서도 그대로 (게임과 같음) → 옅어지는 대상보다 먼저 그림
         Box(0f, 0f, Right - Left + 0.06f, 12f, new Color(0.018f, 0.022f, 0.04f, 1f), -40);
-        int foldFrom = pool.Used;                     // 여기부터 판정선까지 = 레인 사라짐 때 옅어지는 대상
         // 가운데 두 레인을 아주 살짝 밝게 (레인 구분이 한눈에) + 판정선 근처 바닥 빛
         Box(LaneX(1), 0f, LaneW, 12f, new Color(1f, 1f, 1f, 0.016f), -39);
         Box(LaneX(2), 0f, LaneW, 12f, new Color(1f, 1f, 1f, 0.016f), -39);
         Box(0f, HitY + 0.45f, Right - Left, 0.9f, new Color(0.36f, 0.88f, 0.90f, 0.035f), -38);
 
-        pool.Keep = true;
-        DrawAreas(b0, b1);       // 영역 (레인 바탕 위) — 레인이 사라져도 그대로
-        pool.Keep = false;
         DrawGapZones(b0, b1);
 
-        // 그리드: 영역 위에도 항상 함께 그림 (가로 박자선)
+        // 그리드 (가로 박자선)
         DrawGrid(b0, b1);
         // 마우스가 있는 레인 · 박: 세로 칸을 옅게 + 가로 줄 (어디에 놓일지 한눈에)
         if (!playing && prompt == PromptKind.None && hoverLane >= 0)
@@ -1063,163 +1226,29 @@ public partial class AreaChartEditor : MonoBehaviour
             double nb = n.Beat;
             double tailB = n.Tail != null ? n.Tail.Beat : nb;
             if (tailB < b0 - 1 || nb > b1 + 1) continue;
-            pool.Keep = NoteInArea(n);      // 영역 안 노트는 레인이 접혀도 그대로 (게임과 같은 규칙)
             DrawNote(n);
         }
-        pool.Keep = false;
 
         // 판정선 (뒤에 은은한 빛)
         Color jc = playing ? new Color(0.4f, 1f, 0.6f, 1f) : new Color(1f, 1f, 1f, 1f);
         Box(0f, HitY, Right - Left, 0.22f, new Color(jc.r, jc.g, jc.b, 0.08f), 19);
         Box(0f, HitY, Right - Left, 0.05f, new Color(jc.r, jc.g, jc.b, 0.95f), 20);
 
-        // 레인 사라짐 / 드러남 미리보기 (재생 중): 선은 위의 DrawLaneLines 가 움직이고,
-        //  레인 바탕 · 영역 밖 노트 · 판정선은 게임처럼 가로로 접히지 않고 옅어짐
-        //  멈춰 있을 때는 편집할 수 있도록 그대로 두고, 오른쪽 주황 막대와 정보 패널(레인 상태)로만 보여 줌
-        if (playing)
-        {
-            float k = FoldAt(playTime);
-            if (k < 0.999f)
-            {
-                pool.ApplyFold(foldFrom, pool.Used, 1f, k);
-                // 사라지는 동안: 지금 영역인 레인 위에만 판정선 (게임과 같음)
-                int maskNow = AreaMaskAtBeat(BeatOf(playTime));
-                for (int l = 0; l < 4; l++)
-                {
-                    if (!AreaMask.Has(maskNow, l)) continue;
-                    int e = l;
-                    while (e + 1 < 4 && AreaMask.Has(maskNow, e + 1)) e++;
-                    float x0 = Left + l * LaneW, x1 = Left + (e + 1) * LaneW;
-                    Box((x0 + x1) * 0.5f, HitY, x1 - x0, 0.05f, new Color(0.4f, 1f, 0.6f, 0.95f * (1f - k)), 20);
-                    l = e;
-                }
-            }
-        }
-
         // 마우스 위치 미리보기
-        if (!playing && prompt == PromptKind.None && hoverLane >= 0 && draggingWide == null && !draggingArea)
+        // 레인 사라짐 / 드러남 미리보기 (재생 중): 레인 선만 위의 DrawLaneLines 가 위로 빨려 들어가고 / 올라옴
+        //  (게임과 같음 — 푸른 바탕 · 판정선 · 노트는 사라짐 상태에서도 그대로 보임)
+        if (slideMode && !playing && prompt == PromptKind.None) DrawSlideEditOverlay();
+        else if (!playing && prompt == PromptKind.None && hoverLane >= 0 && draggingWide == null)
         {
-            var kb = Keyboard.current;
-            bool arrow = kb != null && (kb.zKey.isPressed || kb.xKey.isPressed);
-            Color c = arrow ? NoteArt.ArrowColor(kb.zKey.isPressed ? NoteTypes.ArrowRight : NoteTypes.ArrowLeft)
-                    : (redMode ? new Color(1f, 0.38f, 0.45f) : (dragMode && noteType <= 2 ? NoteArt.DragColor : SimpleGameSkin.LaneColor(hoverLane)));
-            float ph = SimpleGameSkin.NoteHeight * (dragMode && !arrow && noteType <= 2 ? NoteArt.DragHeightRatio : 1f);
+            Color c = redMode ? new Color(1f, 0.38f, 0.45f) : (dragMode && noteType <= 2 ? NoteArt.DragColor : SimpleGameSkin.LaneColor(hoverLane));
+            float ph = SimpleGameSkin.NoteHeight * (dragMode && noteType <= 2 ? NoteArt.DragHeightRatio : 1f);
             Note(LaneX(hoverLane), Y(hoverBeat), 0.8f * 0.95f, ph, new Color(c.r, c.g, c.b, 0.35f), 15);
-        }
-        // 영역 편집 키(A / C)를 누르고 있으면 커서 아래 영역을 밝게 + 잡을 수 있는 끝 표시
-        var kbd = Keyboard.current;
-        if (!playing && kbd != null && (kbd.aKey.isPressed || kbd.cKey.isPressed) && hoverLane >= 0)
-        {
-            AArea h = draggingArea ? areaDrag : AreaAt(hoverLane, hoverBeat);
-            float hx0 = Left + (h != null ? h.Lane : hoverLane) * LaneW, hx1 = hx0 + (h != null ? h.Width : 1) * LaneW;
-            if (h != null)
-            {
-                float y0 = Mathf.Max(Y(h.StartBeat), -6f), y1 = double.IsInfinity(h.EndBeat) ? 6f : Mathf.Min(Y(h.EndBeat), 6f);
-                if (y1 > y0) Box((hx0 + hx1) * 0.5f, (y0 + y1) * 0.5f, hx1 - hx0, y1 - y0, new Color(1f, 1f, 1f, 0.08f), -33);
-            }
-            Color cc = kbd.cKey.isPressed ? new Color(1f, 0.55f, 0.4f, 0.9f) : new Color(1f, 1f, 1f, 0.9f);
-            Box((hx0 + hx1) * 0.5f, Y(hoverBeat), hx1 - hx0, 0.06f, cc, 16);      // A: 놓을 · 늘릴 위치,  C: 자를 위치
         }
         DrawEventTicks(b0, b1);   // 레인 오른쪽 벽 바깥의 이벤트 눈금 (BPM · 변속 · STOP 등, 색은 아이콘과 같음)
         pool.End();
     }
 
-    // 영역 그리기 (게임과 같은 방식): 영역 사각형들을 박마다 '영역 레인 합집합' 구간으로 바꿔서 그림
-    //  → 옆으로 붙어 있는 영역은 한 덩어리 (사이에 테두리 없음),
-    //    가로 시작선 · 끝선은 영역이 새로 시작되는 / 끝나는 레인에만
-    private void DrawAreas(double b0, double b1)
-    {
-        var lines = AreaMaskLines();
-        for (int i = 0; i < lines.Count; i++)
-        {
-            int mask = lines[i].Value;
-            if (mask == 0) continue;
-            int before = i > 0 ? lines[i - 1].Value : 0;
-            int after = i + 1 < lines.Count ? lines[i + 1].Value : 0;
-            double sb = lines[i].Key.Beat;
-            double eb = i + 1 < lines.Count ? lines[i + 1].Key.Beat : double.PositiveInfinity;
-            if (eb < b0 || sb > b1) continue;
-            float ys = Y(sb), ye = double.IsInfinity(eb) ? 99f : Y(eb);
-            float y0 = Mathf.Max(ys, -6f), y1 = Mathf.Min(ye, 6f);
-            if (y1 <= y0) continue;
-            for (int l = 0; l < 4; l++)
-            {
-                if (!AreaMask.Has(mask, l)) continue;
-                int e = l;
-                while (e + 1 < 4 && AreaMask.Has(mask, e + 1)) e++;
-                DrawAreaBlock(l, e, ys, ye, y0, y1, before, after, !double.IsInfinity(eb));
-                l = e;
-            }
-        }
-    }
-
-    // 이어진 레인 [l0 ~ l1] 의 한 구간: 검은 바탕 · 회색 사선 · 양옆 흰 테두리 + 안쪽 빛 · 필요한 곳에만 가로선
-    private void DrawAreaBlock(int l0, int l1, float ys, float ye, float y0, float y1, int before, int after, bool hasEnd)
-    {
-        Color ec = NoteArt.AreaEdge;
-        float ew = NoteArt.AreaEdgeWidth * K;
-        float x0 = Left + l0 * LaneW, x1 = Left + (l1 + 1) * LaneW;
-        float my = (y0 + y1) * 0.5f, hgt = y1 - y0;
-        Box((x0 + x1) * 0.5f, my, x1 - x0, hgt, NoteArt.AreaBase, -36);
-        SpriteRenderer st = pool.Get(NoteArt.AreaStripeSprite, -35);
-        st.drawMode = SpriteDrawMode.Tiled;
-        st.size = new Vector2(x1 - x0, hgt);
-        st.transform.localScale = Vector3.one;
-        st.transform.position = new Vector3((x0 + x1) * 0.5f, my, 0f);
-        st.color = NoteArt.AreaStripe;
-        float gw = Mathf.Min(NoteArt.AreaEdgeGlowWidth * K, (x1 - x0) * 0.45f);
-        Vector2 hs = NoteArt.HGradientSprite.bounds.size;
-        SpriteRenderer gl = pool.Get(NoteArt.HGradientSprite, -34);
-        gl.drawMode = SpriteDrawMode.Simple;
-        gl.transform.localScale = new Vector3(gw / hs.x, hgt / hs.y, 1f);
-        gl.transform.position = new Vector3(x0, my, 0f);
-        gl.color = NoteArt.AreaEdgeGlow;
-        SpriteRenderer gr = pool.Get(NoteArt.HGradientSprite, -34);
-        gr.drawMode = SpriteDrawMode.Simple;
-        gr.transform.localScale = new Vector3(-gw / hs.x, hgt / hs.y, 1f);
-        gr.transform.position = new Vector3(x1, my, 0f);
-        gr.color = NoteArt.AreaEdgeGlow;
-        Box(x0 + ew * 0.5f, my, ew, hgt, ec, -34);
-        Box(x1 - ew * 0.5f, my, ew, hgt, ec, -34);
-        if (ys >= -6f) CapRuns(l0, l1, before, ys, ec);                 // 시작선: 새로 시작된 레인만
-        if (hasEnd && ye <= 6f) CapRuns(l0, l1, after, ye, ec);         // 끝선: 여기서 끝나는 레인만
-    }
-
-    private void CapRuns(int l0, int l1, int other, float y, Color c)
-    {
-        for (int l = l0; l <= l1; l++)
-        {
-            if (AreaMask.Has(other, l)) continue;
-            int e = l;
-            while (e + 1 <= l1 && !AreaMask.Has(other, e + 1)) e++;
-            float x0 = Left + l * LaneW, x1 = Left + (e + 1) * LaneW;
-            Box((x0 + x1) * 0.5f, y, x1 - x0, 0.06f, c, -34);
-            l = e;
-        }
-    }
-
     // ----- 레인 사라짐 미리보기 -----
-    // 영역 안 노트: 노트가 차지하는 레인(RED 는 폭 전체) 중 하나라도 판정 범위(±BAD 0.12초) 동안 영역이었으면 true
-    //  롱노트는 머리 ~ 꼬리 전체로 판단 (머리 · 몸통 · 꼬리 모두 같은 결과). 게임의 GameManager.NoteInArea 와 같은 규칙
-    private const double AreaJudgeWindow = 0.120;
-    private bool NoteInArea(ANote n)
-    {
-        if (areas.Count == 0 || n.Type == 4) return false;
-        ANote head = n.Head ?? n;
-        double t0 = TimeOf(head.Beat) - AreaJudgeWindow;
-        double t1 = TimeOf(head.Tail != null ? head.Tail.Beat : head.Beat) + AreaJudgeWindow;
-        int noteMask = 0;
-        int w = Mathf.Max(1, head.Width);
-        for (int i = head.Lane; i < head.Lane + w && i < 4; i++) if (i >= 0) noteMask |= 1 << i;
-        foreach (var a in areas)
-        {
-            if ((a.Mask & noteMask) == 0) continue;
-            double s = TimeOf(a.StartBeat), e = a.End == null ? double.PositiveInfinity : TimeOf(a.EndBeat);
-            if (s <= t1 && e > t0) return true;
-        }
-        return false;
-    }
-
     // 게임(GameManager.LaneFoldAt)과 같은 계산: 1 = 다 보임, 0 = 다 사라짐
     private float FoldAt(double t)
     {
@@ -1324,10 +1353,13 @@ public partial class AreaChartEditor : MonoBehaviour
         int nw = Mathf.Max(1, n.Width);            // RED · 넓은 일반 노트 모두 폭만큼
         float wGame = (nw - 1) * 0.8f + 0.8f * 0.95f;
         float cx = Left + (n.Lane + nw * 0.5f) * LaneW;
-        bool tail = n.Type == 3 || n.Type == 13;
+        bool relay = NoteTypes.IsSlideRelay(n.Type);
+        bool tail = n.Type == 3 || n.Type == 13 || relay;      // 슬라이드 중계점도 끝처럼 얇은 막대
 
+        // 슬라이드 몸통 (경로를 따라 휨)
+        if (n.SlidePts != null) DrawSlideBody(n, alpha);
         // 롱노트 몸통 (머리 → 꼬리)
-        if (n.Tail != null)
+        else if (n.Tail != null)
         {
             float y1 = Y(n.Tail.Beat);
             float len = Mathf.Max(0.001f, y1 - y);
@@ -1367,6 +1399,7 @@ public partial class AreaChartEditor : MonoBehaviour
         }
 
         Color c = NoteColorOf(n);
+        if (relay) c = Color.Lerp(c, Color.white, 0.35f);   // 중계점은 조금 밝게
         if (tail)
         {
             // 게임과 같은 롱노트 끝 (얇게 빛나는 막대)
@@ -1409,31 +1442,12 @@ public partial class AreaChartEditor : MonoBehaviour
             Color gc = Color.Lerp(c, Color.white, 0.6f);
             gm2.color = new Color(gc.r, gc.g, gc.b, alpha);
         }
-
-        if (NoteTypes.IsArrow(n.Type))
-        {
-            // 노트 위에 떠 있는 >>> / <<< + 은은한 빛
-            SpriteRenderer g = pool.Get(NoteArt.GlowSprite, order - 1);
-            g.drawMode = SpriteDrawMode.Simple;
-            Vector2 gs = NoteArt.GlowSprite.bounds.size;
-            g.transform.localScale = new Vector3(0.95f * K / gs.x, 0.6f * K / gs.y, 1f);
-            g.transform.position = new Vector3(cx, y + 0.12f, 0f);
-            g.color = new Color(c.r, c.g, c.b, 0.5f * alpha);
-
-            SpriteRenderer a = pool.Get(NoteArt.ArrowSprite, order + 1);
-            a.drawMode = SpriteDrawMode.Simple;
-            Vector2 asz = NoteArt.ArrowSprite.bounds.size;
-            float dir = n.Type == NoteTypes.ArrowLeft ? -1f : 1f;
-            a.transform.localScale = new Vector3(dir * 0.62f * K / asz.x, 0.24f * K / asz.y, 1f);
-            a.transform.position = new Vector3(cx, y + 0.30f * K, 0f);
-            a.color = new Color(c.r, c.g, c.b, alpha);
-        }
     }
 
-    // 노트 색 (게임과 같음): 화살표 파랑/노랑 · 드래그 연한 노랑 · 그 밖은 레인 색
+    // 노트 색 (게임과 같음): 드래그 연한 노랑 · 그 밖은 레인 색
     private static Color NoteColorOf(ANote n)
     {
-        if (NoteTypes.IsArrow(n.Type)) return NoteArt.ArrowColor(n.Type);
+        if (n.Head != null && n.Head.SlidePts != null) return SimpleGameSkin.LaneColor(n.Head.Lane);   // 슬라이드의 중계점 · 끝 = 머리(몸통) 색
         if (NoteTypes.IsDrag(n.Type)) return NoteArt.DragColor;   // 드래그 노트 · 드래그 롱노트의 머리만 (끝은 일반 롱노트 끝)
         return SimpleGameSkin.LaneColor(n.Lane);
     }
@@ -1495,6 +1509,7 @@ public partial class AreaChartEditor : MonoBehaviour
             if (sr.sprite != sprite) sr.sprite = sprite;
             sr.sortingOrder = order + OrderBase;
             sr.flipX = sr.flipY = false;
+            sr.transform.rotation = Quaternion.identity;   // 슬라이드 테두리 선만 돌려서 그림
             return sr;
         }
         public void End() { for (int i = used; i < items.Count; i++) if (items[i].enabled) items[i].enabled = false; }

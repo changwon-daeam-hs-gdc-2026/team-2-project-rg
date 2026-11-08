@@ -8,6 +8,9 @@ using UnityEngine.UI;
 //    Background(반투명 검정) → SelectedBar(selectedbar.png) → Jacket → 텍스트들 → LockOverlay
 //  * 프리팹으로 만들 때도 Hierarchy 순서를 위와 같이 두면 된다.
 //  * 프리팹을 안 넣으면 SongSelectManager 가 CreateDefault() 로 코드에서 자동 생성한다.
+//  * SPECIAL 목록 전용 Songbar (Special Row Prefab): 난이도 글자는 하나 (Special Text, 비우면 Hard Text 를 씀).
+//    HARD 자리에 두고 폭을 넓게 — "15" 같은 숫자뿐 아니라 "DIVERSITY" 같은 글자 난이도도 들어감.
+//    Easy Text · Insane Text 는 비워 둬도 됨 (있으면 빈 글자로 둠)
 // ============================================================
 public class SongRowUI : MonoBehaviour
 {
@@ -23,10 +26,23 @@ public class SongRowUI : MonoBehaviour
     public TextMeshProUGUI easyText;
     public TextMeshProUGUI hardText;
     public TextMeshProUGUI insaneText;
+    [Tooltip("SPECIAL 전용 Songbar 에서만: 난이도 하나를 넓게 표시하는 글자. 비우면 Hard Text 를 씀")]
+    public TextMeshProUGUI specialText;
+
+    // SPECIAL 목록용 줄인가 (매니저가 정함). 이때는 난이도 하나(SPECIAL)만 솜사탕 그라데이션으로 표시
+    [HideInInspector] public bool isSpecialRow;
+    private TextMeshProUGUI SpecialLabel { get { return specialText != null ? specialText : hardText; } }
 
     [Header("잠긴 곡 (선택)")]
+    [Tooltip("잠긴 곡(ExistSongbar 2)일 때 켜지는 오브젝트. 비워 두면 자켓 위에 어두운 막 + 자물쇠를 코드로 만듦")]
     public GameObject lockOverlay;
+    [Tooltip("잠금 그림 (Sprites/etc/Locked). 비워 두거나 그림이 없으면 코드로 그린 자물쇠")]
     public Image lockIcon;
+
+    // 코드로 만드는 잠금 표시 (프리팹에 잠금 표시가 없을 때): 자켓 위 어두운 막 + 가운데 자물쇠
+    private GameObject autoLock;
+    private RectTransform autoLockIcon;
+    private float lockPulse = -1f;          // 잠긴 곡에서 ENTER: 자물쇠가 흔들림 (0 → 0.45초)
 
     [HideInInspector] public int boundVirtualIndex = int.MinValue;
 
@@ -80,9 +96,65 @@ public class SongRowUI : MonoBehaviour
         if (titleText != null) titleText.text = (data.Name ?? "") + (data.SubName ?? ""); // 우측: Name + SubName
         if (composerText != null) composerText.text = composerLine;
 
-        if (easyText != null) easyText.text = FormatDifficulty(data.Difficulty_EASY);
-        if (hardText != null) hardText.text = FormatDifficulty(data.Difficulty_HARD);
-        if (insaneText != null) insaneText.text = FormatDifficulty(data.Difficulty_INSANE);
+        if (isSpecialRow)
+        {
+            // SPECIAL 목록: 난이도 하나만 (숫자 또는 "DIVERSITY" 같은 글자), 흰색
+            if (easyText != null) easyText.text = "";
+            if (insaneText != null) insaneText.text = "";
+            if (hardText != null && hardText != SpecialLabel) hardText.text = "";
+            TextMeshProUGUI st = SpecialLabel;
+            if (st != null)
+            {
+                st.richText = true;
+                st.text = FormatDifficulty(data.Difficulty_SPECIAL);       // 흰색 (그라데이션 없음)
+            }
+        }
+        else
+        {
+            if (easyText != null) easyText.text = FormatDifficulty(data.Difficulty_EASY);
+            if (hardText != null) hardText.text = FormatDifficulty(data.Difficulty_HARD);
+            if (insaneText != null) insaneText.text = FormatDifficulty(data.Difficulty_INSANE);
+        }
+
+        // ---- 난이도별 잠금 (LockedValue): 잠긴 난이도는 숫자 대신 작은 자물쇠 ----
+        bool anyDiff = false;
+        if (isSpecialRow) anyDiff |= SetDiffLock(SpecialLabel, !locked && DifficultyHelper.IsLevelLocked(data, DifficultyHelper.Special) && IsDifficultyAvailable(data.Difficulty_SPECIAL));
+        else
+        {
+            anyDiff |= SetDiffLock(easyText, !locked && DifficultyHelper.IsLevelLocked(data, 1) && IsDifficultyAvailable(data.Difficulty_EASY));
+            anyDiff |= SetDiffLock(hardText, !locked && DifficultyHelper.IsLevelLocked(data, 2) && IsDifficultyAvailable(data.Difficulty_HARD));
+            anyDiff |= SetDiffLock(insaneText, !locked && DifficultyHelper.IsLevelLocked(data, 3) && IsDifficultyAvailable(data.Difficulty_INSANE));
+        }
+        // (SPECIAL 줄로 쓰다 기존 줄로 바뀐 경우 등) 이번에 쓰지 않는 칸의 자물쇠는 숨김
+        foreach (var kv in diffLocks)
+        {
+            bool used = isSpecialRow ? kv.Key == SpecialLabel : (kv.Key == easyText || kv.Key == hardText || kv.Key == insaneText);
+            if (!used && kv.Value != null) kv.Value.gameObject.SetActive(false);
+        }
+
+        // ---- 잠긴 곡: 줄 전체에 어두운 막 + 난이도 자리에 자물쇠 · LOCKED 글자 ----
+        if (locked)
+        {
+            if (easyText != null) easyText.text = "";
+            if (hardText != null) hardText.text = "";
+            if (insaneText != null) insaneText.text = "";
+            if (specialText != null) specialText.text = "";
+            if (lockTag == null) BuildLockTag();
+        }
+        if (rowFilm != null || locked)
+        {
+            if (rowFilm == null)
+            {
+                rowFilm = LockArt.Fill("LockedFilm", transform, new Color(0f, 0f, 0f, 0.5f));   // 줄 전체를 덮는 어두운 막
+            }
+            rowFilm.gameObject.SetActive(locked);
+            if (locked) rowFilm.transform.SetAsLastSibling();
+        }
+        if (lockTag != null)
+        {
+            lockTag.gameObject.SetActive(locked);
+            if (locked) { lockTag.SetAsLastSibling(); PlaceLockTag(); }   // 막 위에
+        }
 
         if (lockOverlay != null) lockOverlay.SetActive(locked);
         if (lockIcon != null)
@@ -90,11 +162,130 @@ public class SongRowUI : MonoBehaviour
             lockIcon.sprite = lockSprite;
             lockIcon.enabled = locked && lockSprite != null;
         }
+        // 프리팹에 잠금 표시가 없거나 그림이 없으면 코드로 만든 잠금 표시
+        bool needAuto = locked && (lockIcon == null || lockSprite == null);
+        if (needAuto && autoLock == null) BuildAutoLock();
+        if (autoLock != null) autoLock.SetActive(needAuto);
+        if (!locked) lockPulse = -1f;
     }
+
+    private void BuildAutoLock()
+    {
+        RectTransform host = jacket != null ? jacket.rectTransform : (RectTransform)transform;
+        autoLock = new GameObject("AutoLock", typeof(RectTransform));
+        autoLock.layer = gameObject.layer;
+        RectTransform r = (RectTransform)autoLock.transform;
+        r.SetParent(host, false);
+        r.anchorMin = Vector2.zero; r.anchorMax = Vector2.one; r.offsetMin = r.offsetMax = Vector2.zero;
+        Image dim = autoLock.AddComponent<Image>();
+        dim.color = new Color(0f, 0f, 0f, 0.45f);
+        dim.raycastTarget = false;
+
+        // 가운데 자물쇠 (흔들 때 이것이 움직임)
+        float size = Mathf.Min(host.rect.width, host.rect.height);
+        if (size < 20f) size = 80f;   // 아직 크기가 정해지지 않았을 때
+        Image li = LockArt.Img("Lock", r, new Color(1f, 1f, 1f, 0.9f));
+        li.sprite = GameModeIconArt.Lock();
+        li.preserveAspect = true;
+        autoLockIcon = li.rectTransform;
+        autoLockIcon.anchorMin = autoLockIcon.anchorMax = autoLockIcon.pivot = new Vector2(0.5f, 0.5f);
+        autoLockIcon.sizeDelta = new Vector2(size * 0.42f, size * 0.42f);
+    }
+
+    // ---- 난이도별 잠금 자물쇠 (난이도 글자 칸마다 하나, 처음 필요할 때 만듦) ----
+    private readonly System.Collections.Generic.Dictionary<TextMeshProUGUI, Image> diffLocks =
+        new System.Collections.Generic.Dictionary<TextMeshProUGUI, Image>();
+
+    // on 이면 그 칸 숫자를 지우고 자물쇠를 보임. 반환: on
+    private bool SetDiffLock(TextMeshProUGUI t, bool on)
+    {
+        if (t == null) return false;
+        Image img;
+        diffLocks.TryGetValue(t, out img);
+        if (on && img == null)
+        {
+            img = LockArt.Img("DiffLock", t.rectTransform, new Color(1f, 1f, 1f, 0.75f));
+            img.sprite = GameModeIconArt.Lock();
+            img.preserveAspect = true;
+            diffLocks[t] = img;
+        }
+        if (img != null)
+        {
+            img.gameObject.SetActive(on);
+            if (on)
+            {
+                // 글자 칸 가운데 (글자 정렬이 왼쪽 / 오른쪽이어도 칸 가운데), 크기는 글자 크기에 맞춤
+                RectTransform r = img.rectTransform;
+                r.anchorMin = r.anchorMax = r.pivot = new Vector2(0.5f, 0.5f);
+                Vector2 c = t.rectTransform.rect.center;
+                float sz = Mathf.Max(16f, t.fontSize * 0.85f);
+                r.sizeDelta = new Vector2(sz, sz);
+                r.anchoredPosition = c;
+            }
+        }
+        if (on) t.text = "";
+        return on;
+    }
+
+    // ---- 난이도 자리의 [자물쇠 LOCKED] 글자 (상자 없이) ----
+    private RectTransform lockTag;
+    private Image rowFilm;
+
+    private void BuildLockTag()
+    {
+        GameObject go = new GameObject("LockedTag", typeof(RectTransform));
+        go.layer = gameObject.layer;
+        go.transform.SetParent(transform, false);
+        lockTag = (RectTransform)go.transform;
+        lockTag.anchorMin = lockTag.anchorMax = lockTag.pivot = new Vector2(0.5f, 0.5f);
+        Color c = new Color(1f, 1f, 1f, 0.85f);
+        Image ic = LockArt.Img("Icon", lockTag, c);
+        ic.sprite = GameModeIconArt.Lock(); ic.preserveAspect = true;
+        RectTransform ir = ic.rectTransform;
+        ir.anchorMin = ir.anchorMax = new Vector2(0f, 0.5f); ir.pivot = new Vector2(0f, 0.5f);
+        ir.anchoredPosition = new Vector2(0f, 1f); ir.sizeDelta = new Vector2(22f, 22f);
+        GameObject tg = new GameObject("Text", typeof(RectTransform));
+        tg.layer = gameObject.layer;
+        tg.transform.SetParent(lockTag, false);
+        TextMeshProUGUI t = tg.AddComponent<TextMeshProUGUI>();
+        TextMeshProUGUI refT = hardText != null ? hardText : titleText;
+        if (refT != null) t.font = refT.font;
+        t.text = "LOCKED"; t.fontSize = 20f; t.fontStyle = FontStyles.Bold; t.characterSpacing = 8f;
+        t.color = c; t.alignment = TextAlignmentOptions.MidlineLeft;
+        t.raycastTarget = false; t.textWrappingMode = TextWrappingModes.NoWrap; t.overflowMode = TextOverflowModes.Overflow;
+        RectTransform tr = t.rectTransform;
+        tr.anchorMin = Vector2.zero; tr.anchorMax = Vector2.one; tr.offsetMin = new Vector2(30f, 0f); tr.offsetMax = Vector2.zero;
+        lockTag.sizeDelta = new Vector2(30f + t.GetPreferredValues("LOCKED").x, 32f);
+    }
+
+    // 꼬리표 위치: 난이도 칸들(EZ ~ INS, SPECIAL 줄이면 그 칸)의 가운데
+    private void PlaceLockTag()
+    {
+        if (lockTag == null) return;
+        RectTransform a = isSpecialRow ? (SpecialLabel != null ? SpecialLabel.rectTransform : null) : (easyText != null ? easyText.rectTransform : null);
+        RectTransform b = isSpecialRow ? a : (insaneText != null ? insaneText.rectTransform : a);
+        if (a == null) { lockTag.anchoredPosition = new Vector2(((RectTransform)transform).rect.width * 0.3f, 0f); return; }
+        Vector3 pa = transform.InverseTransformPoint(a.TransformPoint(a.rect.center));
+        Vector3 pb = b != null ? transform.InverseTransformPoint(b.TransformPoint(b.rect.center)) : pa;
+        RectTransform rt = (RectTransform)transform;
+        Vector2 c = (Vector2)((pa + pb) * 0.5f);
+        // 앵커가 가운데(0.5, 0.5)이므로 줄의 기준점(pivot) 차이만큼 보정
+        c += new Vector2((rt.pivot.x - 0.5f) * rt.rect.width, (rt.pivot.y - 0.5f) * rt.rect.height);
+        lockTag.anchoredPosition = c;
+    }
+
+    // 잠긴 곡에서 ENTER 를 누르면 자물쇠가 좌우로 흔들림
+    public void PulseLock() { lockPulse = 0f; }
 
     // 선택된 난이도 열만 난이도 색으로, 나머지는 기본 색으로
     public void ApplyDifficultyColors(int selectedDiff, Color[] diffColors, Color normal)
     {
+        if (isSpecialRow)
+        {
+            // 색은 글자 서식(그라데이션)에 들어 있으므로 바탕 색은 흰색
+            if (SpecialLabel != null) SpecialLabel.color = Color.white;
+            return;
+        }
         Paint(easyText, 1);
         Paint(hardText, 2);
         Paint(insaneText, 3);
@@ -124,6 +315,25 @@ public class SongRowUI : MonoBehaviour
 
     public void Tick(float dt)
     {
+        if (lockTag != null && lockTag.gameObject.activeSelf) PlaceLockTag();   // 줄 크기가 늦게 정해져도 따라감
+        // 잠금 흔들림
+        if (lockPulse >= 0f)
+        {
+            lockPulse += dt;
+            float k = Mathf.Clamp01(lockPulse / 0.45f);
+            float shake = Mathf.Sin(lockPulse * 50f) * (1f - k) * 7f;
+            float sc = 1f + 0.18f * (1f - k) * (1f - k);
+            RectTransform t = autoLockIcon != null && autoLock != null && autoLock.activeSelf ? autoLockIcon
+                            : lockIcon != null && lockIcon.enabled ? lockIcon.rectTransform : null;
+            if (t != null)
+            {
+                t.localRotation = Quaternion.Euler(0f, 0f, shake);
+                t.localScale = Vector3.one * sc;
+                if (k >= 1f) { t.localRotation = Quaternion.identity; t.localScale = Vector3.one; }
+            }
+            if (lockTag != null) lockTag.localRotation = Quaternion.Euler(0f, 0f, shake * 0.4f);
+            if (k >= 1f) { lockPulse = -1f; if (lockTag != null) lockTag.localRotation = Quaternion.identity; }
+        }
         if (!isSelected || selectedBar == null || fillTimer >= fillDuration) return;
         fillTimer += dt;
         float p = Mathf.Clamp01(fillTimer / fillDuration);
@@ -136,26 +346,18 @@ public class SongRowUI : MonoBehaviour
         return !string.IsNullOrWhiteSpace(raw) && raw.Trim() != "00";
     }
 
-    // "03" → "3", "09+" → "9+", "12" → "12", "00"/빈 값 → "" (사진의 I Wanna HD 칸처럼 비워 둠)
-    //  [수정] 숫자 뒤에 다른 글자(+, ?, . 등)가 붙어 있어도 앞자리 0 을 뗀다
+    // "03" → "3", "00"/빈 값 → "" (사진의 I Wanna HD 칸처럼 비워 둠)
     public static string FormatDifficulty(string raw)
     {
         if (!IsDifficultyAvailable(raw)) return "";
-        return TrimLeadingZeros(raw.Trim());
-    }
-
-    public static string TrimLeadingZeros(string t)
-    {
-        if (string.IsNullOrEmpty(t)) return t;
-        int i = 0;
-        while (i < t.Length - 1 && t[i] == '0' && char.IsDigit(t[i + 1])) i++;
-        return t.Substring(i);
+        string t = raw.Trim();
+        return int.TryParse(t, out int v) ? v.ToString() : t;
     }
 
     // =====================================================================
     //  프리팹이 없을 때 쓰는 기본 행 (1920x1080 기준, 사진의 레이아웃을 본뜸)
     // =====================================================================
-    public static SongRowUI CreateDefault(Transform parent, TMP_FontAsset font, float rowHeight)
+    public static SongRowUI CreateDefault(Transform parent, TMP_FontAsset font, float rowHeight, bool special = false)
     {
         GameObject go = new GameObject("SongRow", typeof(RectTransform));
         go.transform.SetParent(parent, false);
@@ -190,9 +392,26 @@ public class SongRowUI : MonoBehaviour
         row.composerText = NewText("Composer", row.rect, font, 15f, TextAlignmentOptions.Left);
         Band(row.composerText.rectTransform, textLeft, textRight, -24f, 22f);
 
-        row.easyText = NewDiffText("Easy", row.rect, font, -267f);
-        row.hardText = NewDiffText("Hard", row.rect, font, -185f);
-        row.insaneText = NewDiffText("Insane", row.rect, font, -102f);
+        if (special)
+        {
+            // SPECIAL 전용: HARD 자리를 가운데로, EZ ~ INS 세 칸을 합친 넓이 (글자 난이도는 자동으로 작아짐)
+            row.specialText = NewDiffText("Special", row.rect, font, -185f);
+            row.specialText.rectTransform.sizeDelta = new Vector2(250f, 60f);
+            row.specialText.enableAutoSizing = true;
+            row.specialText.fontSizeMax = 44f;
+            row.specialText.fontSizeMin = 22f;
+            row.specialText.characterSpacing = 2f;
+            row.isSpecialRow = true;
+            textRight = 330f;
+            Band(row.titleText.rectTransform, textLeft, textRight, 8f, 46f);
+            Band(row.composerText.rectTransform, textLeft, textRight, -24f, 22f);
+        }
+        else
+        {
+            row.easyText = NewDiffText("Easy", row.rect, font, -267f);
+            row.hardText = NewDiffText("Hard", row.rect, font, -185f);
+            row.insaneText = NewDiffText("Insane", row.rect, font, -102f);
+        }
 
         Image lockBg = NewImage("LockOverlay", row.rect, new Color(0f, 0f, 0f, 0.55f));
         Stretch(lockBg.rectTransform);

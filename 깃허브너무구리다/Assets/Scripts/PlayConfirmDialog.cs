@@ -51,8 +51,6 @@ public class PlayConfirmDialog : MonoBehaviour
 
     public const string DefaultMvWarning =
         "아래에 표시된 MV에는 폭력적인 장면, 유혈 및 신체 훼손을 묘사하는 장면 등\n불쾌감이나 심리적 불편함을 유발할 수 있는 요소가 포함되어 있습니다.";
-    public const string AreaNoticeText =
-        "이 채보(난이도)는 Simple-Diverse 스킨 전용 채보(난이도)입니다.\n해당 스킨으로 변경 된 상태로 게임이 진행되며, 게임 종료 후 기존 스킨으로 돌아갑니다.";
 
     private TMP_FontAsset font;
     private Queue<Page> pages;
@@ -100,16 +98,6 @@ public class PlayConfirmDialog : MonoBehaviour
             Kind = Kind.Warning, Title = "주의", Body = body.Replace("\\n", "\n"), SongLabel = songLabel,
             Question = "그래도 MV를 켠 상태로 플레이를 진행하시겠습니까?",
             Buttons = new[] { "돌아가기", "MV를 끈 채로 진행하기", "그대로 진행하기" }
-        };
-    }
-
-    public static Page AreaNoticePage(string songLabel)
-    {
-        return new Page
-        {
-            Kind = Kind.Notice, Title = "알림", Body = AreaNoticeText, SongLabel = songLabel,
-            Question = "진행하시겠습니까?",
-            Buttons = new[] { "돌아가기", "진행하기" }
         };
     }
 

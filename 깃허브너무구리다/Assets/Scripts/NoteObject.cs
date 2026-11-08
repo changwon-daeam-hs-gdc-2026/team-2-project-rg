@@ -8,16 +8,11 @@ public class NoteObject : MonoBehaviour
     private SpriteRenderer spriteRenderer;
     private GameObject myLongBody;
     private SpriteRenderer bodyRenderer;
+    private SlideBody slideBody;          // 슬라이드(레인을 넘나드는 롱노트) 몸통 — 몸통 SpriteRenderer 는 그림 · 색만 빌려 주고 숨김
     
     public bool isMissed = false; 
 
     private float[] laneXPositions = { -1.2f, -0.4f, 0.4f, 1.2f }; 
-
-    // 화살표 노트(7: >>> 밝은 파랑 / 8: <<< 밝은 노랑): 노트 위에 떠 있는 화살표 + 노트에서 나오는 빛
-    private SpriteRenderer arrowRenderer, arrowGlowRenderer;
-    private const float ArrowLift = 0.30f;      // 노트 중심에서 화살표까지 높이 (월드 유닛)
-    private const float ArrowWidth = 0.62f;     // 화살표 폭
-    private const float ArrowHeight = 0.24f;
 
     // 드래그 노트(9 · 10): 연한 노란 얇은 노트 + 가운데 이중 마름모 보석(맥박) + 위쪽으로 남는 혜성 꼬리빛
     private SpriteRenderer dragGemRenderer, dragTrailRenderer;
@@ -78,6 +73,7 @@ public class NoteObject : MonoBehaviour
         spriteRenderer.drawMode = SpriteDrawMode.Simple; // 풀링 재사용 시 SIMPLE 스킨의 Sliced 상태 해제
 
         missFade = -1f;
+        if (slideBody != null) slideBody.Hide();
 
         if (myData.IsRedNote)
         {
@@ -85,9 +81,9 @@ public class NoteObject : MonoBehaviour
             string targetSpriteName = "";
 
             if (myData.Type == 11) targetSpriteName = $"{prefix}_Basic";
-            else if (myData.Type == 12 || myData.Type == 13) targetSpriteName = $"{prefix}_longhead";
+            else if (myData.Type == 12 || myData.Type == 13 || NoteTypes.IsSlideRelay(myData.Type)) targetSpriteName = $"{prefix}_longhead";
 
-            if (myData.Type == 13) spriteRenderer.flipY = true;
+            if (myData.Type == 13 || NoteTypes.IsSlideRelay(myData.Type)) spriteRenderer.flipY = true;
             
             float laneWidthGame = 0.8f; 
             float targetW = (myData.Width - 1) * laneWidthGame + (laneWidthGame * 0.95f);
@@ -167,9 +163,9 @@ public class NoteObject : MonoBehaviour
         else
         {
             bool isBlue = (myData.Lane == 0 || myData.Lane == 3);
-            if (myData.Type == 1 || NoteTypes.IsArrow(myData.Type) || myData.Type == NoteTypes.Drag) spriteRenderer.sprite = isBlue ? blueShort : greenShort;
+            if (myData.Type == 1 || myData.Type == NoteTypes.Drag) spriteRenderer.sprite = isBlue ? blueShort : greenShort;
             else if (myData.Type == 2 || myData.Type == NoteTypes.DragLongHead) spriteRenderer.sprite = isBlue ? blueLongHead : greenLongHead;
-            else if (myData.Type == 3) spriteRenderer.sprite = isBlue ? blueLongTail : greenLongTail;
+            else if (myData.Type == 3 || NoteTypes.IsSlideRelay(myData.Type)) spriteRenderer.sprite = isBlue ? blueLongTail : greenLongTail;   // 슬라이드 중계점도 끝 모양
             transform.rotation = Quaternion.identity;
             
             transform.localScale = originalScale; 
@@ -198,7 +194,6 @@ public class NoteObject : MonoBehaviour
         // 설정 > GAME UI 가 SIMPLE 이면 단색 둥근 노트로 바꾼다 (마디선은 기본 그대로)
         if (SimpleGameSkin.Active != null && myData.Type != 4) ApplySimpleStyle();
 
-        SetupArrow();
         SetupDrag();
 
 
@@ -206,8 +201,6 @@ public class NoteObject : MonoBehaviour
         SpriteMaskInteraction clip = SpriteMaskInteraction.VisibleInsideMask;
         spriteRenderer.maskInteraction = clip;
         if (bodyRenderer != null) bodyRenderer.maskInteraction = clip;
-        if (arrowRenderer != null) arrowRenderer.maskInteraction = clip;
-        if (arrowGlowRenderer != null) arrowGlowRenderer.maskInteraction = clip;
         if (dragGemRenderer != null) dragGemRenderer.maskInteraction = clip;
         if (dragTrailRenderer != null) dragTrailRenderer.maskInteraction = clip;
 
@@ -217,12 +210,10 @@ public class NoteObject : MonoBehaviour
         DiversePlayfield pf = SimpleGameSkin.Active != null ? SimpleGameSkin.Active.Playfield : null;
         if (pf != null)
         {
-            // 레인 접기(FOLD): 영역 안 노트는 접히지 않고 그대로 보이며 내려온다 (영역 밖 노트만 레인과 함께 접힘)
-            bool fold = !GameManager.Instance.NoteInArea(myData);
+            // 레인이 '사라짐' 상태여도 노트는 항상 그대로 보임 (레인 사라짐의 투명도를 받지 않는 재질)
+            const bool fold = false;
             pf.Apply(spriteRenderer, true, fold);
             if (bodyRenderer != null) pf.Apply(bodyRenderer, true, fold);
-            if (arrowRenderer != null) pf.Apply(arrowRenderer, true, fold);
-            if (arrowGlowRenderer != null) pf.Apply(arrowGlowRenderer, true, fold);
             if (dragGemRenderer != null) pf.Apply(dragGemRenderer, true, fold);
             if (dragTrailRenderer != null) pf.Apply(dragTrailRenderer, true, fold);
         }
@@ -262,6 +253,8 @@ public class NoteObject : MonoBehaviour
         double currentTime = GameManager.Instance.currentPlayTime;
 
         bool isHidden = GameManager.Instance.IsNoteHiddenByFutureReverseScroll(currentTime, myData.HitTime, myData.Layer);
+        bool slideDrawn = false;
+        try {
 
         {
             bool isLongNote = NoteTypes.IsLongHead(myData.Type) && (myData.NextLongNote != null);
@@ -284,6 +277,8 @@ public class NoteObject : MonoBehaviour
                     spriteRenderer.enabled = true;
                     if (myLongBody != null && isLongNote && !myLongBody.activeSelf) myLongBody.SetActive(true);
                 }
+                // 슬라이드 중계점(꺾이는 관절): 판정만 하고 그림은 보이지 않음 (몸통이 그 자리에서 자연스럽게 꺾임)
+                if (NoteTypes.IsSlideRelay(myData.Type)) spriteRenderer.enabled = false;
             }
 
             float rawYPos = GameManager.Instance.hitLineY + (float)(myTargetDist - currentDist) * 0.01f;
@@ -312,7 +307,21 @@ public class NoteObject : MonoBehaviour
 
                 transform.position = new Vector3(centerX, rawYPos, 0f);
 
-                if (myLongBody != null && myLongBody.activeSelf && isLongNote)
+                if (myLongBody != null && myLongBody.activeSelf && isLongNote && myData.Slide != null)
+                {
+                    // 슬라이드: 경로를 따라 휘는 몸통 (누르는 중이면 판정선부터)
+                    if (bodyRenderer != null)
+                    {
+                        bodyRenderer.enabled = false;
+                        if (slideBody == null) slideBody = SlideBody.Create(transform);
+                        double from = myData.HitTime;
+                        if (myData.IsHit && !isMissed) from = System.Math.Max(from, currentTime);
+                        DiversePlayfield pf = SimpleGameSkin.Active != null ? SimpleGameSkin.Active.Playfield : null;
+                        slideBody.Draw(myData, laneXPositions, bodyRenderer.sprite, bodyRenderer.color, bodyRenderer.sortingLayerID, bodyRenderer.sortingOrder, from, pf);
+                        slideDrawn = true;
+                    }
+                }
+                else if (myLongBody != null && myLongBody.activeSelf && isLongNote)
                 {
                     float endYPos = GameManager.Instance.hitLineY + (float)(myNextTargetDist - currentDist) * 0.01f;
                     
@@ -370,6 +379,9 @@ public class NoteObject : MonoBehaviour
                 }
             }
         }
+        } finally {
+            if (!slideDrawn && slideBody != null) slideBody.Hide();
+        }
     }
 
     void LateUpdate()
@@ -385,7 +397,7 @@ public class NoteObject : MonoBehaviour
 
         if (myData.IsHit && !isMissed)
         {
-            if (NoteTypes.IsTapLike(myData.Type) || myData.Type == 3 || myData.Type == 13 || myData.Type == 4) 
+            if (NoteTypes.IsTapLike(myData.Type) || myData.Type == 3 || myData.Type == 13 || myData.Type == 4 || NoteTypes.IsSlideRelay(myData.Type)) 
             {
                 GameManager.Instance.ReturnNoteToPool(this); 
                 return;
@@ -404,7 +416,6 @@ public class NoteObject : MonoBehaviour
         }
         ApplyEndAlpha();
         UpdateHeldBody();
-        UpdateArrow();
         UpdateDrag();
 
         double currentTime = GameManager.Instance.currentPlayTime;
@@ -416,7 +427,7 @@ public class NoteObject : MonoBehaviour
         // 가짜 노트(FAKE)는 그냥 지나감 (MISS 없음)
         if (judgeTime - myData.HitTime > GameManager.W_BAD && !myData.IsHit && !myData.IsFake)
         {
-            // 게임 모드 LAZY: 놓친 노트가 확률로 JUST PERFECT (살아나면 MISS 대신 아무것도 안 함)
+            // 게임 모드 LAZY: 놓친 노트가 확률로 JUST (살아나면 MISS 대신 아무것도 안 함)
             if (GameManager.Instance.TryLazySave(myData)) { }
             else if (NoteTypes.IsTapLike(myData.Type)) 
             {
@@ -445,8 +456,10 @@ public class NoteObject : MonoBehaviour
         float laneWidthGame = 0.8f;
         // 폭: RED · 넓은 일반 노트(영역 채보) 모두 Width 칸 (일반 1칸 노트는 그대로)
         float w = (Mathf.Max(1, myData.Width) - 1) * laneWidthGame + laneWidthGame * 0.95f;
-        bool isTail = myData.Type == 3 || myData.Type == 13;
-        Color c = SimpleGameSkin.NoteColor(myData);
+        bool isRelay = NoteTypes.IsSlideRelay(myData.Type);
+        bool isTail = myData.Type == 3 || myData.Type == 13 || isRelay;          // 슬라이드 중계점도 끝처럼 얇은 막대
+        Color c = SimpleGameSkin.NoteColor(myData.SlideHead != null ? myData.SlideHead : myData);   // 슬라이드의 중계점 · 끝은 머리(몸통)와 같은 색
+        if (isRelay) c = Color.Lerp(c, Color.white, 0.35f);                    // 중계점은 조금 밝게 (끝과 구별)
 
         // [끊김 수정] 그림(sprite)을 먼저 바꾸고 나서 Sliced 로 바꾼다.
         //  예전에는 프리팹의 원래 노트 그림(Full Rect 가 아님)이 붙은 상태에서 Sliced 로 바꿔서, 노트가 나올 때마다
@@ -528,13 +541,18 @@ public class NoteObject : MonoBehaviour
         float a = GameManager.Instance.EndUiAlpha;
         if (missFade >= 0f) { float k = 1f - Mathf.Clamp01(missFade); a *= k * k * (3f - 2f * k); } // 놓친 롱노트: 서서히 투명
         float ab = a;
-        // 게임 모드 SHADOW: 판정선에 가까워질수록 투명 (노트 높이 기준, 몸통은 몸통 가운데 높이 기준)
+        // 게임 모드 SHADOW: 판정 시각에 가까워질수록 투명 (남은 시간 기준 — 배속 · 변속과 상관없이 같은 느낌)
+        //  20ms 전까지는 완전히 사라지지 않음 (GameModes.ShadowAlpha). 롱노트 몸통은 머리 ~ 꼬리 가운데 시각 기준
         if (GameModes.Play.Shadow)
         {
-            float line = GameManager.Instance.hitLineY;
-            a *= GameModes.ShadowAlpha(transform.position.y - line);
-            if (bodyRenderer != null && myLongBody != null && myLongBody.activeSelf)
-                ab *= GameModes.ShadowAlpha(bodyRenderer.bounds.center.y - line);
+            double now = GameManager.Instance.JudgeTime;
+            a *= GameModes.ShadowAlpha((float)(myData.HitTime - now));
+            if (bodyRenderer != null && myLongBody != null && myLongBody.activeSelf && myData.NextLongNote != null)
+            {
+                double from = System.Math.Max(myData.HitTime, now);
+                double mid = (from + myData.NextLongNote.HitTime) * 0.5;
+                ab *= GameModes.ShadowAlpha((float)(mid - now));
+            }
             else ab = a;
         }
         if (Mathf.Approximately(a, appliedEndAlpha) && Mathf.Approximately(ab, appliedBodyAlpha)) return;
@@ -558,8 +576,6 @@ public class NoteObject : MonoBehaviour
     public void HideNote() {
         if (spriteRenderer) spriteRenderer.enabled = false;
         if (bodyRenderer) bodyRenderer.enabled = false;
-        if (arrowRenderer) arrowRenderer.enabled = false;
-        if (arrowGlowRenderer) arrowGlowRenderer.enabled = false;
         if (dragGemRenderer) dragGemRenderer.enabled = false;
         if (dragTrailRenderer) dragTrailRenderer.enabled = false;
     }
@@ -572,77 +588,6 @@ public class NoteObject : MonoBehaviour
         myData.IsHit = true;
         isMissed = true;
         if (missFade < 0f) missFade = 0f;
-    }
-
-    // =====================================================================
-    //  화살표 노트 (7: >>> 밝은 파랑, 8: <<< 밝은 노랑)
-    // =====================================================================
-    private void SetupArrow()
-    {
-        bool isArrow = NoteTypes.IsArrow(myData.Type);
-        if (!isArrow)
-        {
-            if (arrowRenderer != null) arrowRenderer.gameObject.SetActive(false);
-            if (arrowGlowRenderer != null) arrowGlowRenderer.gameObject.SetActive(false);
-            return;
-        }
-        if (arrowRenderer == null)
-        {
-            GameObject a = new GameObject("Arrow");
-            a.transform.SetParent(transform, false);
-            arrowRenderer = a.AddComponent<SpriteRenderer>();
-            GameObject g = new GameObject("ArrowGlow");
-            g.transform.SetParent(transform, false);
-            arrowGlowRenderer = g.AddComponent<SpriteRenderer>();
-        }
-        arrowRenderer.gameObject.SetActive(true);
-        arrowGlowRenderer.gameObject.SetActive(true);
-        arrowRenderer.sprite = NoteArt.ArrowSprite;
-        arrowGlowRenderer.sprite = NoteArt.GlowSprite;
-        arrowRenderer.enabled = arrowGlowRenderer.enabled = true;
-        arrowRenderer.sortingOrder = spriteRenderer.sortingOrder + 1;          // 노트보다 위
-        arrowGlowRenderer.sortingOrder = spriteRenderer.sortingOrder - 1;      // 노트 뒤에서 퍼지는 빛
-        Color c = NoteArt.ArrowColor(myData.Type);
-        arrowRenderer.color = c;
-        arrowGlowRenderer.color = new Color(c.r, c.g, c.b, 0.55f);
-        if (SimpleGameSkin.Active == null)
-        {
-            // 기본 스킨: 노트 스프라이트에 화살표 색을 살짝 입힘
-            spriteRenderer.color = Color.Lerp(Color.white, c, 0.35f);
-        }
-        RememberBaseColors();
-    }
-
-    private void UpdateArrow()
-    {
-        if (arrowRenderer == null || !arrowRenderer.gameObject.activeSelf) return;
-        bool show = spriteRenderer.enabled;
-        arrowRenderer.enabled = arrowGlowRenderer.enabled = show;
-        if (!show) return;
-
-        // 부모(노트) 배율과 상관없이 월드 크기로 맞춤
-        Vector3 ps = transform.lossyScale;
-        float sx = Mathf.Max(0.0001f, Mathf.Abs(ps.x)), sy = Mathf.Max(0.0001f, Mathf.Abs(ps.y));
-        float dir = myData.Type == NoteTypes.ArrowLeft ? -1f : 1f;
-        float t = Time.time;
-        float bob = Mathf.Sin(t * 7f) * 0.035f * dir;                    // 화살표 방향으로 살짝 밀렸다 돌아옴
-        float yScale = SimpleGameSkin.Active != null ? SimpleGameSkin.Active.NoteScaleY : 1f;
-
-        Vector2 asz = arrowRenderer.sprite.bounds.size;
-        arrowRenderer.transform.position = transform.position + new Vector3(bob, ArrowLift * yScale, 0f);
-        arrowRenderer.transform.localScale = new Vector3(dir * ArrowWidth / asz.x / sx, ArrowHeight * yScale / asz.y / sy, 1f);
-
-        Vector2 gsz = arrowGlowRenderer.sprite.bounds.size;
-        float pulse = 0.8f + 0.2f * Mathf.Sin(t * 5f);
-        arrowGlowRenderer.transform.position = transform.position + new Vector3(0f, ArrowLift * 0.45f * yScale, 0f);
-        arrowGlowRenderer.transform.localScale = new Vector3(0.95f * pulse / gsz.x / sx, 0.75f * yScale * pulse / gsz.y / sy, 1f);
-
-        // 곡 종료 페이드 · 놓친 노트 페이드를 같이 따라감
-        float a = spriteRenderer.color.a / Mathf.Max(0.001f, headBaseColor.a);
-        if (isMissed && missFade < 0f) a *= 0.35f;                     // 놓친 화살표 노트는 흐리게
-        Color c = NoteArt.ArrowColor(myData.Type);
-        arrowRenderer.color = new Color(c.r, c.g, c.b, a);
-        arrowGlowRenderer.color = new Color(c.r, c.g, c.b, 0.55f * a * pulse);
     }
 
     // =====================================================================

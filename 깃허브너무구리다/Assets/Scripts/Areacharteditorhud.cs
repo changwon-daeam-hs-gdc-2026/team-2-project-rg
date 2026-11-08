@@ -8,14 +8,14 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 // ============================================================
-// 영역 전용 에디터 — 화면(HUD) 부분 (AreaChartEditor.cs 와 한 클래스, partial)
+// 채보 에디터 (새 디자인) — 화면(HUD) 부분 (AreaChartEditor.cs 와 한 클래스, partial)
 //
 //  ┌──────────────────────────── 위 막대 ─────────────────────────────┐
-//  │ AREA EDITOR  곡명  INSANE        ▶ 01:23.456  BAR 12 · 3.25    BPM  OFFSET  ● 저장됨 │
+//  │ CHART EDITOR 곡명  INSANE        ▶ 01:23.456  BAR 12 · 3.25    BPM  OFFSET  ● 저장됨 │
 //  ├──────────┬──────────────────────────────────────────┬─┬──────────┤
 //  │ 도구     │                                          │미│ 위치      │
-//  │ (노트 ·  │            레인 · 노트 · 영역              │니│ 영역      │
-//  │  옵션 ·  │                                          │맵│ 레인      │
+//  │ (노트 ·  │            레인 · 노트                    │니│ 레인      │
+//  │  옵션 ·  │                                          │맵│           │
 //  │  키+클릭)│                                          │ │ 오디오 · 통계│
 //  ├──────────┴──────────────────────────────────────────┴─┴──────────┤
 //  │ 아래 막대: 자주 쓰는 키                      알림(토스트)           │
@@ -45,15 +45,14 @@ public partial class AreaChartEditor
     // ----- HUD 요소 -----
     private RectTransform hudRoot, topBar, leftPanel, rightPanel, bottomBar, miniRoot, miniView, helpRoot;
     private TextMeshProUGUI tTitle, tDiff, tTime, tPos, tBpm, tOffset, tSave, tSnap, tZoom, tToast;
-    private TextMeshProUGUI tPosBig, tPosSub, tAreaInfo, tLaneState, tStats, tLongEnd, tMusicVal, tHitVal;
+    private TextMeshProUGUI tPosBig, tPosSub, tLaneState, tStats, tLongEnd, tMusicVal, tHitVal;
     private Image playIcon, pauseL, pauseR, saveDot, toastBg, laneStateFill, musicFill, hitFill;
-    private readonly Image[] areaCells = new Image[4];
     private CanvasGroup toastGroup;
 
     private class ToolCard { public RectTransform rt; public Image bg, swatch, edge; public TextMeshProUGUI name; public int kind; }
     private readonly List<ToolCard> toolCards = new List<ToolCard>();             // kind: 1~4 노트 종류
     private class ToggleBtn { public RectTransform rt; public Image bg; public TextMeshProUGUI state; public int id; }
-    private readonly List<ToggleBtn> toggles = new List<ToggleBtn>();             // id: 5 RED, 6 드래그, 21 2층, 22 1층
+    private readonly List<ToggleBtn> toggles = new List<ToggleBtn>();             // id: 5 RED, 6 드래그, 7 슬라이드 편집, 21 2층, 22 1층
     private class KeyRow { public Key key; public Image bg; }
     private readonly List<KeyRow> keyRows = new List<KeyRow>();
 
@@ -139,7 +138,7 @@ public partial class AreaChartEditor
         Image tag = Panel("Tag", topBar, new Color(UiAccent.r, UiAccent.g, UiAccent.b, 0.14f), 6f);
         At(tag.rectTransform, Pad + 4f, 20f, 112f, 28f);
         TextMeshProUGUI tagT = Txt("TagText", tag.rectTransform, 13, TextAlignmentOptions.Center, UiAccent, FontStyles.Bold);
-        tagT.text = "AREA EDITOR"; tagT.characterSpacing = 4f;
+        tagT.text = "CHART EDITOR"; tagT.characterSpacing = 3f;
         SettingsUIKit.Stretch(tagT.rectTransform);
         tTitle = Txt("Title", topBar, 24, TextAlignmentOptions.MidlineLeft, UiText, FontStyles.Bold);
         At(tTitle.rectTransform, Pad + 132f, 14f, 460f, 40f);
@@ -228,6 +227,7 @@ public partial class AreaChartEditor
         y = Section(leftPanel, T("옵션", "OPTIONS"), y);
         y = ToggleRow(T("RED 노트", "RED NOTE"), "5", 5, y);
         y = ToggleRow(T("드래그 노트", "DRAG NOTE"), "6", 6, y);
+        y = ToggleRow(T("슬라이드 편집", "SLIDE EDIT"), "7", 7, y);
         // 층: [2층 위][1층 아래]
         TextMeshProUGUI ll = Txt("LayerLabel", leftPanel, 15, TextAlignmentOptions.MidlineLeft, UiSub, FontStyles.Bold);
         ll.text = T("층", "LAYER");
@@ -247,12 +247,10 @@ public partial class AreaChartEditor
         y += 48f;
 
         y = Section(leftPanel, T("키를 누른 채 클릭", "HOLD KEY + CLICK"), y);
-        KeyItem(Key.Z, "Z", T(">>> 화살표 노트", ">>> arrow note"), ref y);
-        KeyItem(Key.X, "X", T("<<< 화살표 노트", "<<< arrow note"), ref y);
-        KeyItem(Key.A, "A", T("영역 그리기 · 끝 늘이기", "draw / resize area"), ref y);
-        KeyItem(Key.C, "C", T("이 박에서 영역 자르기", "cut area here"), ref y);
         KeyItem(Key.V, "V", T("레인 사라짐", "lanes disappear"), ref y);
         KeyItem(Key.B, "B", T("레인 드러남", "lanes reappear"), ref y);
+        KeyItem(Key.U, "U", T("변속 SPEED UP / DOWN 표시", "speed UP / DOWN notice"), ref y);
+        KeyItem(Key.G, "G", T("난이도 공개 (? → 실제 값)", "level reveal (? → real)"), ref y);
         KeyItem(Key.D, "D", "BPM", ref y);
         KeyItem(Key.F, "F", T("변속 이 층만 (SHIFT 두 층)", "speed this layer (SHIFT both)"), ref y);
         KeyItem(Key.E, "E", T("정지 STOP", "STOP"), ref y);
@@ -332,19 +330,6 @@ public partial class AreaChartEditor
         tPosSub = Txt("PosSub", rightPanel, 15, TextAlignmentOptions.TopLeft, UiSub, FontStyles.Normal, true);
         At(tPosSub.rectTransform, 18f, y + 42f, 304f, 70f);
         y += 118f;
-
-        y = SectionR(T("영역", "AREA"), y);
-        for (int i = 0; i < 4; i++)
-        {
-            areaCells[i] = Panel("AreaCell" + i, rightPanel, UiCard, 6f);
-            At(areaCells[i].rectTransform, 18f + i * 40f, y, 34f, 34f);
-            TextMeshProUGUI n = Txt("N", areaCells[i].rectTransform, 13, TextAlignmentOptions.Center, UiSub, FontStyles.Bold);
-            n.text = (i + 1).ToString();
-            SettingsUIKit.Stretch(n.rectTransform);
-        }
-        tAreaInfo = Txt("AreaInfo", rightPanel, 14, TextAlignmentOptions.MidlineLeft, UiSub, FontStyles.Normal, true);
-        At(tAreaInfo.rectTransform, 184f, y - 2f, 140f, 38f);
-        y += 50f;
 
         y = SectionR(T("레인", "LANES"), y);
         tLaneState = Txt("LaneState", rightPanel, 16, TextAlignmentOptions.MidlineLeft, UiText, FontStyles.Bold);
@@ -516,12 +501,13 @@ public partial class AreaChartEditor
                     "1|" + T("탭", "tap"), "2|" + T("롱노트 시작", "long start"), "3|" + T("롱노트 끝", "long end"), "4|" + T("마디선", "measure line"),
                     "5|" + T("RED 켜기 / 끄기", "RED on / off"), "6|" + T("드래그 켜기 / 끄기", "DRAG on / off"),
                     "Q|" + T("층 전환 (2층 ↔ 1층)", "layer 2 ↔ 1"),
-                    "Z|" + T("+ 클릭  >>> 화살표", "+ click  >>> arrow"), "X|" + T("+ 클릭  <<< 화살표", "+ click  <<< arrow"),
+                    "7|" + T("슬라이드 편집 (롱노트 클릭 → 사이 클릭 = 중계점 · 점 끌기 = 레인)", "SLIDE EDIT (click long note → click between = point · drag)"),
+                    "C|" + T("슬라이드 편집 중: 구간 곡선 (직선 → IN → OUT)", "slide edit: segment curve (line → IN → OUT)"),
                     "DRAG|" + T("클릭한 채 오른쪽으로 = 폭 1~4칸", "drag right = width 1-4") },
-            new[] { T("영역 · 레인 · 타이밍", "AREA · LANES · TIMING"),
-                    "A|" + T("+ 드래그  영역 그리기", "+ drag  draw area"), "A|" + T("+ 영역 끝 드래그  길이 조절", "+ drag edge  resize"),
-                    "A|" + T("+ 우클릭  영역 삭제", "+ R-click  delete area"), "C|" + T("+ 클릭  이 박에서 영역 자르기", "+ click  cut area"),
+            new[] { T("레인 · 타이밍", "LANES · TIMING"),
                     "V|" + T("+ 클릭  레인 사라짐 (시간 입력)", "+ click  lanes disappear"), "B|" + T("+ 클릭  레인 드러남 (시간 입력)", "+ click  lanes reappear"),
+                    "U|" + T("+ 클릭  변속에 SPEED UP / DOWN 글자 켜고 끄기", "+ click  speed UP / DOWN notice on / off"),
+                    "G|" + T("+ 클릭  난이도 공개 (? → 실제 값, 하나만)", "+ click  level reveal (? → real, one only)"),
                     "D|" + T("+ 클릭  BPM", "+ click  BPM"), "F|" + T("+ 클릭  변속 (편집 중인 층만)", "+ click  speed (this layer)"), "SHIFT|" + T("+ F + 클릭  변속 (두 층 모두)", "+ F + click  speed (both layers)"),
                     "E|" + T("+ 클릭  정지 STOP", "+ click  STOP"), "R|" + T("+ 클릭  재개 START", "+ click  START"),
                     "KEY|" + T("+ 우클릭  그 표시 삭제", "+ R-click  delete") },
@@ -594,8 +580,7 @@ public partial class AreaChartEditor
 
         // ----- 위 막대 -----
         tTitle.text = title;
-        Color dc = DifficultyHelper.GetColor(levelId);
-        tDiff.text = "<color=#" + ColorUtility.ToHtmlStringRGB(dc) + ">" + DifficultyHelper.GetName(levelId) + "</color>";
+        tDiff.text = DifficultyHelper.ColoredText(levelId, DifficultyHelper.GetName(levelId));   // SPECIAL 은 솜사탕 그라데이션
         playIcon.enabled = !playing;
         pauseL.enabled = pauseR.enabled = playing;
         tTime.text = "<mspace=0.6em>" + FormatTime(viewTime) + "</mspace>";
@@ -627,10 +612,10 @@ public partial class AreaChartEditor
         }
         foreach (var tb in toggles)
         {
-            bool on = tb.id == 5 ? redMode : tb.id == 6 ? dragMode : tb.id == 21 ? editLayer == NoteLayer.Top : editLayer == NoteLayer.Bottom;
-            Color onC = tb.id == 5 ? UiRed : tb.id == 6 ? NoteArt.DragColor : UiAccent;
+            bool on = tb.id == 5 ? redMode : tb.id == 6 ? dragMode : tb.id == 7 ? slideMode : tb.id == 21 ? editLayer == NoteLayer.Top : editLayer == NoteLayer.Bottom;
+            Color onC = tb.id == 5 ? UiRed : tb.id == 6 ? NoteArt.DragColor : tb.id == 7 ? SlideUiColor : UiAccent;
             tb.bg.color = on ? new Color(onC.r, onC.g, onC.b, 0.22f) : UiCard;
-            if (tb.id == 5 || tb.id == 6) tb.state.text = on ? "ON" : "OFF";
+            if (tb.id == 5 || tb.id == 6 || tb.id == 7) tb.state.text = on ? "ON" : "OFF";
             tb.state.color = on ? onC : UiDim;
         }
         var kbd = Keyboard.current;
@@ -647,11 +632,6 @@ public partial class AreaChartEditor
         tPosSub.text = T("시간  ", "TIME  ") + viewTime.ToString("0.000", CultureInfo.InvariantCulture) + " s\n" +
                        "BPM  " + bpmNow.ToString("0.##", CultureInfo.InvariantCulture) + "     " + T($"변속({editLayer}층)  x", $"SPEED(L{editLayer})  x") + speedNow.ToString("0.00", CultureInfo.InvariantCulture) + "\n" +
                        T("층  ", "LAYER  ") + (editLayer == NoteLayer.Top ? T("2층 (위)", "2 (top)") : T("1층 (아래)", "1 (bottom)"));
-        int maskNow = AreaMaskAtBeat(beatNow);
-        for (int i = 0; i < 4; i++)
-            areaCells[i].color = AreaMask.Has(maskNow, i) ? new Color(NoteArt.AreaColor.r, NoteArt.AreaColor.g, NoteArt.AreaColor.b, 0.35f) : UiCard;
-        int areaCountNow = areas.Count(a => a.StartBeat <= beatNow + 1e-6 && beatNow < a.EndBeat - 1e-6);
-        tAreaInfo.text = maskNow == 0 ? T("영역 없음", "no area") : T($"영역 {areaCountNow}개", $"{areaCountNow} area(s)") + "\n<color=#FFFFFF60>" + T($"전체 {areas.Count}개", $"total {areas.Count}") + "</color>";
 
         float shown = FoldAt(viewTime);
         tLaneState.text = shown > 0.999f ? T("보임", "VISIBLE")
@@ -666,17 +646,17 @@ public partial class AreaChartEditor
         hitFill.rectTransform.anchorMax = new Vector2(hitVolume, 1f);
         tLongEnd.text = longHitSound ? "<color=#5ce1e6>ON</color>" : "<color=#FFFFFF55>OFF</color>";
 
-        int nTap = 0, nLong = 0, nRed = 0, nDrag = 0, nArrow = 0;
+        int nTap = 0, nLong = 0, nRed = 0, nDrag = 0, nSlide = 0;
         foreach (var n in notes)
         {
             if (n.Type == 4) continue;
             if (n.Red) nRed++;
             if (NoteTypes.IsDrag(n.Type)) nDrag++;
-            if (NoteTypes.IsArrow(n.Type)) nArrow++;
-            if (NoteTypes.IsLongHead(n.Type)) nLong++; else if (n.Type != 3 && n.Type != 13) nTap++;
+            if (n.SlidePts != null) nSlide++;
+            if (NoteTypes.IsLongHead(n.Type)) nLong++; else if (n.Type != 3 && n.Type != 13 && !NoteTypes.IsSlideRelay(n.Type)) nTap++;
         }
-        tStats.text = T($"한 번 치는 노트  {nTap}\n롱노트  {nLong}\nRED  {nRed}   ·   드래그  {nDrag}   ·   화살표  {nArrow}\n레인 사라짐 / 드러남  {folds.Count}",
-                        $"TAP-LIKE  {nTap}\nLONG  {nLong}\nRED  {nRed}   ·   DRAG  {nDrag}   ·   ARROW  {nArrow}\nLANE HIDE / SHOW  {folds.Count}");
+        tStats.text = T($"한 번 치는 노트  {nTap}\n롱노트  {nLong}  (슬라이드 {nSlide})\nRED  {nRed}   ·   드래그  {nDrag}\n레인 사라짐 / 드러남  {folds.Count}",
+                        $"TAP-LIKE  {nTap}\nLONG  {nLong}  (SLIDE {nSlide})\nRED  {nRed}   ·   DRAG  {nDrag}\nLANE HIDE / SHOW  {folds.Count}");
 
         // ----- 미니맵 · 알림 · 입력창 -----
         UpdateMiniMap(beatNow);
@@ -700,10 +680,10 @@ public partial class AreaChartEditor
     }
 
     // =====================================================================
-    //  이벤트 아이콘 (BPM · TIMING · 변속 · STOP · START · 영역 · 레인 사라짐 / 드러남)
+    //  이벤트 아이콘 (BPM · TIMING · 변속 · STOP · START · 레인 사라짐 / 드러남)
     //   레인 오른쪽에 [아이콘 배지] + 글자, 레인 오른쪽 벽에는 같은 색 눈금
     // =====================================================================
-    private enum EvIcon { Bpm, Timing, SpeedUp, SpeedDown, Stop, Start, Area, AreaEnd, Hide, Show }
+    private enum EvIcon { Bpm, Timing, SpeedUp, SpeedDown, Stop, Start, Hide, Show, Reveal }
     private struct EvItem { public double Beat; public EvIcon Icon; public string Text; public Color Color; public int Layer; }   // Layer: 0 = 두 층 모두(표시 없음), 1 · 2 = 층 배지
     private readonly List<EvItem> evItems = new List<EvItem>();
     private static readonly Dictionary<EvIcon, Sprite> iconSprites = new Dictionary<EvIcon, Sprite>();
@@ -713,7 +693,8 @@ public partial class AreaChartEditor
 
     private static readonly Color EvBpm = new Color(1f, 0.70f, 0.22f), EvSpeed = new Color(0.80f, 0.50f, 1f),
                                   EvStop = new Color(1f, 0.34f, 0.34f), EvStart = new Color(0.34f, 0.92f, 0.52f),
-                                  EvArea = new Color(0.62f, 0.86f, 1f), EvHide = new Color(1f, 0.62f, 0.30f), EvShow = new Color(0.50f, 1f, 0.62f);
+                                  EvHide = new Color(1f, 0.62f, 0.30f), EvShow = new Color(0.50f, 1f, 0.62f),
+                                  EvReveal = new Color(1f, 0.86f, 0.40f);
 
     // 화면에 보이는 박 범위의 이벤트 모으기 (시간 순)
     private void CollectEvents()
@@ -731,21 +712,25 @@ public partial class AreaChartEditor
                 if (o == sp || o.Beat >= sp.Beat - 1e-9) continue;
                 if (o.Layer == 0 || sp.Layer == 0 || o.Layer == sp.Layer) prev = o.Value;
             }
+            // SPEED UP / DOWN 표시가 켜진 변속: 값 뒤에 흰 [SPEED UP] / [SPEED DOWN]
+            string notice = sp.Show ? "  <color=#FFFFFF><size=80%>[SPEED " + (sp.Value >= prev ? "UP" : "DOWN") + "]</size></color>" : "";
             evItems.Add(new EvItem { Beat = sp.Beat, Icon = sp.Value >= prev ? EvIcon.SpeedUp : EvIcon.SpeedDown, Color = EvSpeed,
-                                     Text = sp.Value.ToString("0.00", CultureInfo.InvariantCulture), Layer = sp.Layer });
+                                     Text = sp.Value.ToString("0.00", CultureInfo.InvariantCulture) + notice, Layer = sp.Layer });
         }
         foreach (var k in marks)
             evItems.Add(new EvItem { Beat = k.Beat, Icon = k.IsStop ? EvIcon.Stop : EvIcon.Start, Color = k.IsStop ? EvStop : EvStart,
                                      Text = k.IsStop ? "STOP" : "START" });
-        foreach (var a in areas)
-        {
-            string lanes = a.Width == 1 ? $"{a.Lane + 1}" : $"{a.Lane + 1}~{a.Lane + a.Width}";
-            evItems.Add(new EvItem { Beat = a.StartBeat, Icon = EvIcon.Area, Color = EvArea, Text = $"AREA {lanes}" });
-            if (a.End != null) evItems.Add(new EvItem { Beat = a.EndBeat, Icon = EvIcon.AreaEnd, Color = new Color(EvArea.r, EvArea.g, EvArea.b, 0.7f), Text = $"AREA {lanes} END" });
-        }
         foreach (var f in folds)
             evItems.Add(new EvItem { Beat = f.Beat, Icon = f.Fold ? EvIcon.Hide : EvIcon.Show, Color = f.Fold ? EvHide : EvShow,
                                      Text = (f.Fold ? "HIDE " : "SHOW ") + f.Duration.ToString("0.###", CultureInfo.InvariantCulture) + "s" });
+        if (reveal != null)
+        {
+            // 난이도 공개: "LEVEL ? → 17" (숨긴 난이도가 아니면 "LEVEL REVEAL")
+            SongData sd = CoreManager.Instance != null ? CoreManager.Instance.CurrentSongData : null;
+            string txt = sd != null && DifficultyHelper.IsHidden(sd, levelId)
+                       ? "LEVEL ? → " + SongRowUI.FormatDifficulty(DifficultyHelper.GetRealValue(sd, levelId)) : "LEVEL REVEAL";
+            evItems.Add(new EvItem { Beat = reveal.Beat, Icon = EvIcon.Reveal, Color = EvReveal, Text = txt });
+        }
         evItems.Sort((x, y) => x.Beat.CompareTo(y.Beat));
     }
 
@@ -776,10 +761,56 @@ public partial class AreaChartEditor
             lastBeat = e.Beat;
             IconAt(Right + 0.26f, Y(e.Beat), e, stack);
         }
+        DrawSlideLabels();   // 슬라이드 편집 중: 구간 곡선 이름
+        DrawSpeedNoticePreview();   // 재생 중: SPEED UP / DOWN 미리보기
         // 레인 번호 (판정선 아래)
         for (int l = 0; l < 4; l++) LabelCenter(LaneX(l), HitY - 0.32f, (l + 1).ToString(), new Color(1f, 1f, 1f, 0.35f));
         for (int i = labelUsed; i < labelPool.Count; i++) labelPool[i].gameObject.SetActive(false);
         for (int i = iconUsed; i < iconPool.Count; i++) iconPool[i].rt.gameObject.SetActive(false);
+    }
+
+    // ----- 재생 중 SPEED UP / DOWN 미리보기 (게임과 같은 색 · 레인 위쪽 가운데) -----
+    private double noticePrevBeat = double.NaN;
+    private float noticeAge = 99f;
+    private bool noticeUp;
+
+    // 같은 층(두 층 모두 = 0 포함)의 바로 앞 변속 값 (없으면 처음 배속)
+    private double PrevSpeedValue(ASpeed sp)
+    {
+        double prev = initialSpeed, prevBeat = double.NegativeInfinity;
+        foreach (var o in speeds)
+        {
+            if (o == sp || o.Beat >= sp.Beat - 1e-9 || o.Beat < prevBeat) continue;
+            if (o.Layer == 0 || sp.Layer == 0 || o.Layer == sp.Layer) { prev = o.Value; prevBeat = o.Beat; }
+        }
+        return prev;
+    }
+
+    private void DrawSpeedNoticePreview()
+    {
+        noticeAge += Time.unscaledDeltaTime;
+        if (!playing || double.IsNaN(noticePrevBeat) || cursorBeat < noticePrevBeat - 1e-6) noticePrevBeat = cursorBeat;   // 멈춤 · 되감기: 띄우지 않음
+        else
+        {
+            foreach (var sp in speeds)
+            {
+                if (!sp.Show || sp.Beat <= noticePrevBeat || sp.Beat > cursorBeat) continue;
+                double from = PrevSpeedValue(sp);
+                if (from <= 0 || sp.Value <= 0 || Math.Abs(sp.Value - from) < 1e-6) continue;   // 0 이 끼는 변화(정지)는 표시 안 함 (게임과 같음)
+                noticeUp = sp.Value > from;
+                noticeAge = 0f;
+            }
+            noticePrevBeat = cursorBeat;
+        }
+        const float In = 0.22f, Hold = 1.1f, Out = 0.3f;
+        float t = noticeAge;
+        if (t >= Hold + Out) return;
+        float a = t < In ? t / In : t < Hold ? 1f : Mathf.Clamp01(1f - (t - Hold) / Out);
+        float slide = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / In), 3f);
+        Color c = noticeUp ? new Color(1f, 0.74f, 0.38f, a) : new Color(0.48f, 0.80f, 1f, a);
+        float cx = (LaneX(1) + LaneX(2)) * 0.5f;
+        float y = 4.6f + (noticeUp ? -0.12f : 0.12f) * (1f - slide);   // UP: 아래에서 올라옴 / DOWN: 위에서 내려옴
+        LabelCenter(cx, y, "<size=170%><cspace=0.35em>" + (noticeUp ? "SPEED UP" : "SPEED DOWN") + "</cspace></size>", c);
     }
 
     private void IconAt(float wx, float wy, EvItem e, int stack)
@@ -907,17 +938,6 @@ public partial class AreaChartEditor
                 float e3 = -(p.x + 0.45f);
                 return Mathf.Max(e1, Mathf.Max(e2, e3)) - 0.02f;
             }
-            case EvIcon.Area:
-            case EvIcon.AreaEnd:
-            {
-                // 사각 테두리 + 안쪽 사선 두 줄 (영역의 사선 무늬)
-                float frame = Mathf.Abs(RoundBox(p, new Vector2(0.62f, 0.62f), 0.14f)) - 0.08f;
-                float inside = RoundBox(p, new Vector2(0.55f, 0.55f), 0.1f);
-                float st = Mathf.Abs(Mathf.Repeat(p.x + p.y + 0.27f, 0.54f) - 0.27f) - 0.065f;
-                float hatch = Mathf.Max(st, inside);
-                if (k == EvIcon.AreaEnd) return frame;                        // 끝: 테두리만
-                return Mathf.Min(frame, hatch);
-            }
             case EvIcon.Hide:
             {
                 // 위쪽 막대 + 그 막대로 올라가는 화살표 (빨려 들어감)
@@ -925,6 +945,14 @@ public partial class AreaChartEditor
                 float shaft = SegDist(p, new Vector2(0f, -0.66f), new Vector2(0f, 0.28f)) - W;
                 float head = Mathf.Min(SegDist(p, new Vector2(-0.36f, 0f), new Vector2(0f, 0.36f)), SegDist(p, new Vector2(0f, 0.36f), new Vector2(0.36f, 0f))) - W;
                 return Mathf.Min(bar, Mathf.Min(shaft, head));
+            }
+            case EvIcon.Reveal:
+            {
+                // 눈: 아몬드 모양 테두리 + 가운데 눈동자 (드러남)
+                float lens = Mathf.Max((p - new Vector2(0f, -0.62f)).magnitude - 1.0f, (p - new Vector2(0f, 0.62f)).magnitude - 1.0f);
+                float outline = Mathf.Abs(lens) - 0.09f;
+                float pupil = p.magnitude - 0.21f;
+                return Mathf.Min(outline, pupil);
             }
             case EvIcon.Show:
             {
@@ -1013,7 +1041,6 @@ public partial class AreaChartEditor
     {
         double last = 0;
         foreach (var n in notes) { double b = n.Tail != null ? n.Tail.Beat : n.Beat; if (b > last) last = b; }
-        foreach (var a in areas) if (a.End != null && a.EndBeat > last) last = a.EndBeat;
         if (bgm != null && bgm.clip != null) last = Math.Max(last, BeatOf(audioStart + bgm.clip.length));
         return Math.Max(16.0, last + 4.0);
     }
@@ -1050,7 +1077,6 @@ public partial class AreaChartEditor
     {
         miniLenBeat = SongLengthBeat();
         var dens = new float[MiniH];
-        var area = new float[MiniH];
         var hide = new float[MiniH];
         foreach (var n in notes)
         {
@@ -1061,8 +1087,6 @@ public partial class AreaChartEditor
         for (int i = 0; i < MiniH; i++)
         {
             double b = (i + 0.5) / MiniH * miniLenBeat;
-            int mask = AreaMaskAtBeat(b);
-            area[i] = mask == 0 ? 0f : 1f;
             hide[i] = folds.Count == 0 ? 0f : 1f - FoldAt(TimeOf(b));
         }
         // 밀도: 이웃과 섞어 부드럽게 + 최대값 기준
@@ -1079,7 +1103,6 @@ public partial class AreaChartEditor
         {
             float d = Mathf.Sqrt(sm[y] / max);
             Color baseC = Color.Lerp(new Color(1f, 1f, 1f, 0.04f), new Color(0.9f, 0.95f, 1f, 0.85f), d);
-            if (area[y] > 0f) baseC = Color.Lerp(baseC, new Color(0.45f, 0.75f, 1f, Mathf.Max(baseC.a, 0.5f)), 0.45f);
             for (int x = 0; x < 3; x++) px[y * 4 + x] = baseC;
             px[y * 4 + 3] = hide[y] > 0.01f ? (Color32)new Color(1f, 0.6f, 0.3f, 0.3f + 0.7f * hide[y]) : (Color32)new Color(0f, 0f, 0f, 0f);
         }
@@ -1126,6 +1149,7 @@ public partial class AreaChartEditor
                 if (!Over(tb.rt, mp)) continue;
                 if (tb.id == 5) { redMode = !redMode; if (redMode) dragMode = false; }
                 else if (tb.id == 6) { dragMode = !dragMode; if (dragMode) redMode = false; }
+                else if (tb.id == 7) ToggleSlideMode();
                 else editLayer = tb.id == 21 ? NoteLayer.Top : NoteLayer.Bottom;
                 return true;
             }
@@ -1147,13 +1171,13 @@ public partial class AreaChartEditor
         {
             int h = 17;
             foreach (var n in notes) h = h * 31 + (int)(n.Beat * 9973.0) * 7 + n.Lane * 131 + n.Type * 977 + n.Width * 13 + n.Layer * 3 + (n.Red ? 5 : 0);
-            foreach (var a in areas) h = h * 31 + (int)(a.StartBeat * 9973.0) + (int)((a.End == null ? -1 : a.EndBeat) * 7919.0) + a.Lane * 17 + a.Width;
             foreach (var b in bpms) h = h * 31 + (int)(b.Beat * 9973.0) + (int)(b.Bpm * 1000.0) + (b.HasAnchor ? (int)b.AnchorMs : 0);
-            foreach (var s in speeds) h = h * 31 + (int)(s.Beat * 9973.0) + (int)(s.Value * 1000.0) + s.Layer;
+            foreach (var s in speeds) h = h * 31 + (int)(s.Beat * 9973.0) + (int)(s.Value * 1000.0) + s.Layer + (s.Show ? 17 : 0);
             foreach (var k in marks) h = h * 31 + (int)(k.Beat * 9973.0) + (k.IsStop ? 1 : 2);
             foreach (var f in folds) h = h * 31 + (int)(f.Beat * 9973.0) + (int)(f.Duration * 1000.0) + (f.Fold ? 1 : 2);
+            h = h * 31 + (reveal != null ? (int)(reveal.Beat * 9973.0) + 7 : 0);
             h = h * 31 + (int)(audioStart * 100000.0) + (int)(initialBpm * 1000.0) + (int)(initialSpeed * 1000.0);
-            h = h * 31 + notes.Count * 7 + areas.Count;
+            h = h * 31 + notes.Count * 7;
             return h;
         }
     }

@@ -26,8 +26,6 @@ public class EditorNote
     public SpriteRenderer Sr;
 }
 
-// 영역(Area): 이 박부터 Mask 레인이 영역 (Mask 0 = 영역 끝)  →  AREA, 마디, 분자, 분모, 1100
-public class EditorAreaEvent { public long Measure, Num, Den; public int Mask; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 // 레인 사라짐 / 드러남 (예전 이름 접기 / 펼치기)  →  FOLD (= HIDE) / UNFOLD (= SHOW), 마디, 분자, 분모, 초
 public class EditorFoldEvent { public long Measure, Num, Den; public bool Fold; public double Duration; public double AbsoluteBeat => (Measure - 1) * 4.0 + ((double)Num / Den) * 4.0; }
 // DeathArea : BPM 오차 보정용 구간(차트 시간 초 단위). 격자/노트 배치 금지.
@@ -109,13 +107,15 @@ public class ChartEditorManager : MonoBehaviour
     public Sprite blueLongTail; public Sprite greenLongTail;
     public Sprite blueLongBody; public Sprite greenLongBody; 
 
-    [Header("영역 전용 에디터 (songs.json \"Area\" 곡)")]
-    [Tooltip("영역 전용 에디터 글꼴 (한글이 들어 있는 TMP 글꼴). 비우면 Resources/Fonts/AreaEditorFont → 이 에디터의 글꼴")]
+    [Header("새 디자인 채보 에디터 (AreaChartEditor — 이제 모든 채보를 이 에디터로 엽니다)")]
+    [Tooltip("켜 두면 모든 채보를 새 디자인 에디터로 엽니다. 끄면 예전 에디터 화면")]
+    public bool useNewEditor = true;
+    [Tooltip("새 디자인 에디터 글꼴 (한글이 들어 있는 TMP 글꼴). 비우면 Resources/Fonts/AreaEditorFont → 이 에디터의 글꼴")]
     public TMP_FontAsset areaEditorFont;
     [Range(0.5f, 2f)] public float areaEditorFontScale = 1f;
     [Tooltip("처음 열 때 한국어로 표시 (에디터 안에서 L 키로 바꿀 수 있고, 바꾼 값은 기억됨)")]
     public bool areaEditorKorean = true;
-    [Tooltip("영역 전용 에디터에서 롱노트 끝 판정(꼬리)에도 탭음을 낼지 (에디터 안에서 F5 로 바꿀 수 있고, 바꾼 값은 기억됨)")]
+    [Tooltip("새 디자인 에디터에서 롱노트 끝 판정(꼬리)에도 탭음을 낼지 (에디터 안에서 F5 로 바꿀 수 있고, 바꾼 값은 기억됨)")]
     public bool areaEditorLongNoteHitSound = true;
 
     [Header("채보 에디터 설정창 UI (신규)")]
@@ -157,9 +157,8 @@ public class ChartEditorManager : MonoBehaviour
     private List<EditorSpeed> speedChanges = new List<EditorSpeed>();
     private List<EditorStopEvent> stopEvents = new List<EditorStopEvent>();
     private List<EditorStartEvent> startEvents = new List<EditorStartEvent>();
-    private List<EditorAreaEvent> areaEvents = new List<EditorAreaEvent>();
     private List<EditorFoldEvent> foldEvents = new List<EditorFoldEvent>();
-    // (영역 · 레인 접기 줄은 영역 전용 에디터(AreaChartEditor)에서 편집. 여기서는 지워지지 않게 읽고 그대로 저장만 함)
+    // (레인 사라짐 / 드러남 줄은 새 디자인 에디터(AreaChartEditor)에서 편집. 여기서는 지워지지 않게 읽고 그대로 저장만 함)
     private List<EditorDeathArea> deathAreas = new List<EditorDeathArea>();
     private List<string> originalOtherEvents = new List<string>();
     
@@ -444,10 +443,10 @@ public class ChartEditorManager : MonoBehaviour
 
     private void StartEditorWithSong(int songId)
     {
-        // 영역(Area) 채보 (songs.json "Area": "deployed(INSANE)") → 이 에디터 대신 영역 전용 에디터(AreaChartEditor)로 연다
-        if (IsAreaEditorLevel(songId, editLevelId))
+        // 모든 채보를 새 디자인 에디터(AreaChartEditor: 상업용 HUD · 아이콘 · 미니맵)로 연다 (useNewEditor 를 끄면 예전 화면)
+        if (useNewEditor)
         {
-            Debug.Log($"[Editor] {songId}_{editLevelId}: 영역 채보 → 영역 전용 에디터로 엽니다.");
+            Debug.Log($"[Editor] {songId}_{editLevelId}: 새 디자인 에디터로 엽니다.");
             if (chartUIGroup) chartUIGroup.gameObject.SetActive(false);
             if (settingUIGroup) settingUIGroup.gameObject.SetActive(false);
             if (editorPanelObj != null) editorPanelObj.SetActive(false);
@@ -510,14 +509,14 @@ public class ChartEditorManager : MonoBehaviour
 
         if (songImg != null)
         {
-            Sprite img = Resources.Load<Sprite>($"Sprites/squareimg/{songId}");
+            Sprite img = SongArt.Load("Sprites/squareimg", songId);   // 없으면 None
             if (img != null) { songImg.sprite = img; songImg.color = Color.white; }
             else { songImg.sprite = null; songImg.color = new Color(0.1f, 0.1f, 0.1f, 1f); }
         }
 
         if (bgImageUI != null)
         {
-            Sprite bgSprite = Resources.Load<Sprite>($"Sprites/blurimg/{songId}");
+            Sprite bgSprite = BackgroundBlur.Get(SongArt.Load("Sprites/blurimg", songId));   // 없으면 None, 원본 → 흐리게
             if (bgSprite != null) { bgImageUI.sprite = bgSprite; bgImageUI.color = Color.white; }
             else { bgImageUI.sprite = null; bgImageUI.color = new Color(0.1f, 0.1f, 0.1f, 1f); }
         }
@@ -529,7 +528,9 @@ public class ChartEditorManager : MonoBehaviour
 
     private void LoadAudio(int songId)
     {
-        AudioClip clip = Resources.Load<AudioClip>($"Audio/Full/{songId}");
+        // 난이도 전용 음원(Audio/Full/{곡ID}_{난이도})이 있으면 그것, 없으면 기존 음원
+        AudioClip clip = Resources.Load<AudioClip>($"Audio/Full/{songId}_{editLevelId}");
+        if (clip == null) clip = Resources.Load<AudioClip>($"Audio/Full/{songId}");
         if (clip != null)
         {
             bgmSource.clip = clip;
@@ -1311,7 +1312,7 @@ public class ChartEditorManager : MonoBehaviour
         else
         {
             bool isBlue = (note.Lane % 2 == 0);
-            if (note.Type == 1 || NoteTypes.IsArrow(note.Type) || note.Type == NoteTypes.Drag) sr.sprite = isBlue ? blueShort : greenShort;
+            if (note.Type == 1 || note.Type == NoteTypes.Drag) sr.sprite = isBlue ? blueShort : greenShort;
             else if (note.Type == 2 || note.Type == NoteTypes.DragLongHead) sr.sprite = isBlue ? blueLongHead : greenLongHead;
             else if (note.Type == 3) sr.sprite = isBlue ? blueLongTail : greenLongTail;
             
@@ -1329,7 +1330,6 @@ public class ChartEditorManager : MonoBehaviour
 
         // 층별 렌더링 순서: 2층(Top)이 항상 1층(Bottom)보다 위. 마디선(Type 4)은 맨 아래.
         sr.sortingOrder = (!note.IsRedNote && note.Type == 4) ? 1 : NoteLayer.HeadOrder(note.Layer);
-        UpdateEditorArrow(note, sr);
         if (!note.IsRedNote && NoteTypes.IsDrag(note.Type))
         {
             // 드래그 노트: 연한 노랑으로 물들이고 얇게
@@ -1339,39 +1339,6 @@ public class ChartEditorManager : MonoBehaviour
         }
         note.BaseAlpha = sr.color.a;
     }
-
-    // 화살표 노트(7: >>> 밝은 파랑 / 8: <<< 밝은 노랑): 노트 색을 물들이고 위에 화살표를 띄움
-    private void UpdateEditorArrow(EditorNote note, SpriteRenderer sr)
-    {
-        Transform arrowT = note.VisualObject.transform.Find("Arrow");
-        if (!NoteTypes.IsArrow(note.Type) || note.IsRedNote)
-        {
-            if (arrowT != null) arrowT.gameObject.SetActive(false);
-            return;
-        }
-        Color c = NoteArt.ArrowColor(note.Type);
-        sr.color = Color.Lerp(Color.white, c, 0.55f);
-        if (arrowT == null)
-        {
-            GameObject a = new GameObject("Arrow");
-            a.transform.SetParent(note.VisualObject.transform, false);
-            a.AddComponent<SpriteRenderer>();
-            arrowT = a.transform;
-        }
-        arrowT.gameObject.SetActive(true);
-        SpriteRenderer ar = arrowT.GetComponent<SpriteRenderer>();
-        ar.sprite = NoteArt.ArrowSprite;
-        ar.color = c;
-        ar.sortingOrder = sr.sortingOrder + 1;
-        Vector3 ps = note.VisualObject.transform.localScale;
-        float sx = Mathf.Max(0.0001f, Mathf.Abs(ps.x)), sy = Mathf.Max(0.0001f, Mathf.Abs(ps.y));
-        Vector2 asz = ar.sprite.bounds.size;
-        float dir = note.Type == NoteTypes.ArrowLeft ? -1f : 1f;
-        arrowT.localScale = new Vector3(dir * laneWidth * 0.7f / asz.x / sx, laneWidth * 0.27f / asz.y / sy, 1f);
-        arrowT.localPosition = new Vector3(0f, laneWidth * 0.32f / sy, 0f);
-    }
-
-
 
     // 편집 중이 아닌 층은 흐리게, 재생 중에는 모든 층을 또렷하게
     private void ApplyLayerAlpha(SpriteRenderer sr, int layer, float baseAlpha)
@@ -1801,28 +1768,6 @@ public class ChartEditorManager : MonoBehaviour
         return zones;
     }
 
-    // 영역 전용 에디터로 열지: songs.json 의 "Area": "deployed(INSANE)" (이 곡 · 이 난이도)
-    private bool IsAreaEditorLevel(int songId, int levelId)
-    {
-        SongData song = null;
-        if (CoreManager.Instance != null && CoreManager.Instance.CurrentSongData != null && CoreManager.Instance.CurrentSongData.Id == songId)
-            song = CoreManager.Instance.CurrentSongData;
-        else
-        {
-            try
-            {
-                string jsonPath = Path.Combine(Application.streamingAssetsPath, "data", "songs.json");
-                if (File.Exists(jsonPath))
-                {
-                    SongData[] arr = JsonHelper.FromJson<SongData>(SongJson.Normalize(File.ReadAllText(jsonPath, System.Text.Encoding.UTF8)));
-                    if (arr != null) song = arr.FirstOrDefault(x => x.Id == songId);
-                }
-            }
-            catch (Exception) { }
-        }
-        return AreaHelper.IsAreaLevel(song, levelId);
-    }
-
     private void LoadChartForEditor(int songId)
     {
         string path = Path.Combine(Application.streamingAssetsPath, "chart", $"{songId}_{editLevelId}.txt");
@@ -1831,7 +1776,7 @@ public class ChartEditorManager : MonoBehaviour
         foreach (var b in longNoteBodies) if (b.BodyObj) Destroy(b.BodyObj); longNoteBodies.Clear();
         
         bpmChanges.Clear(); speedChanges.Clear(); stopEvents.Clear(); startEvents.Clear();
-        areaEvents.Clear(); foldEvents.Clear(); deathAreas.Clear(); originalOtherEvents.Clear();
+        foldEvents.Clear(); deathAreas.Clear(); originalOtherEvents.Clear();
         isInputtingOffset = false;
         
         songStartOffset = 0.0; chartOffset = songStartOffset; currentKeyCount = 4;
@@ -1939,8 +1884,8 @@ public class ChartEditorManager : MonoBehaviour
             else if (type == "FREEKEY") {
                 continue; // 프리키(FREE-KEY) 기능은 삭제됨 — 저장하면 지워진다
             }
-            else if (type == "AREA" && data.Length >= 5) {
-                areaEvents.Add(new EditorAreaEvent { Measure = long.Parse(data[1].Trim()), Num = long.Parse(data[2].Trim()), Den = long.Parse(data[3].Trim()), Mask = AreaMask.Parse(data[4]) });
+            else if (type == "AREA") {
+                continue; // 영역(AREA) 기능은 삭제됨 — 저장하면 지워진다
             }
             else if ((type == "FOLD" || type == "UNFOLD" || type == "HIDE" || type == "SHOW") && data.Length >= 5) {   // 레인 사라짐 / 드러남
                 double dur;
@@ -1954,18 +1899,19 @@ public class ChartEditorManager : MonoBehaviour
                     // 구형 압축 포맷 (예: 1000) - 전부 2층
                     string val = data[4].Trim();
                     for (int i = 0; i < val.Length && i < 8; i++) {
-                        if (val[i] != '0') { int noteType = int.Parse(val[i].ToString()); if (noteType != 5 && noteType != 6) AddNoteToEditor(m, num, den, i, noteType); }
+                        if (val[i] != '0') { int noteType = NoteTypes.Normalize(int.Parse(val[i].ToString())); if (noteType != 5 && noteType != 6) AddNoteToEditor(m, num, den, i, noteType); }
                     }
                 } else {
                     // 레인 칸 형식: "2층노트" 또는 "2층노트(1층노트)"  예) 11_3(12)
                     for (int i = 0; i < currentKeyCount && (i + 4) < data.Length; i++) {
                         NoteCellParser.SplitCell(data[i + 4], out string topToken, out string bottomToken);
 
+                        // (예전 화살표 노트 7 · 8 은 일반 탭으로 읽음)
                         if (NoteCellParser.TryParseToken(topToken, out int tType, out int tWidth, out bool tRed))
-                            AddNoteToEditor(m, num, den, i, tType, tRed, tWidth, NoteLayer.Top);
+                            AddNoteToEditor(m, num, den, i, NoteTypes.Normalize(tType), tRed, tWidth, NoteLayer.Top);
 
                         if (NoteCellParser.TryParseToken(bottomToken, out int bType, out int bWidth, out bool bRed))
-                            AddNoteToEditor(m, num, den, i, bType, bRed, bWidth, NoteLayer.Bottom);
+                            AddNoteToEditor(m, num, den, i, NoteTypes.Normalize(bType), bRed, bWidth, NoteLayer.Bottom);
                     }
                 }
             }
@@ -2041,9 +1987,7 @@ public class ChartEditorManager : MonoBehaviour
         foreach (var a in deathAreas.OrderBy(x => x.Start))
             output.Add($"DEATHAREA, {a.Start.ToString("0.0000", CultureInfo.InvariantCulture)}, {a.End.ToString("0.0000", CultureInfo.InvariantCulture)}");
         
-        // 영역 · 레인 접기 (영역 전용 에디터)
-        foreach (var a in areaEvents.OrderBy(x => x.AbsoluteBeat))
-            output.Add($"AREA, {a.Measure}, {a.Num}, {a.Den}, {AreaMask.Format(a.Mask)}");
+        // 레인 사라짐 / 드러남
         foreach (var f in foldEvents.OrderBy(x => x.AbsoluteBeat))
             output.Add($"{(f.Fold ? "FOLD" : "UNFOLD")}, {f.Measure}, {f.Num}, {f.Den}, {f.Duration.ToString("0.###", CultureInfo.InvariantCulture)}");
 
@@ -2113,6 +2057,7 @@ public class ChartEditorManager : MonoBehaviour
             SongData s = CoreManager.Instance.CurrentSongData;
             if (levelId == 1) s.NoteCount_EASY = r.Total;
             else if (levelId == 3) s.NoteCount_INSANE = r.Total;
+            else if (levelId == DifficultyHelper.Special) s.NoteCount_SPECIAL = r.Total;
             else s.NoteCount_HARD = r.Total;
         }
     }
@@ -2319,17 +2264,6 @@ public class ChartEditorManager : MonoBehaviour
                 }
             }
             
-            // 영역 · 레인 접기 표시
-            foreach (var ev in areaEvents) {
-                float y = hitLineScreenOffsetY + (float)((ev.AbsoluteBeat - currentBeat) * beatSpacing);
-                if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {
-                    Vector3 sp = mainCam.WorldToScreenPoint(new Vector3(0, y, 0));
-                    bool end = ev.Mask == 0;
-                    uiEvents.Add(new UIDrawEvent { beat = ev.AbsoluteBeat, y = (Screen.height - sp.y) * invScale,
-                        text = end ? "AREA END" : $"AREA {AreaMask.Format(ev.Mask)}", shortText = end ? "A-E" : "AREA",
-                        color = end ? new Color(0.55f, 0.65f, 0.8f) : new Color(0.45f, 0.85f, 1f), isWide = false });
-                }
-            }
             foreach (var ev in foldEvents) {
                 float y = hitLineScreenOffsetY + (float)((ev.AbsoluteBeat - currentBeat) * beatSpacing);
                 if (y > -camHalfHeight - 2f && y < camHalfHeight + 2f) {

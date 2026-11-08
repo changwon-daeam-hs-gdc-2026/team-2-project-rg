@@ -2,36 +2,21 @@ using UnityEngine;
 
 // ============================================================
 // 코드로 만드는 그림 (에셋 파일 없이)
-//  - 화살표 노트의 >>> 화살표 / 노트 빛
-//  - 영역(Area) 배경의 사선 무늬
+//  - 노트 앞면 · 롱노트 몸통 · 빛 · 히트 이펙트 조각
 //  - 경고 아이콘 (⚠)
 //  처음 쓸 때 한 번만 만들고 계속 재사용한다.
 // ============================================================
 public static class NoteArt
 {
-    public static readonly Color ArrowRightColor = new Color(0.55f, 0.90f, 1.00f, 1f);  // >>> 밝은 파랑
-    public static readonly Color ArrowLeftColor = new Color(1.00f, 0.90f, 0.42f, 1f);   // <<< 밝은 노랑
-    public static readonly Color AreaColor = new Color(0.62f, 0.86f, 1.00f, 1f);        // (예전) 영역 사선 무늬 색 — 지금은 아래 검은 계열 사용
-
-    // 영역: 검은 판 + 회색 사선 + 밝은 흰 테두리 (어두운 레인 위에서도 경계가 또렷하게)
-    public static readonly Color AreaBase = new Color(0.006f, 0.007f, 0.010f, 0.94f);    // 영역 바탕 (거의 검정)
-    public static readonly Color AreaStripe = new Color(0.62f, 0.65f, 0.70f, 0.42f);     // 사선 무늬 (회색)
-    public static readonly Color AreaEdge = new Color(1f, 1f, 1f, 0.92f);                // 옆 테두리 · 시작/끝선
-    public static readonly Color AreaEdgeGlow = new Color(1f, 1f, 1f, 0.16f);            // 테두리 안쪽으로 번지는 빛
-    public const float AreaEdgeWidth = 0.045f;
-    public const float AreaEdgeGlowWidth = 0.20f;
-
-    // ----- 노트 모양 (SIMPLE · SIMPLE-DIVERSE · 영역 에디터 공통) -----
+    // ----- 노트 모양 (SIMPLE · SIMPLE-DIVERSE · 에디터 공통) -----
     public const float NoteGlowPad = 0.05f;    // 노트 바깥 빛 여백 (월드 유닛, 위아래 · 좌우 각각) = 10px / PPU 200
 
-    public static Color ArrowColor(int type) { return type == NoteTypes.ArrowLeft ? ArrowLeftColor : ArrowRightColor; }
-
-    // 드래그 노트: 연한 노란색 (크림빛 — <<< 화살표의 진한 노랑과 구분되게 채도를 낮춤)
+    // 드래그 노트: 연한 노란색 (크림빛)
     public static readonly Color DragColor = new Color(1.00f, 0.95f, 0.66f, 1f);
     public const float DragHeightRatio = 0.58f;   // 드래그 노트 두께 = 일반 노트의 58% (얇은 레일 모양)
 
     private static Sprite dragGem, dragTrail;
-    private static Sprite arrow, glow, stripe, warn, rounded, white, face, outline, longBody, hGrad, diamond, beam, star, tailCap, hBell;
+    private static Sprite glow, warn, rounded, white, face, outline, longBody, hGrad, diamond, beam, star, tailCap, hBell;
 
     // 롱노트 끝: 얇은 빛나는 막대 (흰색 → 레인 색). 위가 밝고 아래로 살짝 어두움 + 바깥 빛 (TailGlowPad 만큼 크게)
     public const float TailGlowPad = 0.04f;
@@ -219,7 +204,7 @@ public static class NoteArt
         }
     }
 
-    // 가로 그라데이션: 왼쪽 진함 → 오른쪽 투명 (피벗 왼쪽 가운데). 영역 테두리 안쪽 빛
+    // 가로 그라데이션: 왼쪽 진함 → 오른쪽 투명 (피벗 왼쪽 가운데)
     public static Sprite HGradientSprite
     {
         get
@@ -382,42 +367,6 @@ public static class NoteArt
         }
     }
 
-    // >>> (오른쪽 방향, 흰색). 왼쪽은 가로 배율을 음수로 뒤집어 그린다
-    public static Sprite ArrowSprite
-    {
-        get
-        {
-            if (arrow != null) return arrow;
-            const int W = 192, H = 64;
-            Texture2D tex = NewTex(W, H);
-            Color32[] px = new Color32[W * H];
-            float half = 13f;          // 화살표 꺾임의 세로 반폭 (픽셀)
-            float thick = 4.2f;        // 선 굵기의 절반
-            for (int y = 0; y < H; y++)
-            for (int x = 0; x < W; x++)
-            {
-                float best = 999f;
-                for (int i = 0; i < 3; i++)
-                {
-                    float cx = 44f + i * 52f;              // 각 화살표의 꼭짓점
-                    Vector2 tip = new Vector2(cx + 10f, H * 0.5f);
-                    Vector2 a = new Vector2(cx - 12f, H * 0.5f + half + 8f);
-                    Vector2 b = new Vector2(cx - 12f, H * 0.5f - half - 8f);
-                    best = Mathf.Min(best, SegDist(new Vector2(x + 0.5f, y + 0.5f), a, tip));
-                    best = Mathf.Min(best, SegDist(new Vector2(x + 0.5f, y + 0.5f), b, tip));
-                }
-                float core = 1f - Mathf.Clamp01((best - thick) / 1.4f);      // 선 (부드러운 가장자리)
-                float halo = Mathf.Exp(-Mathf.Max(0f, best - thick) / 5f) * 0.45f; // 은은한 빛
-                float aOut = Mathf.Clamp01(Mathf.Max(core, halo));
-                px[y * W + x] = new Color32(255, 255, 255, (byte)(aOut * 255f));
-            }
-            tex.SetPixels32(px); tex.Apply();
-            arrow = Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 200f, 0, SpriteMeshType.FullRect);
-            arrow.name = "ArrowNote";
-            return arrow;
-        }
-    }
-
     // 둥글게 퍼지는 빛 (가운데가 밝고 바깥으로 사라짐)
     public static Sprite GlowSprite
     {
@@ -440,32 +389,6 @@ public static class NoteArt
             glow = Sprite.Create(tex, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), 64f, 0, SpriteMeshType.FullRect);
             glow.name = "NoteGlow";
             return glow;
-        }
-    }
-
-    // 영역 배경: 45도 사선 무늬 (반복 타일, SpriteDrawMode.Tiled 로 그림). 한 칸 = 0.32 월드 유닛
-    public static Sprite AreaStripeSprite
-    {
-        get
-        {
-            if (stripe != null) return stripe;
-            const int S = 64;
-            Texture2D tex = NewTex(S, S);
-            tex.wrapMode = TextureWrapMode.Repeat;
-            Color32[] px = new Color32[S * S];
-            for (int y = 0; y < S; y++)
-            for (int x = 0; x < S; x++)
-            {
-                // 한 타일에 사선 2줄 (이어 붙였을 때 끊기지 않도록 주기 32px)
-                float d = Mathf.Repeat(x + y, 32f);
-                float line = Mathf.Clamp01(1f - Mathf.Abs(d - 8f) / 5.5f);     // 사선 (가장자리 부드럽게)
-                float a = 0.16f + 0.42f * line;
-                px[y * S + x] = new Color32(255, 255, 255, (byte)(a * 255f));
-            }
-            tex.SetPixels32(px); tex.Apply();
-            stripe = Sprite.Create(tex, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), 200f, 0, SpriteMeshType.FullRect);
-            stripe.name = "AreaStripe";
-            return stripe;
         }
     }
 

@@ -182,7 +182,7 @@ public class ResultScreen : MonoBehaviour
         Image bgBase = SettingsUIKit.Img("BgBase", root, new Color(0.035f, 0.04f, 0.055f, 1f));
         SettingsUIKit.Stretch(bgBase.rectTransform);
 
-        Sprite bg = Resources.Load<Sprite>("Sprites/blurimg/" + r.SongId);
+        Sprite bg = BackgroundBlur.Get(SongArt.Load("Sprites/blurimg", r.SongId, r.LevelId));   // SPECIAL 이면 {곡ID}_4 (없으면 기본), 원본 → 흐리게
         if (bg != null)
         {
             Image bgImg = SettingsUIKit.Img("Background", root, Color.white);
@@ -225,7 +225,7 @@ public class ResultScreen : MonoBehaviour
         Box(mask.rectTransform, 160, 200, 480, 480);
         Image jacket = SettingsUIKit.Img("Jacket", mask.rectTransform, Color.white);
         SettingsUIKit.Stretch(jacket.rectTransform);
-        Sprite js = Resources.Load<Sprite>("Sprites/squareimg/" + r.SongId);
+        Sprite js = SongArt.Load("Sprites/squareimg", r.SongId, r.LevelId);     // SPECIAL 이면 {곡ID}_4 (없으면 기본)
         if (js != null) jacket.sprite = js;
         else jacket.color = new Color(0.12f, 0.13f, 0.17f, 1f);
         if (clearKind == 0) jacket.color = new Color(0.6f, 0.6f, 0.6f, 1f); // FAILED: 어둡게
@@ -233,7 +233,7 @@ public class ResultScreen : MonoBehaviour
         // 난이도 (이름만 난이도 색)  + PRACTICE 모드면 바로 옆에 [⟳ PRACTICE]
         Color dc = DifficultyHelper.GetColor(r.LevelId);
         string diff = string.IsNullOrEmpty(r.DifficultyName) ? DifficultyHelper.GetName(r.LevelId) : r.DifficultyName;
-        string diffStr = "<color=#" + ColorUtility.ToHtmlStringRGB(dc) + ">" + diff + "</color>  " + SongRowUI.FormatDifficulty(r.DifficultyValue);
+        string diffStr = DifficultyHelper.ColoredText(r.LevelId, diff) + "  " + SongRowUI.FormatDifficulty(r.DifficultyValue);   // SPECIAL 은 솜사탕 그라데이션
         TextMeshProUGUI dt = T(g, diffStr, 20, TextAlignmentOptions.MidlineLeft, TextMain, fonts.difficulty != null ? fonts.difficulty : fonts.info, FontStyles.Bold);
         dt.characterSpacing = 4f;
         Box(dt.rectTransform, 160, 712, 480, 30);
@@ -253,29 +253,22 @@ public class ResultScreen : MonoBehaviour
         Box(comp.rectTransform, 160, 804, 480, 32);
         Shrink(comp, 0.7f);
 
-        // 게임 모드: 작곡가 아래 (모드가 없으면 표시 안 함)
-        //   MODE ─────────────────────────────── 240%      ← 머리줄: 이름표 + 가는 선 + 최종 점수 배율
-        //   ┃[◎] HARD   ┃[≡] SHADOW  ┃[◇] PERF..      ← 모드 칩: 왼쪽 색 막대 + 아이콘 + 이름 / 그 모드의 배율
-        //      135%        175%         200%
+        // 게임 모드: 화면 아래쪽 띠 (오른쪽 [CONTINUE] [RETRY] 버튼과 같은 높이, 그 왼쪽 넓은 영역 — 모드가 없으면 표시 안 함)
+        //   MODE ───────────────────────────────────────────────────────────────────   ← 머리줄 (모드만, 배율은 점수 옆 [×] 아이콘)
+        //   ┃[◎] HARD JUDGEMENT     ┃[≡] SHADOW            ┃[◇] PERFECTIONIST        ← 모드 칩 (넓게)
+        //          135%                   150%                   195%
         if (r.Modes != null && r.Modes.Length > 0)
         {
-            const float X0 = 160f, Wd = 480f, HeadY = 856f, ChipY = 884f, ChipH = 46f, ChipGap = 8f, Icon = 30f;
+            const float X0 = 160f, Wd = 1120f, HeadY = 884f, ChipY = 914f, ChipH = 60f, ChipGap = 12f, Icon = 40f;
             var list = new List<GameMode>();
             foreach (int m in r.Modes) if (m >= 0 && m < GameModes.All.Length) list.Add((GameMode)m);
 
             // 머리줄
-            TextMeshProUGUI head = T(g, "MODE", 14, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
+            TextMeshProUGUI head = T(g, "MODE", 15, TextAlignmentOptions.MidlineLeft, TextDim, fonts.label, FontStyles.Bold);
             head.characterSpacing = 8f;
             Box(head.rectTransform, X0, HeadY, 100f, 20f);
-            double k = r.ScoreMultiplier;
-            string kc = k > 1.0001 ? "FFFFFF" : "FFFFFF99";
-            string total = "<color=#" + kc + ">" + GameModes.Percent(k) + "</color>";   // 최종 배율만 (예: 240%)
-            TextMeshProUGUI tt = T(g, total, 17, TextAlignmentOptions.MidlineRight, TextMain, fonts.label, FontStyles.Bold);
-            tt.characterSpacing = 3f;
-            Box(tt.rectTransform, X0 + Wd - 200f, HeadY - 2f, 200f, 24f);
             float headW = head.GetPreferredValues("MODE").x + 14f;
-            float totalW = tt.GetPreferredValues(total).x + 14f;
-            Line(g, X0 + headW, HeadY + 10f, Mathf.Max(10f, Wd - headW - totalW));
+            Line(g, X0 + headW, HeadY + 10f, Mathf.Max(10f, Wd - headW));
 
             // 모드 칩 (최대 3개, 같은 폭)
             float cw = (Wd - ChipGap * (GameModes.MaxSelected - 1)) / GameModes.MaxSelected;
@@ -284,27 +277,27 @@ public class ResultScreen : MonoBehaviour
                 GameModeInfo info = GameModes.Info(list[i]);
                 float cx = X0 + i * (cw + ChipGap);
                 Image chip = SettingsUIKit.Img("ModeChip", g, Color.Lerp(new Color(0.06f, 0.065f, 0.085f, 1f), info.Color, 0.12f));
-                chip.sprite = roundSprite; chip.type = Image.Type.Sliced; chip.pixelsPerUnitMultiplier = 32f / 8f;
+                chip.sprite = roundSprite; chip.type = Image.Type.Sliced; chip.pixelsPerUnitMultiplier = 32f / 10f;
                 Box(chip.rectTransform, cx, ChipY, cw, ChipH);
                 // 왼쪽 색 막대: 칩과 같은 높이, 칩의 둥근 모서리 모양대로 잘림 (칩 자체를 마스크로)
                 chip.gameObject.AddComponent<Mask>().showMaskGraphic = true;
                 Image bar = SettingsUIKit.Img("Accent", chip.rectTransform, info.Color);
                 bar.rectTransform.anchorMin = new Vector2(0f, 0f); bar.rectTransform.anchorMax = new Vector2(0f, 1f);
-                bar.rectTransform.offsetMin = new Vector2(0f, 0f); bar.rectTransform.offsetMax = new Vector2(4f, 0f);
+                bar.rectTransform.offsetMin = new Vector2(0f, 0f); bar.rectTransform.offsetMax = new Vector2(5f, 0f);
 
                 RectTransform b = GameModes.CreateBadge(chip.rectTransform, list[i], Icon);
                 b.anchorMin = b.anchorMax = new Vector2(0f, 0.5f);
                 b.pivot = new Vector2(0f, 0.5f);
-                b.anchoredPosition = new Vector2(10f, 0f);
+                b.anchoredPosition = new Vector2(14f, 0f);
 
-                TextMeshProUGUI nm = T(chip.rectTransform, info.Name, 14, TextAlignmentOptions.BottomLeft, TextMain, fonts.label, FontStyles.Bold);
-                nm.characterSpacing = 2f;
-                SettingsUIKit.Place(nm.rectTransform, new Vector2(0f, 0.5f), new Vector2(1f, 1f), new Vector2(Icon + 18f, 0f), new Vector2(-6f, -3f));
+                TextMeshProUGUI nm = T(chip.rectTransform, info.Name, 18, TextAlignmentOptions.BottomLeft, TextMain, fonts.label, FontStyles.Bold);
+                nm.characterSpacing = 3f;
+                SettingsUIKit.Place(nm.rectTransform, new Vector2(0f, 0.5f), new Vector2(1f, 1f), new Vector2(Icon + 26f, 1f), new Vector2(-10f, -6f));
                 Shrink(nm, 0.65f);
                 Color pc = info.Multiplier > 1.0001 ? info.Color : new Color(1f, 1f, 1f, 0.45f);
-                TextMeshProUGUI pv = T(chip.rectTransform, GameModes.Percent(info.Multiplier), 12, TextAlignmentOptions.TopLeft, pc, fonts.label, FontStyles.Bold);
+                TextMeshProUGUI pv = T(chip.rectTransform, GameModes.Percent(info.Multiplier), 15, TextAlignmentOptions.TopLeft, pc, fonts.label, FontStyles.Bold);
                 pv.characterSpacing = 2f;
-                SettingsUIKit.Place(pv.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0.5f), new Vector2(Icon + 18f, 3f), new Vector2(-6f, 0f));
+                SettingsUIKit.Place(pv.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0.5f), new Vector2(Icon + 26f, 6f), new Vector2(-10f, -1f));
             }
         }
     }
@@ -347,14 +340,31 @@ public class ResultScreen : MonoBehaviour
         Box(sl.rectTransform, X, 268, 120, 24);
         scoreText = T(g1, Mono("0"), 110, TextAlignmentOptions.MidlineLeft, TextMain, fonts.score != null ? fonts.score : fonts.number, FontStyles.Bold);
         Box(scoreText.rectTransform, X - 6, 290, W - BestW - 40, 124);
+        float labelEnd = X + sl.GetPreferredValues("SCORE").x + 16f;    // SCORE 글자 오른쪽 (배지들이 차례로 붙음)
         if (r.IsMidStart)
         {
             // PRACTICE 모드: 점수는 0 (GameManager 가 0 으로 넘김), SCORE 글자 옆에 [⊘ NOT SAVED]
-            float sw = sl.GetPreferredValues("SCORE").x;
             RectTransform ns = PracticeBadge.NotSaved(g1, 24f, fonts.label);
             ns.anchorMin = ns.anchorMax = new Vector2(0f, 1f);
             ns.pivot = new Vector2(0f, 0.5f);
-            ns.anchoredPosition = new Vector2(X + sw + 16f, -(268f + 12f));
+            ns.anchoredPosition = new Vector2(labelEnd, -(268f + 12f));
+            labelEnd += ns.sizeDelta.x + 12f;
+        }
+        // 게임 모드 점수 배율: 모드 아이콘과 같은 모양의 상자들
+        //  흰 상자   : 모드 배율 + MODE RANDOM 의 A 몫(조합 배율 보너스)  → 최대 420% (400% + 20%p)
+        //  솜사탕 상자: MODE RANDOM 의 B 몫(특별 모드 가산 0 ~ 10%p)  — MODE RANDOM 판에만
+        //  예) [410%] [+7%p]  → 최종 417%
+        if (r.Modes != null && r.Modes.Length > 0)
+        {
+            bool rnd = r.RandomBonus > 0.0001;
+            var picked = new List<GameMode>();
+            foreach (int m in r.Modes) if (m >= 0 && m < GameModes.All.Length) picked.Add((GameMode)m);
+            double b = rnd ? Math.Min(r.RandomBonus, GameModes.RandomSpecialBonus(picked)) : 0.0;
+            double whiteK = Math.Min(GameModes.MaxMultiplier + GameModes.RandomBonusComboMax, r.ScoreMultiplier - b);
+            float x = labelEnd;
+            x += Pill(g1, x, 266f, 28f, null, GameModes.Percent(whiteK), new Color(0.92f, 0.94f, 1f, 1f), false) + 8f;
+            if (rnd)
+                Pill(g1, x, 266f, 28f, null, GameModes.BonusText(b), DifficultyHelper.SpecialAt(0.15f), true);
         }
 
         // 최고 점수 묶음 (오른쪽): 세로 구분선 · BEST · 이전 최고 점수 · 이번 점수와의 차이 / NEW BEST
@@ -634,6 +644,42 @@ public class ResultScreen : MonoBehaviour
         cg.alpha = 0f;
         reveals.Add(new Reveal { cg = cg, rt = g, offset = offset, start = start, dur = dur });
         return g;
+    }
+
+    // 모드 아이콘과 같은 모양의 둥근 상자 안에 [그림] 글자 — 폭은 내용에 맞춤, 폭을 돌려줌
+    //  cotton = true : 연한 솜사탕 색 (테두리 · 바탕이 분홍 → 라벤더 → 하늘, 글자도 그라데이션)
+    private float Pill(RectTransform parent, float x, float y, float h, Sprite glyph, string text, Color c, bool cotton)
+    {
+        const float Pad = 10f, Gap = 6f;
+        float g = glyph != null ? h * 0.62f : 0f;
+        TextMeshProUGUI t = T(parent, cotton ? DifficultyHelper.SpecialGradientText(text) : text, 17, TextAlignmentOptions.MidlineLeft, cotton ? Color.white : c, fonts.label, FontStyles.Bold);
+        t.characterSpacing = 2f;
+        float tw = t.GetPreferredValues(t.text).x + 2f;
+        float w = Pad + (g > 0f ? g + Gap : 0f) + tw + Pad;
+
+        Image ring = SettingsUIKit.Img("PillRing", parent, new Color(c.r, c.g, c.b, cotton ? 0.75f : 0.55f));
+        ring.sprite = GameModes.BadgeSprite; ring.type = Image.Type.Sliced; ring.pixelsPerUnitMultiplier = 16f / 7f;
+        if (cotton) { ring.sprite = SpecialArt.Tint(GameModes.BadgeSprite); ring.color = new Color(1f, 1f, 1f, 0.8f); }
+        Box(ring.rectTransform, x, y, w, h);
+        Image bg = SettingsUIKit.Img("PillBg", ring.rectTransform, cotton ? new Color(0.13f, 0.10f, 0.16f, 1f)
+                                                                           : new Color(c.r * 0.12f + 0.02f, c.g * 0.12f + 0.02f, c.b * 0.12f + 0.035f, 1f));
+        bg.sprite = GameModes.BadgeSprite; bg.type = Image.Type.Sliced; bg.pixelsPerUnitMultiplier = 16f / 6f;
+        SettingsUIKit.Stretch(bg.rectTransform);
+        bg.rectTransform.offsetMin = new Vector2(1.5f, 1.5f); bg.rectTransform.offsetMax = new Vector2(-1.5f, -1.5f);
+        if (glyph != null)
+        {
+            Image gi = SettingsUIKit.Img("Glyph", ring.rectTransform, c);
+            gi.sprite = glyph; gi.preserveAspect = true;
+            gi.rectTransform.anchorMin = gi.rectTransform.anchorMax = gi.rectTransform.pivot = new Vector2(0f, 0.5f);
+            gi.rectTransform.anchoredPosition = new Vector2(Pad - 2f, 0f);
+            gi.rectTransform.sizeDelta = new Vector2(g, g);
+        }
+        t.transform.SetParent(ring.transform, false);
+        RectTransform tr = t.rectTransform;
+        tr.anchorMin = tr.anchorMax = tr.pivot = new Vector2(0f, 0.5f);
+        tr.anchoredPosition = new Vector2(Pad + (g > 0f ? g + Gap : 0f), 0f);
+        tr.sizeDelta = new Vector2(tw, h);
+        return w;
     }
 
     // 무대 왼쪽 위 기준 (x, y 는 아래로 +)
