@@ -691,6 +691,7 @@ MonoBehaviour:
   headerInsaneLabel: {fileID: 2090876300}
   indicatorMoveDuration: 0.25
   lockedStatusPanel: {fileID: 935151050}
+  useCodeLockedOverlay: 1
   songListViewport: {fileID: 232751607}
   songRowPrefab: {fileID: 7883862138358111084, guid: 278d0b7f3c7f37a45954efb40c01efd7, type: 3}
   specialRowPrefab: {fileID: 7883862138358111084, guid: 160c2a7cbc295e843b9aca8375cb9a1e, type: 3}
@@ -719,6 +720,8 @@ MonoBehaviour:
     value: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}
     options: {fileID: 11400000, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
     status: {fileID: 11400000, guid: 63a8be21d80b01147a5c0c412078b22e, type: 2}
+    difficultySize: 40
+    difficultyScaleY: 1.05
   speedText: {fileID: 345743938}
   mvStatusText: {fileID: 71743974}
   mvIconImg: {fileID: 0}
@@ -733,9 +736,10 @@ MonoBehaviour:
   previewFallbackStartRatio: 0.35
   showDetailPanel: 1
   detailFont: {fileID: 11400000, guid: 374c5492305579b499304268efdfe845, type: 2}
+  modeTitleFont: {fileID: 0}
+  modeTitleFontSize: 42
   listSwitchSlide: 48
   listSwitchDuration: 0.28
-  specialHeaderTextColor: {r: 0.12, g: 0.1, b: 0.2, a: 1}
   settingsFont: {fileID: 0}
   settingsBoldFont: {fileID: 0}
   dialogFont: {fileID: 11400000, guid: 29124a0b0ddd8ae4d845d80c59113cb2, type: 2}

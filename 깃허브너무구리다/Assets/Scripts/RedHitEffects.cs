@@ -60,7 +60,7 @@ public class RedHitEffects : MonoBehaviour
         SceneManager.MoveGameObjectToScene(go, manager.gameObject.scene); // 게임 씬과 함께 정리
         RedHitEffects fx = go.AddComponent<RedHitEffects>();
         fx.gm = manager;
-        fx.order = SimpleGameSkin.Active != null ? 6 : 95;
+        fx.order = SimpleGameSkin.Active != null ? 6 + NoteLayer.EffectLift : 95;   // 5층 노트보다 위
         fx.MakeSprites();
         for (int i = 0; i < 8; i++) fx.bursts.Add(new Burst { flash = fx.Piece("RedFlash", fx.pixel), band = fx.Piece("RedBand", fx.vBell), col = fx.Piece("RedColumn", fx.column) });
         for (int i = 0; i < 70; i++) fx.embers.Add(new Ember { sr = fx.Piece("RedEmber", fx.pixel) });

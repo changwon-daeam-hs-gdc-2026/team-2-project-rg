@@ -60,6 +60,7 @@ public class SimpleGameSkin : MonoBehaviour
     private static readonly Color OuterLane = new Color(0.95f, 0.97f, 1f, 1f);     // 1, 4번 레인
     private static readonly Color InnerLane = new Color(0.36f, 0.88f, 0.90f, 1f);  // 2, 3번 레인 (#5ce1e6)
     private static readonly Color RedNote = new Color(1f, 0.38f, 0.45f, 1f);
+    public static Color RedColor { get { return RedNote; } }
     private static readonly Color TextSub = new Color(1f, 1f, 1f, 0.55f);
 
     public static Color LaneColor(int lane) { return (lane == 0 || lane == 3) ? OuterLane : InnerLane; }
@@ -722,7 +723,7 @@ public class SimpleGameSkin : MonoBehaviour
             sr.sprite = NoteArt.NoteFaceSprite;       // 입체 노트 앞면 + 바깥 빛
             sr.drawMode = SpriteDrawMode.Sliced;
             sr.size = new Vector2(laneWidth * 0.98f + NoteArt.NoteGlowPad * 2f, 0.22f + NoteArt.NoteGlowPad * 2f);
-            sr.sortingOrder = 8;
+            sr.sortingOrder = 8 + NoteLayer.EffectLift;   // 모든 층 노트 위
             sr.enabled = false;
             go.transform.position = new Vector3(xs[i], y, 0f);
             holdFlares[i] = sr;
@@ -733,7 +734,7 @@ public class SimpleGameSkin : MonoBehaviour
             go.transform.SetParent(worldRoot, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = PixelSprite;
-            sr.sortingOrder = 9;
+            sr.sortingOrder = 9 + NoteLayer.EffectLift;
             sr.enabled = false;
             holdSparks.Add(new HoldSpark { sr = sr, t = 1f, life = 1f });  // 비어 있는 입자
         }
@@ -743,6 +744,7 @@ public class SimpleGameSkin : MonoBehaviour
         {
             Burst b = new Burst();
             b.beam = EffectRenderer("HitBeam" + i, NoteArt.BeamSprite, -15);
+            // (순서 6 이상은 EffectRenderer 가 NoteLayer.EffectLift 만큼 올림 → 5층 노트보다 위)
             b.ring = EffectRenderer("HitRing" + i, NoteArt.GlowSprite, 6);
             b.core = EffectRenderer("HitCore" + i, NoteSprite, 7);
             b.core.drawMode = SpriteDrawMode.Sliced;
@@ -1173,7 +1175,7 @@ public class SimpleGameSkin : MonoBehaviour
         go.transform.SetParent(worldRoot, false);
         SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
         sr.sprite = sprite;
-        sr.sortingOrder = order;
+        sr.sortingOrder = order >= 6 ? order + NoteLayer.EffectLift : order;   // 노트(5층까지) 위에 그려야 하는 이펙트
         sr.enabled = false;
         return sr;
     }
@@ -1993,7 +1995,7 @@ public class SimpleGameSkin : MonoBehaviour
             {
                 SpeedNotice n = list[speedNoticeIndex++];
                 if (!playing) continue;
-                int L = n.Layer == 1 ? 1 : 2;   // 0(두 층 모두)은 2층 기준
+                int L = n.Layer >= NoteLayer.Min && n.Layer <= NoteLayer.Max ? n.Layer : NoteLayer.Top;   // 0(모든 층)은 2층 기준
                 double from = gm.GetSpeedMultiplier(L, n.Time - 0.0005);
                 double to = gm.GetSpeedMultiplier(L, n.Time + 0.0005);
                 if (from > 0 && to > 0 && Math.Abs(to - from) > 1e-6) ShowSpeedChange(from, to);

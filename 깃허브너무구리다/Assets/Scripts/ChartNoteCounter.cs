@@ -128,9 +128,9 @@ public static class ChartNoteCounter
                 {
                     for (int lane = 0; lane < lanes.Length && lane < 4; lane++)
                     {
-                        NoteCellParser.SplitCell(lanes[lane], out string top, out string bottom);
-                        AddToken(top, lane, t, NoteLayer.Top, notes, byLane);
-                        AddToken(bottom, lane, t, NoteLayer.Bottom, notes, byLane);
+                        string[] byLayer = NoteCellParser.SplitLayers(lanes[lane]);   // 1 ~ 5층
+                        for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++)
+                            if (byLayer[L] != null) AddToken(byLayer[L], lane, t, L, notes, byLane);
                     }
                 }
             }
@@ -149,12 +149,12 @@ public static class ChartNoteCounter
         for (int lane = 0; lane < 4; lane++)
         {
             var sorted = byLane[lane].OrderBy(n => n.Time).ThenByDescending(n => n.Layer).ToList();
-            Note[] last = new Note[3];
+            Note[] last = new Note[NoteLayer.Max + 1];
             foreach (var n in sorted)
             {
                 if (n.Lane != lane) continue;          // 넓은 노트(RED · 넓은 일반)는 기준 레인에서만 연결
                 if (n.SlideId > 0) continue;            // 슬라이드는 위에서 따로 셈
-                int ly = Math.Max(1, Math.Min(2, n.Layer));
+                int ly = NoteLayer.Clamp(n.Layer);
                 if (NoteTypes.IsLongHead(n.Type)) last[ly] = n;
                 else if ((n.Type == 3 || n.Type == 13) && last[ly] != null)
                 {

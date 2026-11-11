@@ -183,7 +183,7 @@ public class GameInfoHud : MonoBehaviour
         progressFill.rectTransform.offsetMax = Vector2.zero;
 
         // ---- 왼쪽 위: 곡 정보 ----
-        titleText = Text(song != null ? (song.Name ?? "") + (song.SubName ?? "") : "", 34, TextAlignmentOptions.TopLeft, Color.white, FontStyles.Bold, F.title);
+        titleText = Text(song != null ? (song.Name ?? "") : "",   /* 게임 화면은 곡명만 (부제 없음) */ 34, TextAlignmentOptions.TopLeft, Color.white, FontStyles.Bold, F.title);
         Place(titleText.rectTransform, new Vector2(0f, 1f), Margin, 28f, 760f, 46f);
         AutoShrink(titleText, 0.62f);
         composerText = Text(song != null ? song.Composer ?? "" : "", 19, TextAlignmentOptions.TopLeft, TextSub, FontStyles.Normal, F.info);
@@ -414,7 +414,7 @@ public class GameInfoHud : MonoBehaviour
         // ---- 가운데 탭: 곡 제목 + 진행 막대 ----
         Image ct = Tab(tabCenter, dark, new Vector2(0.5f, 1f), 0f, 760f, BandH + 10f);
         titleTab = ct.rectTransform;
-        titleText = Text(song != null ? (song.Name ?? "") + (song.SubName ?? "") : "", 28, TextAlignmentOptions.Center, Color.white, FontStyles.Bold, F.title);
+        titleText = Text(song != null ? (song.Name ?? "") : "",   /* 게임 화면은 곡명만 (부제 없음) */ 28, TextAlignmentOptions.Center, Color.white, FontStyles.Bold, F.title);
         titleText.transform.SetParent(ct.transform, false);
         Place(titleText.rectTransform, new Vector2(0.5f, 1f), 0f, 6f, 600f, 40f);
         AutoShrink(titleText, 0.6f);

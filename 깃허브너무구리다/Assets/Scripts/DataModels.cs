@@ -38,6 +38,7 @@ public class SettingsData
     public bool ShowHitErrorBar = true; // 화면 아래 판정 오차 그래프 (osu! Hit Error Meter 처럼)
     public int EffectQuality = 1;      // 히트 이펙트: 0 = 낮음 (가벼움), 1 = 높음
     public bool ShowJustPerfect = false; // ±20ms 안의 PERFECT 를 'JUST' 로 표시 (끄면 그냥 PERFECT)
+    public int SongNameLanguage = 0;   // 곡명 표기: 0 = 원어 (Name_Original …), 1 = 영어 (Name_English …)
     public string[] LaneKeys = { "D", "F", "J", "K" }; // UnityEngine.InputSystem.Key 이름
     // 시작 타임 조정 (초, 0 = 처음부터). 예) 109.2 → 음악을 109.2초부터 틀고, 그 뒤 2초 안의 노트는 빼고 111.2초 노트부터 내려옴
     public double StartTime = 0.0;
@@ -61,8 +62,20 @@ public class SettingsData
 public class SongData
 {
     public int Id;
+    // 화면에 쓰는 곡명 · 부제 (아래 원어 / 영어 칸이 있으면 설정 > 곡명 표기에 따라 그 값으로 채워짐, ApplyNameLanguage)
     public string Name;
     public string SubName; 
+    // 곡명 표기 (원어 / 영어) — songs.json 이 아니라 따로 있는 songs_Name.json 에서 같은 Id 로 채워짐 (SongNames.Fill)
+    //  부제가 없으면 "" (빈칸). SPECIAL 도 마찬가지 (빈칸이면 기본 곡명 그대로)
+    //  고른 언어 칸이 비어 있으면 다른 언어 → 그것도 없으면 songs.json 의 Name · SubName 을 씀
+    public string Name_Original;
+    public string SubName_Original;
+    public string SPECIAL_Name_Original;
+    public string SPECIAL_SubName_Original;
+    public string Name_English;
+    public string SubName_English;
+    public string SPECIAL_Name_English;
+    public string SPECIAL_SubName_English;
     public string Difficulty_EASY;
     public string Difficulty_HARD;
     public string Difficulty_INSANE;
@@ -108,6 +121,47 @@ public class SongData
     //  "MvWarning": "default"  → 기본 문구 (폭력적인 장면, 유혈 및 신체 훼손 …)
     //  "MvWarning": "직접 쓴 문구\n두 번째 줄"  → 그 문구 그대로 (\n = 줄바꿈)
     public string MvWarning;
+
+    // ---- 곡명 표기 적용 (원어 / 영어) ----
+    [NonSerialized] private bool legacySaved;
+    [NonSerialized] private string legacyName, legacySub, legacySpName, legacySpSub;
+
+    public static bool EnglishNames { get { return SettingsStore.Current != null && SettingsStore.Current.SongNameLanguage == 1; } }
+
+    // Name · SubName · SPECIAL_Name · SPECIAL_SubName 을 고른 언어로 채움 (몇 번 불러도 됨 — 예전 칸 값은 처음에 기억해 둠)
+    public void ApplyNameLanguage(bool english)
+    {
+        SongNames.Fill(this);   // songs_Name.json 의 원어 / 영어 곡명 (처음 한 번)
+        if (!legacySaved)
+        {
+            legacySaved = true;
+            legacyName = Name; legacySub = SubName; legacySpName = SPECIAL_Name; legacySpSub = SPECIAL_SubName;
+        }
+        PickName(english, Name_Original, SubName_Original, Name_English, SubName_English, legacyName, legacySub, out Name, out SubName);
+        PickName(english, SPECIAL_Name_Original, SPECIAL_SubName_Original, SPECIAL_Name_English, SPECIAL_SubName_English,
+                 legacySpName, legacySpSub, out SPECIAL_Name, out SPECIAL_SubName);
+    }
+
+    // 고른 언어 곡명이 있으면 그 곡명 + 그 부제(없으면 ""), 없으면 다른 언어, 그것도 없으면 예전 칸
+    private static void PickName(bool english, string nO, string sO, string nE, string sE, string legacyN, string legacyS, out string name, out string sub)
+    {
+        string n1 = english ? nE : nO, s1 = english ? sE : sO;
+        string n2 = english ? nO : nE, s2 = english ? sO : sE;
+        if (!string.IsNullOrEmpty(n1)) { name = n1; sub = s1 ?? ""; return; }
+        if (!string.IsNullOrEmpty(n2)) { name = n2; sub = s2 ?? ""; return; }
+        name = legacyN;
+        // 곡명은 없는데 부제만 언어별로 적힌 경우 (SPECIAL 부제만 다른 경우 등)
+        string sPick = !string.IsNullOrEmpty(s1) ? s1 : !string.IsNullOrEmpty(s2) ? s2 : null;
+        sub = sPick ?? legacyS;
+    }
+
+    // 목록 전체에 지금 설정 언어 적용
+    public static void ApplyNameLanguage(IEnumerable<SongData> songs)
+    {
+        if (songs == null) return;
+        bool en = EnglishNames;
+        foreach (var s in songs) if (s != null) s.ApplyNameLanguage(en);
+    }
 
     // 이 난이도로 보여 줄 곡 정보: SPECIAL(4) 이면 SPECIAL_Name · SPECIAL_SubName · SPECIAL_Vocal 로 바꾼 복사본, 아니면 그대로
     //  (SPECIAL_Name 이 있으면 부제는 SPECIAL_SubName 만 씀 — 기본 부제가 섞이지 않게)
@@ -637,15 +691,78 @@ public class NoteData
 //   - 괄호 안  "12"   : 1층 (2층에 가려짐)
 //   1층/2층 노트는 서로 롱노트 연결(시작-끝)이 되지 않는다.
 // ============================================================
+// 노트 층 (1 ~ 5층). 위에 그려지는 순서: 5 > 4 > 3 > 2 > 1
+//  층마다 변속(SPEED · 층 지정)을 따로 가질 수 있음. 기본 층 = 2층 (예전 채보의 '위층')
+// ============================================================
+// 곡명 표 (StreamingAssets/data/songs_Name.json) — songs.json 과 따로, 곡명만 담음
+//  [ { "Id": 8, "Name_Original": "東京テディベア", "SubName_Original": "", "SPECIAL_Name_Original": "東京テディベア",
+//      "SPECIAL_SubName_Original": " (Tokino Mary Cover)", "Name_English": "Tokyo Teddy Bear", "SubName_English": "",
+//      "SPECIAL_Name_English": "Tokyo Teddy Bear", "SPECIAL_SubName_English": " (Tokino Mary Cover)" }, ... ]
+//  이 파일이 없거나 곡이 빠져 있으면 songs.json 의 Name · SubName 을 그대로 씀
+// ============================================================
+[Serializable]
+public class SongNameEntry
+{
+    public int Id;
+    public string Name_Original, SubName_Original, SPECIAL_Name_Original, SPECIAL_SubName_Original;
+    public string Name_English, SubName_English, SPECIAL_Name_English, SPECIAL_SubName_English;
+}
+
+public static class SongNames
+{
+    private static Dictionary<int, SongNameEntry> table;
+
+    private static Dictionary<int, SongNameEntry> Table
+    {
+        get
+        {
+            if (table != null) return table;
+            table = new Dictionary<int, SongNameEntry>();
+            try
+            {
+                string path = System.IO.Path.Combine(Application.streamingAssetsPath, "data", "songs_Name.json");
+                if (!System.IO.File.Exists(path)) return table;
+                SongNameEntry[] arr = JsonHelper.FromJson<SongNameEntry>(System.IO.File.ReadAllText(path, System.Text.Encoding.UTF8));
+                if (arr != null) foreach (var e in arr) if (e != null) table[e.Id] = e;
+            }
+            catch (Exception e) { Debug.LogWarning("[SongNames] songs_Name.json 을 읽지 못했습니다: " + e.Message); }
+            return table;
+        }
+    }
+
+    // 다시 읽기 (파일을 고친 뒤)
+    public static void Reload() { table = null; }
+
+    // 이 곡의 원어 / 영어 칸을 songs_Name.json 값으로 채움 (songs.json 에 적힌 값이 있으면 그대로 둠)
+    public static void Fill(SongData s)
+    {
+        if (s == null || !Table.TryGetValue(s.Id, out SongNameEntry e)) return;
+        if (s.Name_Original == null) s.Name_Original = e.Name_Original;
+        if (s.SubName_Original == null) s.SubName_Original = e.SubName_Original;
+        if (s.SPECIAL_Name_Original == null) s.SPECIAL_Name_Original = e.SPECIAL_Name_Original;
+        if (s.SPECIAL_SubName_Original == null) s.SPECIAL_SubName_Original = e.SPECIAL_SubName_Original;
+        if (s.Name_English == null) s.Name_English = e.Name_English;
+        if (s.SubName_English == null) s.SubName_English = e.SubName_English;
+        if (s.SPECIAL_Name_English == null) s.SPECIAL_Name_English = e.SPECIAL_Name_English;
+        if (s.SPECIAL_SubName_English == null) s.SPECIAL_SubName_English = e.SPECIAL_SubName_English;
+    }
+}
+
 public static class NoteLayer
 {
     public const int Bottom = 1;
-    public const int Top = 2;
+    public const int Top = 2;          // 기본 층 (층 표시 없는 노트 · 예전 채보의 위층)
+    public const int Min = 1, Max = 5;
+    public const int Count = 5;
 
-    // SpriteRenderer.sortingOrder : 2층의 모든 요소(몸통 포함)가 1층의 모든 요소보다 위
-    //   1층 몸통 2 < 1층 머리 3 < 2층 몸통 4 < 2층 머리 5
-    public static int HeadOrder(int layer) { return layer == Bottom ? 3 : 5; }
-    public static int BodyOrder(int layer) { return layer == Bottom ? 2 : 4; }
+    public static int Clamp(int layer) { return layer < Min ? Min : layer > Max ? Max : layer; }
+
+    // SpriteRenderer.sortingOrder : 위층의 모든 요소(몸통 포함)가 아래층의 모든 요소보다 위
+    //   층 L: 몸통 2 + (L-1)×3, 머리 = 몸통 + 1, (드래그 보석 = 머리 + 1)
+    //   1층 2 · 3 / 2층 5 · 6 / 3층 8 · 9 / 4층 11 · 12 / 5층 14 · 15  (판정 이펙트는 EffectLift 만큼 올려 그 위)
+    public static int BodyOrder(int layer) { return 2 + (Clamp(layer) - 1) * 3; }
+    public static int HeadOrder(int layer) { return BodyOrder(layer) + 1; }
+    public const int EffectLift = 12;  // 노트 위에 그려야 하는 이펙트(순서 6 이상)에 더하는 값 → 18 이상
 }
 
 public static class NoteCellParser
@@ -653,6 +770,49 @@ public static class NoteCellParser
     // "11_3(12)" -> top = "11_3", bottom = "12"
     // "1"        -> top = "1",    bottom = null
     // "0(2)"     -> top = "0",    bottom = "2"
+    // 한 칸 → 층별 토큰 (인덱스 1 ~ 5, 없으면 null)
+    //  형식: "2층(1층)|토큰@층|토큰@층"   예) "1(2)|11_2@5|1@3"  = 2층 탭, 1층 롱노트 시작, 5층 RED 2칸, 3층 탭
+    //   · 앞부분은 예전과 같은 "2층(1층)" — 예전 채보는 그대로 읽힘
+    //   · 3 ~ 5층(또는 아무 층)은 '|' 뒤에 "토큰@층"
+    public static string[] SplitLayers(string cell)
+    {
+        string[] r = new string[NoteLayer.Max + 1];
+        if (string.IsNullOrWhiteSpace(cell)) return r;
+        string[] parts = cell.Split('|');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            string p = parts[i].Trim();
+            if (p.Length == 0) continue;
+            int at = p.LastIndexOf('@');
+            if (at > 0 && int.TryParse(p.Substring(at + 1).Trim(), out int L) && L >= NoteLayer.Min && L <= NoteLayer.Max)
+            {
+                string tok = p.Substring(0, at).Trim();
+                if (tok.Length > 0 && tok != "0") r[L] = tok;
+                continue;
+            }
+            if (i == 0)
+            {
+                SplitCell(p, out string top, out string bottom);
+                if (!string.IsNullOrEmpty(top) && top != "0") r[NoteLayer.Top] = top;
+                if (!string.IsNullOrEmpty(bottom) && bottom != "0") r[NoteLayer.Bottom] = bottom;
+            }
+        }
+        return r;
+    }
+
+    // 층별 토큰 → 한 칸 (SplitLayers 의 반대). 1 · 2층만 있으면 예전 형식 그대로
+    public static string JoinLayers(string[] byLayer)
+    {
+        string top = byLayer != null && byLayer.Length > NoteLayer.Top ? byLayer[NoteLayer.Top] : null;
+        string bottom = byLayer != null && byLayer.Length > NoteLayer.Bottom ? byLayer[NoteLayer.Bottom] : null;
+        string s = string.IsNullOrEmpty(top) ? "0" : top;
+        if (!string.IsNullOrEmpty(bottom)) s += "(" + bottom + ")";
+        if (byLayer != null)
+            for (int L = 3; L <= NoteLayer.Max && L < byLayer.Length; L++)
+                if (!string.IsNullOrEmpty(byLayer[L])) s += "|" + byLayer[L] + "@" + L;
+        return s;
+    }
+
     public static void SplitCell(string cell, out string top, out string bottom)
     {
         cell = cell == null ? "" : cell.Trim();
@@ -711,7 +871,7 @@ public static class NoteCellParser
         while (end < tail.Length && char.IsDigit(tail[end])) end++;
         if (end > 0) int.TryParse(tail.Substring(0, end), out slideId);
         string c = tail.Substring(end).Trim().ToLowerInvariant();
-        curve = c == "i" ? SlideCurve.EaseIn : c == "o" ? SlideCurve.EaseOut : SlideCurve.Straight;
+        curve = c == "i" ? SlideCurve.EaseIn : c == "o" ? SlideCurve.EaseOut : c == "r" ? SlideCurve.Corner : SlideCurve.Straight;
         return core;
     }
 
@@ -719,7 +879,7 @@ public static class NoteCellParser
     public static string SlideToken(string core, int slideId, int curve)
     {
         if (slideId <= 0) return core;
-        return core + "~" + slideId + (curve == SlideCurve.EaseIn ? "i" : curve == SlideCurve.EaseOut ? "o" : "");
+        return core + "~" + slideId + (curve == SlideCurve.EaseIn ? "i" : curve == SlideCurve.EaseOut ? "o" : curve == SlideCurve.Corner ? "r" : "");
     }
 }
 
@@ -727,12 +887,14 @@ public static class NoteCellParser
 // 슬라이드 (레인을 넘나드는 롱노트)
 //  채보: 롱노트 머리 · 중계점(14) · 끝(3)에 같은 번호를 붙임  예) 2~1  →  14~1i  →  3~1
 //   번호 뒤 글자 = 그 점에서 다음 점까지의 곡선:  (없음) 직선 · i 처음 천천히(ease-in) · o 끝 천천히(ease-out)
+//                                                 · r 직각 (다음 점 시각까지 제자리로 곧게 → 그 순간 옆으로 꺾임)
 //  같은 번호(같은 층)의 점들을 시간 순으로 이음: 처음 = 머리, 마지막 = 끝, 가운데 = 중계점
 //  판정: 판정선에 닿은 지점이 덮는 레인 키 중 하나를 누르고 있어야 함 (옮겨 잡는 순간은 짧게 봐줌)
 // ============================================================
 public static class SlideCurve
 {
-    public const int Straight = 0, EaseIn = 1, EaseOut = 2;
+    public const int Straight = 0, EaseIn = 1, EaseOut = 2, Corner = 3;
+    public const int Count = 4;
     public static float Ease(int curve, float u)
     {
         u = u < 0f ? 0f : u > 1f ? 1f : u;
@@ -740,11 +902,12 @@ public static class SlideCurve
         {
             case EaseIn: return u * u;
             case EaseOut: return 1f - (1f - u) * (1f - u);
+            case Corner: return u >= 1f ? 1f : 0f;       // 끝 순간까지 제자리 → 다음 점에서 직각으로 꺾임
             default: return u;
         }
     }
-    public static string Name(int curve) { return curve == EaseIn ? "IN" : curve == EaseOut ? "OUT" : "LINE"; }
-    public static int Next(int curve) { return (curve + 1) % 3; }
+    public static string Name(int curve) { return curve == EaseIn ? "IN" : curve == EaseOut ? "OUT" : curve == Corner ? "CORNER" : "LINE"; }
+    public static int Next(int curve) { return (curve + 1) % Count; }
 }
 
 public class SlidePoint

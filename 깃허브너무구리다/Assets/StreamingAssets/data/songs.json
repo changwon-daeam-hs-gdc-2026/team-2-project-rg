@@ -12,10 +12,10 @@
     "illustration": "",
     "Vocal": "inst Ver.",
     "BPM": 120,
-    "NoteCount_INSANE": 4,
+    "NoteCount_INSANE": 10,
     "BarColor": "#000000",
     "HasMV": 0,
-    "ExistSongbar": 0,
+    "ExistSongbar": 1,
     "Area": "deployed(INSANE)",
     "NoteCount_SPECIAL": 8
   },
@@ -425,7 +425,8 @@
     "Difficulty_EASY": "00",
     "Difficulty_HARD": "00",
     "Difficulty_INSANE":"00",
-    "Difficulty_SPECIAL": "13",
+    "Difficulty_SPECIAL": "?",
+    "Difficulty_SPECIAL_REALVALUE": "12+",
     "Composer": "藤永龍太郎 (Elements Garden)",
     "illustration": "吹田亜沙美 (ARIA entertainment) (MV & illust)",
     "Vocal": "白上フブキ",
@@ -436,7 +437,8 @@
     "BarColor": "#7dc8fd",
     "HasMV": 1,
     "ExistSongbar": 1,
-    "Length": "3:44"
+    "Length": "3:44",
+    "NoteCount_SPECIAL": 3125
   },
   {
     "Id": 34,
@@ -480,10 +482,11 @@
     "Difficulty_EASY": "4",
     "Difficulty_HARD": "8",
     "Difficulty_INSANE": "10",
+    "Difficulty_SPECIAL": "13",
     "Composer": "ナユタン星人",
     "illustration": "norainu03019",
     "Vocal": "Usada Pekora",
-    "BPM": 1,
+    "BPM": 170,
     "NoteCount_EASY": 412,
     "NoteCount_HARD": 1284,
     "NoteCount_INSANE": 1493,
@@ -491,7 +494,8 @@
     "HasMV": 1,
     "ExistSongbar": 1,
     "Area": "deployed(INSANE)",
-    "Length": "1:44"
+    "Length": "3:29",
+    "NoteCount_SPECIAL": 2618
   },
   {
     "Id": 37,
@@ -836,14 +840,15 @@
     "illustration": "デーモン・スティンガー",
     "Vocal": "",
     "BPM": "666 - 1332",
-    "NoteCount_EASY": 0,
-    "NoteCount_HARD": 0,
-    "NoteCount_INSANE": 1575,
+    "NoteCount_EASY": 536,
+    "NoteCount_HARD": 874,
+    "NoteCount_INSANE": 1460,
     "NoteCount_Special": 1630,
     "BarColor": "#271630",
     "HasMV": 1,
     "ExistSongbar": 1,
-    "Length": "1:58"
+    "Length": "2:00",
+    "NoteCount_SPECIAL": 2127
   },
   {
     "Id": 56,
@@ -858,11 +863,11 @@
     "BPM": "164",
     "NoteCount_EASY": 0,
     "NoteCount_HARD": 0,
-    "NoteCount_INSANE": 1575,
+    "NoteCount_INSANE": 2147,
     "NoteCount_Special": 1630,
     "BarColor": "#271630",
     "HasMV": 1,
     "ExistSongbar": 1,
-    "Length": "2:03"
+    "Length": "2:08"
   }
 ]

@@ -32,7 +32,9 @@ public class SongIntroFonts
     [Tooltip("정보 라벨 (MUSIC · ILLUST · VOCAL · BPM)")] public TMP_FontAsset label;
     [Tooltip("정보 값 (작곡가 · 일러스트 · 보컬 · BPM)")] public TMP_FontAsset value;
     [Tooltip("왼쪽 아래 플레이 설정 (SPEED · MV · AUTO)")] public TMP_FontAsset options;
-    [Tooltip("오른쪽 아래 LOADING / READY")] public TMP_FontAsset status;
+    [Tooltip("오른쪽 아래 Loading")] public TMP_FontAsset status;
+    [Tooltip("난이도 글자 크기")] public float difficultySize = 40f;
+    [Tooltip("난이도 글자 상하 배율 (1 = 그대로, 1.2 = 세로로 20% 길게, 0.8 = 납작하게)")] public float difficultyScaleY = 1f;
 }
 
 public class SongIntroOverlay : MonoBehaviour
@@ -67,9 +69,8 @@ public class SongIntroOverlay : MonoBehaviour
     // UI
     private CanvasGroup content;
     private ParallelogramGraphic curtain;
-    private Image bgImage, tint, loadBar, jacket;
+    private Image bgImage, tint, jacket;
     private RectTransform jacketRt, infoRoot, divider;
-    private TextMeshProUGUI statusText;
     private readonly List<RectTransform> staggered = new List<RectTransform>();
     private readonly List<CanvasGroup> staggeredGroups = new List<CanvasGroup>();
     private readonly List<Vector2> staggeredBase = new List<Vector2>();
@@ -195,10 +196,15 @@ public class SongIntroOverlay : MonoBehaviour
         diff.richText = true;
         diff.font = fDiff;
         diff.characterSpacing = 8f;
-        FitText(diff, 32f, 16f);
-        LeftTop(diff.rectTransform, 0f, y, InfoWidth, 46f);
+        // 크기 · 상하 배율: 곡 선택 인스펙터의 Song Intro Fonts > Difficulty Size / Difficulty Scale Y
+        float dSize = F.difficultySize > 1f ? F.difficultySize : 40f;
+        float dScaleY = F.difficultyScaleY > 0.05f ? F.difficultyScaleY : 1f;
+        FitText(diff, dSize, dSize * 0.5f);
+        float dH = dSize * 1.45f;
+        LeftTop(diff.rectTransform, 0f, y, InfoWidth, dH);
+        diff.rectTransform.localScale = new Vector3(1f, dScaleY, 1f);          // 위쪽 기준으로 세로만 늘이거나 줄임
         AddStagger(diff.rectTransform, false);
-        y -= 70f;
+        y -= Mathf.Max(70f, dH * dScaleY + 22f);
 
         // 곡명 / 부제
         TextMeshProUGUI title = K.Txt("Title", infoRoot, gameSetting ? "GAME SETTING" : song.Name ?? "", 64, TextAlignmentOptions.Left, Color.white, FontStyles.Bold);
@@ -240,37 +246,59 @@ public class SongIntroOverlay : MonoBehaviour
         // BPM: songs.json 의 "BPM" 글자를 그대로 표시 (예: "132", "132-250")
         if (!gameSetting && !string.IsNullOrWhiteSpace(song.BPM)) y = InfoRow("BPM", song.BPM.Trim(), y, fLabel, fValue);
 
-        // 아래: 플레이 설정 / 로딩
-        var s = SettingsStore.Current;
-        string opt = (gameSetting ? "GAME SETTING     " : "") + "SPEED  x" + s.SettingSpeed.ToString("0.0", CultureInfo.InvariantCulture);
-        if (CoreManager.Instance != null && CoreManager.Instance.IsMvOn && song.HasMV == 1) opt += "     MV ON";
-        if (CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay) opt += "     AUTO PLAY";
-        TextMeshProUGUI optText = K.Txt("Options", contentRt, opt, 20, TextAlignmentOptions.BottomLeft, InfoSubColor);
-        optText.font = fOptions;
-        FitText(optText, 20f, 12f);
-        K.Place(optText.rectTransform, Vector2.zero, new Vector2(0.6f, 0f), new Vector2(64f, 44f), new Vector2(0f, 80f));
-        AddStagger(optText.rectTransform, false);
+        // 그림자는 정보 라벨(MUSIC · ILLUST · VOCAL · BPM)에만 — 밝은 회색 배경에서도 보이게 (다른 글자는 그림자 없음)
+        foreach (var tx in infoRoot.GetComponentsInChildren<TextMeshProUGUI>(true)) if (tx.name == "Label") Readable(tx);
 
-        statusText = K.Txt("Status", contentRt, "LOADING", 20, TextAlignmentOptions.BottomRight, InfoSubColor, FontStyles.Bold);
-        statusText.font = fStatus;
-        statusText.characterSpacing = 10f;
-        K.Place(statusText.rectTransform, new Vector2(0.6f, 0f), new Vector2(1f, 0f), new Vector2(0f, 44f), new Vector2(-64f, 80f));
+        // 오른쪽 아래: 로딩 연출 — 흰색 호 하나가 계속 돎 (뒤 테두리 · 빛 · 글자 없음)
+        spinRt = K.Rect("Loading", contentRt);
+        spinRt.anchorMin = spinRt.anchorMax = spinRt.pivot = new Vector2(1f, 0f);
+        spinRt.anchoredPosition = new Vector2(-64f, 48f);
+        spinRt.sizeDelta = new Vector2(SpinSize, SpinSize);
+        spinArc = K.Img("Arc", spinRt, Color.white);
+        spinArc.sprite = RingSprite();
+        spinArc.type = Image.Type.Filled;
+        spinArc.fillMethod = Image.FillMethod.Radial360;
+        spinArc.fillOrigin = (int)Image.Origin360.Top;
+        spinArc.fillClockwise = true;
+        spinArc.fillAmount = 0.28f;
+        K.Place(spinArc.rectTransform, Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero);
+        AddStagger(spinRt, false);
+    }
 
-        // 곡 정보 · 아래 글자 모두 뒤에 부드러운 그림자 (어중간한 밝기의 배경에서도 또렷하게)
-        foreach (var tx in infoRoot.GetComponentsInChildren<TextMeshProUGUI>(true)) Readable(tx);
-        Readable(optText);
-        Readable(statusText);
+    // ---- 로딩 연출 ----
+    private const float SpinSize = 38f;
+    private RectTransform spinRt;
+    private Image spinArc;
+    private float spinAngle;
 
-        Image barBg = K.Img("LoadBarBg", contentRt, new Color(1f, 1f, 1f, 0.08f));
-        K.Place(barBg.rectTransform, Vector2.zero, new Vector2(1f, 0f), Vector2.zero, new Vector2(0f, 4f));
-        bool spBar = !gameSetting && level == DifficultyHelper.Special;
-        loadBar = K.Img("LoadBar", barBg.rectTransform, spBar ? Color.white : dc);
-        if (spBar) loadBar.sprite = SpecialArt.Bar;                             // SPECIAL: 솜사탕 그라데이션 로딩 막대
-        loadBar.rectTransform.anchorMin = Vector2.zero;
-        loadBar.rectTransform.anchorMax = new Vector2(0f, 1f);
-        loadBar.rectTransform.offsetMin = Vector2.zero;
-        loadBar.rectTransform.offsetMax = Vector2.zero;
+    // 원 테두리 (지름 128, 굵기 약 13px — 화면에서 약 4px)
+    private static Sprite ringSprite;
+    private static Sprite RingSprite()
+    {
+        if (ringSprite != null) return ringSprite;
+        const int N = 128;
+        Texture2D tex = new Texture2D(N, N, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        Color32[] px = new Color32[N * N];
+        float c = (N - 1) * 0.5f, R = N * 0.5f - 9f, half = 6.5f;
+        for (int y = 0; y < N; y++)
+            for (int x = 0; x < N; x++)
+            {
+                float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c));
+                float a = Mathf.Clamp01(half - Mathf.Abs(d - R) + 0.5f);
+                px[y * N + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+            }
+        tex.SetPixels32(px); tex.Apply();
+        ringSprite = Sprite.Create(tex, new Rect(0, 0, N, N), new Vector2(0.5f, 0.5f), 100f);
+        return ringSprite;
+    }
 
+    // 매 프레임: 호가 일정한 속도로 계속 돎
+    private void UpdateSpinner(float dt)
+    {
+        if (spinArc == null) return;
+        spinAngle -= dt * 360f;                                                  // 1초에 한 바퀴 (시계 방향)
+        spinArc.rectTransform.localRotation = Quaternion.Euler(0f, 0f, spinAngle);
     }
 
     // 차례로 등장할 요소 등록 (fromLeft: 왼쪽에서 / 아니면 아래에서 올라옴)
@@ -375,14 +403,11 @@ public class SongIntroOverlay : MonoBehaviour
             }
             divider.sizeDelta = new Vector2(Mathf.Lerp(0f, InfoWidth, EaseOut(Mathf.Clamp01((shown - 0.35f) / 0.6f))), 3f); // 곡명 칸 최대 폭과 같은 길이
 
-            // 로딩 막대: 준비 전에는 90%까지 천천히, 준비되면 꽉 참
-            float target = gameReady ? 1f : 0.9f * (1f - Mathf.Exp(-waited * 1.2f));
-            float cur = loadBar.rectTransform.anchorMax.x;
-            loadBar.rectTransform.anchorMax = new Vector2(Mathf.MoveTowards(cur, target, dt * 2f), 1f);
-            statusText.text = gameReady ? "READY" : "LOADING";
+            // 오른쪽 아래 로딩 연출 (계속 돎)
+            UpdateSpinner(dt);
 
             bool minDone = shown >= appear + hold;
-            if ((gameReady && minDone && loadBar.rectTransform.anchorMax.x >= 0.999f) || waited >= SafetyTimeout) break;
+            if ((gameReady && minDone) || waited >= SafetyTimeout) break;
             yield return null;
         }
 

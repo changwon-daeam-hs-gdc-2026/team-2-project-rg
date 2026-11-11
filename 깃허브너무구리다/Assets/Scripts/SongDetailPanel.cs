@@ -62,7 +62,8 @@ public class SongDetailPanel : MonoBehaviour
     private RectTransform diffBox;
     private Image diffBlock;      // 고른 칸 아래 그라데이션 밑줄
     private Image diffGlow;       // 밑줄 위로 옅게 번지는 빛
-    private const float GlowTop = 0.55f;  // 위로 번지는 빛이 닿는 높이 (칸 높이 비율, 1 = 칸 꼭대기까지) — 낮게
+    private const float GlowTop = 1f;     // 위로 번지는 빛이 닿는 높이 (칸 높이 비율, 1 = 칸 꼭대기까지) — 칸 전체
+    private const float GlowAlpha = 0.18f; // 빛 진하기 (연하게)
     // 난이도 칸: 보통 3칸, SPECIAL 이 있는 곡은 4칸, SPECIAL 하나뿐인 곡은 SPECIAL 1칸 (인덱스 = 난이도 번호 1 ~ 4)
     private readonly TextMeshProUGUI[] diffName = new TextMeshProUGUI[5];
     private readonly TextMeshProUGUI[] diffValue = new TextMeshProUGUI[5];
@@ -334,7 +335,7 @@ public class SongDetailPanel : MonoBehaviour
             if (sp) blockTarget = Color.white;
             blockColor = Color.Lerp(blockColor, blockTarget, k);
             diffBlock.color = new Color(blockColor.r, blockColor.g, blockColor.b, 1f);
-            diffGlow.color = new Color(blockColor.r, blockColor.g, blockColor.b, 0.30f);
+            diffGlow.color = new Color(blockColor.r, blockColor.g, blockColor.b, GlowAlpha);
         }
         diffBlock.enabled = diffGlow.enabled = selLevel >= 1 && cellSlot[selLevel] >= 0 && diffAvailable[selLevel];
 

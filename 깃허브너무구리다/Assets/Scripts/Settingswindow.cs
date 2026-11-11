@@ -348,7 +348,7 @@ public class SettingsWindow : MonoBehaviour
 
         sfxPreview = gameObject.AddComponent<AudioSource>();
         sfxPreview.playOnAwake = false;
-        hitClip = Resources.Load<AudioClip>("Audio/etc/hitsound");
+        hitClip = HitSound.Clip;   // hitsound.mp3 와 같은 소리, 앞의 빈 구간 없음 (HitSound.cs)
 
         ApplyFonts();
         root.SetActive(false);
@@ -648,6 +648,10 @@ public class SettingsWindow : MonoBehaviour
         Section(page, "정보");
         SwitchRow(page, "정보 표시", "곡 정보 · 난이도 · 시간 · 점수 · 배속 (모든 게임 화면)",
             () => S.ShowInfoUI, on => { S.ShowInfoUI = on; Changed(); });
+
+        ChoiceRow(page, "곡명 표기", "곡 선택 · 게임 · 결과창의 곡명 · 부제 (원어 / 영어)",
+            () => S.SongNameLanguage == 1 ? "ENGLISH" : "원어",
+            d => { S.SongNameLanguage = S.SongNameLanguage == 1 ? 0 : 1; Changed(); });
     }
 
     private void BuildDisplayPage(Transform page)
@@ -1107,6 +1111,7 @@ public class SettingsWindow : MonoBehaviour
             case TabVisual:
                 S.GameSkin = d.GameSkin; S.EffectQuality = d.EffectQuality; S.LaneOpacity = d.LaneOpacity;
                 S.LaneLines = d.LaneLines; S.ShowKeyMarkers = d.ShowKeyMarkers; S.ShowInfoUI = d.ShowInfoUI;
+                S.SongNameLanguage = d.SongNameLanguage;
                 break;
             case TabDisplay:
                 S.VSync = d.VSync; S.FrameLimit = d.FrameLimit; S.ShowFps = d.ShowFps;

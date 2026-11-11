@@ -52,7 +52,7 @@ public partial class AreaChartEditor
     private class ToolCard { public RectTransform rt; public Image bg, swatch, edge; public TextMeshProUGUI name; public int kind; }
     private readonly List<ToolCard> toolCards = new List<ToolCard>();             // kind: 1~4 노트 종류
     private class ToggleBtn { public RectTransform rt; public Image bg; public TextMeshProUGUI state; public int id; }
-    private readonly List<ToggleBtn> toggles = new List<ToggleBtn>();             // id: 5 RED, 6 드래그, 7 슬라이드 편집, 21 2층, 22 1층
+    private readonly List<ToggleBtn> toggles = new List<ToggleBtn>();             // id: 5 RED, 6 드래그, 7 슬라이드 편집, 21 ~ 25 = 1 ~ 5층
     private class KeyRow { public Key key; public Image bg; }
     private readonly List<KeyRow> keyRows = new List<KeyRow>();
 
@@ -228,19 +228,20 @@ public partial class AreaChartEditor
         y = ToggleRow(T("RED 노트", "RED NOTE"), "5", 5, y);
         y = ToggleRow(T("드래그 노트", "DRAG NOTE"), "6", 6, y);
         y = ToggleRow(T("슬라이드 편집", "SLIDE EDIT"), "7", 7, y);
-        // 층: [2층 위][1층 아래]
+        // 층: [5][4][3][2][1] (왼쪽이 위층 — 5층이 가장 위에 그려짐)
         TextMeshProUGUI ll = Txt("LayerLabel", leftPanel, 15, TextAlignmentOptions.MidlineLeft, UiSub, FontStyles.Bold);
         ll.text = T("층", "LAYER");
         At(ll.rectTransform, 18f, y, 60f, 34f);
         KeyCap(leftPanel, "Q", 64f, y + 4f);
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < NoteLayer.Count; i++)
         {
-            var tb = new ToggleBtn { id = 21 + i };
-            tb.bg = Panel("Layer" + i, leftPanel, UiCard, 8f);
+            int layer = NoteLayer.Max - i;
+            var tb = new ToggleBtn { id = 20 + layer };
+            tb.bg = Panel("Layer" + layer, leftPanel, UiCard, 8f);
             tb.rt = tb.bg.rectTransform;
-            At(tb.rt, 108f + i * 88f, y, 84f, 34f);
-            tb.state = Txt("T", tb.rt, 14, TextAlignmentOptions.Center, UiText, FontStyles.Bold);
-            tb.state.text = i == 0 ? T("2층 위", "2 TOP") : T("1층 아래", "1 BTM");
+            At(tb.rt, 108f + i * 36f, y, 32f, 34f);
+            tb.state = Txt("T", tb.rt, 15, TextAlignmentOptions.Center, UiText, FontStyles.Bold);
+            tb.state.text = layer.ToString();
             SettingsUIKit.Stretch(tb.state.rectTransform);
             toggles.Add(tb);
         }
@@ -252,7 +253,7 @@ public partial class AreaChartEditor
         KeyItem(Key.U, "U", T("변속 SPEED UP / DOWN 표시", "speed UP / DOWN notice"), ref y);
         KeyItem(Key.G, "G", T("난이도 공개 (? → 실제 값)", "level reveal (? → real)"), ref y);
         KeyItem(Key.D, "D", "BPM", ref y);
-        KeyItem(Key.F, "F", T("변속 이 층만 (SHIFT 두 층)", "speed this layer (SHIFT both)"), ref y);
+        KeyItem(Key.F, "F", T("변속 이 층만 (SHIFT 모든 층)", "speed this layer (SHIFT all)"), ref y);
         KeyItem(Key.E, "E", T("정지 STOP", "STOP"), ref y);
         KeyItem(Key.R, "R", T("재개 START", "START"), ref y);
         TextMeshProUGUI del = Txt("DelHint", leftPanel, 13, TextAlignmentOptions.TopLeft, UiDim);
@@ -500,15 +501,15 @@ public partial class AreaChartEditor
                     "L-CLICK|" + T("노트 놓기", "place note"), "R-CLICK|" + T("노트 지우기", "delete note"),
                     "1|" + T("탭", "tap"), "2|" + T("롱노트 시작", "long start"), "3|" + T("롱노트 끝", "long end"), "4|" + T("마디선", "measure line"),
                     "5|" + T("RED 켜기 / 끄기", "RED on / off"), "6|" + T("드래그 켜기 / 끄기", "DRAG on / off"),
-                    "Q|" + T("층 전환 (2층 ↔ 1층)", "layer 2 ↔ 1"),
+                    "Q|" + T("층 위로 (1 → 5, SHIFT + Q 아래로)", "layer up (1 → 5, SHIFT + Q down)"),
                     "7|" + T("슬라이드 편집 (롱노트 클릭 → 사이 클릭 = 중계점 · 점 끌기 = 레인)", "SLIDE EDIT (click long note → click between = point · drag)"),
-                    "C|" + T("슬라이드 편집 중: 구간 곡선 (직선 → IN → OUT)", "slide edit: segment curve (line → IN → OUT)"),
+                    "C|" + T("슬라이드 편집 중: 구간 곡선 (직선 → IN → OUT → 직각)", "slide edit: segment curve (line → IN → OUT → CORNER)"),
                     "DRAG|" + T("클릭한 채 오른쪽으로 = 폭 1~4칸", "drag right = width 1-4") },
             new[] { T("레인 · 타이밍", "LANES · TIMING"),
                     "V|" + T("+ 클릭  레인 사라짐 (시간 입력)", "+ click  lanes disappear"), "B|" + T("+ 클릭  레인 드러남 (시간 입력)", "+ click  lanes reappear"),
                     "U|" + T("+ 클릭  변속에 SPEED UP / DOWN 글자 켜고 끄기", "+ click  speed UP / DOWN notice on / off"),
                     "G|" + T("+ 클릭  난이도 공개 (? → 실제 값, 하나만)", "+ click  level reveal (? → real, one only)"),
-                    "D|" + T("+ 클릭  BPM", "+ click  BPM"), "F|" + T("+ 클릭  변속 (편집 중인 층만)", "+ click  speed (this layer)"), "SHIFT|" + T("+ F + 클릭  변속 (두 층 모두)", "+ F + click  speed (both layers)"),
+                    "D|" + T("+ 클릭  BPM", "+ click  BPM"), "F|" + T("+ 클릭  변속 (편집 중인 층만)", "+ click  speed (this layer)"), "SHIFT|" + T("+ F + 클릭  변속 (모든 층)", "+ F + click  speed (all layers)"),
                     "E|" + T("+ 클릭  정지 STOP", "+ click  STOP"), "R|" + T("+ 클릭  재개 START", "+ click  START"),
                     "KEY|" + T("+ 우클릭  그 표시 삭제", "+ R-click  delete") },
             new[] { T("이동 · 재생 · 파일", "VIEW · PLAY · FILE"),
@@ -612,7 +613,7 @@ public partial class AreaChartEditor
         }
         foreach (var tb in toggles)
         {
-            bool on = tb.id == 5 ? redMode : tb.id == 6 ? dragMode : tb.id == 7 ? slideMode : tb.id == 21 ? editLayer == NoteLayer.Top : editLayer == NoteLayer.Bottom;
+            bool on = tb.id == 5 ? redMode : tb.id == 6 ? dragMode : tb.id == 7 ? slideMode : editLayer == tb.id - 20;
             Color onC = tb.id == 5 ? UiRed : tb.id == 6 ? NoteArt.DragColor : tb.id == 7 ? SlideUiColor : UiAccent;
             tb.bg.color = on ? new Color(onC.r, onC.g, onC.b, 0.22f) : UiCard;
             if (tb.id == 5 || tb.id == 6 || tb.id == 7) tb.state.text = on ? "ON" : "OFF";
@@ -631,7 +632,7 @@ public partial class AreaChartEditor
         tPosBig.text = "<mspace=0.6em>" + m + "</mspace><size=55%><color=#FFFFFF80>  " + T("마디", "BAR") + "   +" + inBar.ToString("0.###", CultureInfo.InvariantCulture) + T(" 박", " beat") + "</color></size>";
         tPosSub.text = T("시간  ", "TIME  ") + viewTime.ToString("0.000", CultureInfo.InvariantCulture) + " s\n" +
                        "BPM  " + bpmNow.ToString("0.##", CultureInfo.InvariantCulture) + "     " + T($"변속({editLayer}층)  x", $"SPEED(L{editLayer})  x") + speedNow.ToString("0.00", CultureInfo.InvariantCulture) + "\n" +
-                       T("층  ", "LAYER  ") + (editLayer == NoteLayer.Top ? T("2층 (위)", "2 (top)") : T("1층 (아래)", "1 (bottom)"));
+                       T("층  ", "LAYER  ") + T($"{editLayer}층", $"L{editLayer}") + (editLayer == NoteLayer.Top ? T(" (기본)", " (default)") : "");
 
         float shown = FoldAt(viewTime);
         tLaneState.text = shown > 0.999f ? T("보임", "VISIBLE")
@@ -684,7 +685,7 @@ public partial class AreaChartEditor
     //   레인 오른쪽에 [아이콘 배지] + 글자, 레인 오른쪽 벽에는 같은 색 눈금
     // =====================================================================
     private enum EvIcon { Bpm, Timing, SpeedUp, SpeedDown, Stop, Start, Hide, Show, Reveal }
-    private struct EvItem { public double Beat; public EvIcon Icon; public string Text; public Color Color; public int Layer; }   // Layer: 0 = 두 층 모두(표시 없음), 1 · 2 = 층 배지
+    private struct EvItem { public double Beat; public EvIcon Icon; public string Text; public Color Color; public int Layer; }   // Layer: 0 = 모든 층(표시 없음), 1 ~ 5 = 층 배지
     private readonly List<EvItem> evItems = new List<EvItem>();
     private static readonly Dictionary<EvIcon, Sprite> iconSprites = new Dictionary<EvIcon, Sprite>();
     private class IconLabel { public RectTransform rt; public Image bg, glyph, layerBg; public TextMeshProUGUI text, layerText; }
@@ -703,7 +704,7 @@ public partial class AreaChartEditor
         foreach (var b in bpms)
             evItems.Add(new EvItem { Beat = b.Beat, Icon = b.HasAnchor ? EvIcon.Timing : EvIcon.Bpm, Color = EvBpm,
                                      Text = (b.HasAnchor ? "TIMING " : "BPM ") + b.Bpm.ToString("0.##", CultureInfo.InvariantCulture) });
-        // 변속: 같은 층(두 층 모두 = 0 포함)의 바로 앞 값보다 빠르면 ▲, 느리면 ▼
+        // 변속: 같은 층(모든 층 = 0 포함)의 바로 앞 값보다 빠르면 ▲, 느리면 ▼
         foreach (var sp in speeds)
         {
             double prev = initialSpeed;
@@ -774,7 +775,7 @@ public partial class AreaChartEditor
     private float noticeAge = 99f;
     private bool noticeUp;
 
-    // 같은 층(두 층 모두 = 0 포함)의 바로 앞 변속 값 (없으면 처음 배속)
+    // 같은 층(모든 층 = 0 포함)의 바로 앞 변속 값 (없으면 처음 배속)
     private double PrevSpeedValue(ASpeed sp)
     {
         double prev = initialSpeed, prevBeat = double.NegativeInfinity;
@@ -855,12 +856,12 @@ public partial class AreaChartEditor
         il.glyph.color = new Color(c.r, c.g, c.b, Mathf.Max(0.75f, c.a));
         il.text.text = e.Text;
         il.text.color = c;
-        bool hasLayer = e.Layer == 1 || e.Layer == 2;
+        bool hasLayer = e.Layer >= NoteLayer.Min && e.Layer <= NoteLayer.Max;
         il.layerBg.gameObject.SetActive(hasLayer);
         if (hasLayer)
         {
             il.layerText.text = "L" + e.Layer;
-            Color lc = e.Layer == 2 ? new Color(1f, 1f, 1f, 1f) : new Color(0.62f, 0.86f, 1f, 1f);   // 2층 흰색 · 1층 하늘색
+            Color lc = LayerBadgeColor(e.Layer);
             il.layerText.color = lc;
             il.layerBg.color = new Color(lc.r, lc.g, lc.b, 0.18f);
             il.layerBg.rectTransform.anchoredPosition = new Vector2(31f + il.text.GetPreferredValues(e.Text).x + 8f, 0f);
@@ -1150,11 +1151,24 @@ public partial class AreaChartEditor
                 if (tb.id == 5) { redMode = !redMode; if (redMode) dragMode = false; }
                 else if (tb.id == 6) { dragMode = !dragMode; if (dragMode) redMode = false; }
                 else if (tb.id == 7) ToggleSlideMode();
-                else editLayer = tb.id == 21 ? NoteLayer.Top : NoteLayer.Bottom;
+                else editLayer = NoteLayer.Clamp(tb.id - 20);
                 return true;
             }
         }
         return true;
+    }
+
+    // 층 배지 색: 1층 하늘 · 2층 흰 · 3층 연두 · 4층 노랑 · 5층 분홍
+    private static Color LayerBadgeColor(int layer)
+    {
+        switch (layer)
+        {
+            case 1: return new Color(0.62f, 0.86f, 1f, 1f);
+            case 3: return new Color(0.62f, 1f, 0.70f, 1f);
+            case 4: return new Color(1f, 0.90f, 0.55f, 1f);
+            case 5: return new Color(1f, 0.66f, 0.86f, 1f);
+            default: return Color.white;
+        }
     }
 
     private static bool Over(RectTransform r, Vector2 screen)

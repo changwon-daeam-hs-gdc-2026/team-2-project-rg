@@ -33,6 +33,7 @@ public class CoreManager : MonoBehaviour
             Instance = this;
             DontDestroyOnLoad(gameObject);
             ApplyBackgroundLook();
+            AudioKeepAlive.Ensure();   // 블루투스 등 오디오 장치가 무음 중에 꺼져서 곡 앞부분이 잘리지 않게
             LoadSettings();
             SettingsStore.ApplyAll(); // 볼륨 / 프레임 제한 / 화면 모드 / FPS 표시
             Shader.WarmupAllShaders(); // 처음 쓰는 셰이더를 그 순간 컴파일하느라 멈칫하는 것 방지

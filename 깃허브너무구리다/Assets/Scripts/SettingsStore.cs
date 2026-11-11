@@ -137,6 +137,13 @@ public static class SettingsStore
         to.GameSkin = from.GameSkin;
         to.LaneOpacity = from.LaneOpacity;
         to.ShowInfoUI = from.ShowInfoUI;
+        // (빠져 있어서 다시 켜면 돌아가던 설정들도 같이 저장값을 불러옴)
+        to.LaneLines = from.LaneLines;
+        to.ShowKeyMarkers = from.ShowKeyMarkers;
+        to.ShowHitErrorBar = from.ShowHitErrorBar;
+        to.EffectQuality = from.EffectQuality;
+        to.ShowJustPerfect = from.ShowJustPerfect;
+        to.SongNameLanguage = from.SongNameLanguage;   // 곡명 표기 (원어 / 영어)
         to.LaneKeys = from.LaneKeys != null ? (string[])from.LaneKeys.Clone() : (string[])DefaultLaneKeys.Clone();
         to.MasterVolume = from.MasterVolume;
         to.MusicVolume = from.MusicVolume;

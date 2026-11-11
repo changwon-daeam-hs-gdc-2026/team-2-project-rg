@@ -93,7 +93,7 @@ public class SongRowUI : MonoBehaviour
             jacket.sprite = jacketSprite;
             jacket.color = jacketSprite != null ? Color.white : new Color(0.15f, 0.15f, 0.15f, 1f);
         }
-        if (titleText != null) titleText.text = (data.Name ?? "") + (data.SubName ?? ""); // 우측: Name + SubName
+        if (titleText != null) titleText.text = data.Name ?? "";   // 우측: 곡명만 (부제 SubName 은 표시하지 않음)
         if (composerText != null) composerText.text = composerLine;
 
         if (isSpecialRow)

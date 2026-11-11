@@ -448,6 +448,16 @@ public class SongSelectManager : MonoBehaviour
         visibleRowCount = Mathf.Max(1, visibleRowCount);
         // 곡 정보 화면(SongIntroOverlay): 곡명 기본 폰트는 곡 선택창과 같게, 개별 폰트는 인스펙터에서
         if (selectedSongTitleText != null) SongIntroOverlay.PreferredTitleFont = selectedSongTitleText.font;
+        // 왼쪽 곡명: 길면 '…' 로 자르지 않고 글자를 줄여서 한 줄에 다 보이게 (원래 크기 ~ 절반까지)
+        if (selectedSongTitleText != null)
+        {
+            float baseSize = selectedSongTitleText.enableAutoSizing ? selectedSongTitleText.fontSizeMax : selectedSongTitleText.fontSize;
+            selectedSongTitleText.textWrappingMode = TextWrappingModes.NoWrap;
+            selectedSongTitleText.enableAutoSizing = true;
+            selectedSongTitleText.fontSizeMax = baseSize;
+            selectedSongTitleText.fontSizeMin = Mathf.Max(10f, baseSize * 0.5f);
+            selectedSongTitleText.overflowMode = TextOverflowModes.Ellipsis;   // 절반 크기로도 넘칠 때만 '…'
+        }
         SongIntroOverlay.Fonts = introFonts;
         selectedSlot = Mathf.Clamp(selectedSlot, 0, visibleRowCount - 1);
 
@@ -527,7 +537,9 @@ public class SongSelectManager : MonoBehaviour
             if (f.atlasPopulationMode != AtlasPopulationMode.Dynamic) continue;
             string all = common;
             foreach (var s in allSongs) all += (s.Name ?? "") + (s.SubName ?? "") + (s.Composer ?? "")
-                                             + (s.SPECIAL_Name ?? "") + (s.SPECIAL_SubName ?? "") + (s.Difficulty_SPECIAL ?? ""); // 곡명·작곡가 · SPECIAL 글자도 미리
+                                             + (s.SPECIAL_Name ?? "") + (s.SPECIAL_SubName ?? "") + (s.Difficulty_SPECIAL ?? "")   // 곡명·작곡가 · SPECIAL 글자도 미리
+                                             + (s.Name_Original ?? "") + (s.SubName_Original ?? "") + (s.SPECIAL_Name_Original ?? "") + (s.SPECIAL_SubName_Original ?? "")
+                                             + (s.Name_English ?? "") + (s.SubName_English ?? "") + (s.SPECIAL_Name_English ?? "") + (s.SPECIAL_SubName_English ?? "");   // 원어 · 영어 둘 다
             f.TryAddCharacters(all);
             yield return null;
         }
@@ -541,6 +553,8 @@ public class SongSelectManager : MonoBehaviour
         string json = SongJson.Normalize(File.ReadAllText(path, System.Text.Encoding.UTF8)); // "BPM": 132 → "132"
         SongData[] arr = JsonHelper.FromJson<SongData>(json);
         if (arr != null) allSongs.AddRange(arr.Where(s => s.ExistSongbar == 1 || s.ExistSongbar == 2));
+        SongData.ApplyNameLanguage(allSongs);   // 설정 > 곡명 표기 (원어 / 영어)
+        nameLanguage = SettingsStore.Current != null ? SettingsStore.Current.SongNameLanguage : 0;
 
         // (선택) songs.json 의 "Length": "3:39" 또는 219.5 (초) — DataModels 를 고치지 않고 따로 읽는다
         try
@@ -682,12 +696,22 @@ public class SongSelectManager : MonoBehaviour
     //  매 프레임
     // =====================================================================
     private int blurVersion = -1;
+    private int nameLanguage;   // 지금 목록에 적용된 곡명 표기 (설정이 바뀌면 다시 적용)
 
     void Update()
     {
         if (songList == null || songList.Count == 0 || isLeaving) return;
         // CoreManager 인스펙터에서 배경 검은 막 · 흐림 값을 바꾸면 지금 배경을 바로 새 값으로 (조정하면서 보기)
         UpdateLockedPanel(CurrentSong);   // 난이도를 바꿔도 잠금 표시가 따라가게 (값이 바뀔 때만 연출)
+        // 설정 > 곡명 표기를 바꾸면 곡명을 바로 다시 표시
+        int lang = SettingsStore.Current != null ? SettingsStore.Current.SongNameLanguage : 0;
+        if (lang != nameLanguage)
+        {
+            nameLanguage = lang;
+            SongData.ApplyNameLanguage(allSongs);
+            if (CurrentSong != null) UpdateLeftInfo(CurrentSong);
+            RebindRows();
+        }
         if (blurVersion != BackgroundBlur.Version)
         {
             bool firstCheck = blurVersion < 0;

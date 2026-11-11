@@ -70,6 +70,8 @@ public class TempSongData
 {
     public int Id;
     public string Name;
+    public string Name_Original;   // 새 곡명 칸 (Name 이 없을 때)
+    public string Name_English;
 }
 
 [Serializable]
@@ -309,7 +311,7 @@ public class ChartEditorManager : MonoBehaviour
         sfxSource.playOnAwake = false;
         sfxSource.ignoreListenerPause = true;
         
-        hitSoundClip = Resources.Load<AudioClip>("Audio/etc/hitsound");
+        hitSoundClip = HitSound.Clip;   // hitsound.mp3 와 같은 소리, 앞의 빈 구간 없음 (HitSound.cs)
         // [버그 수정] 탭음 데이터를 미리 올려 둠 (첫 PlayOneShot 때 아직 안 올라와 있으면 첫 소리가 나지 않음)
         if (hitSoundClip != null && hitSoundClip.loadState == AudioDataLoadState.Unloaded) hitSoundClip.LoadAudioData();
 
@@ -492,9 +494,11 @@ public class ChartEditorManager : MonoBehaviour
                     if (songList != null && songList.Items != null)
                     {
                         var songInfo = songList.Items.FirstOrDefault(s => s.Id == songId);
-                        if (songInfo != null && !string.IsNullOrEmpty(songInfo.Name))
+                        if (songInfo != null)
                         {
-                            currentSongName = songInfo.Name;
+                            string nm = !string.IsNullOrEmpty(songInfo.Name_Original) ? songInfo.Name_Original
+                                      : !string.IsNullOrEmpty(songInfo.Name_English) ? songInfo.Name_English : songInfo.Name;
+                            if (!string.IsNullOrEmpty(nm)) currentSongName = nm;
                         }
                     }
                 }

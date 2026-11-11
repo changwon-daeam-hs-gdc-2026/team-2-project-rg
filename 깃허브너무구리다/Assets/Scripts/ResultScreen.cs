@@ -246,7 +246,7 @@ public class ResultScreen : MonoBehaviour
             pb.anchoredPosition = new Vector2(160f + dw + 14f, -(712f + 15f));
         }
 
-        TextMeshProUGUI title = T(g, (r.SongName ?? "") + (r.SubName ?? ""), 40, TextAlignmentOptions.MidlineLeft, TextMain, fonts.title, FontStyles.Bold);
+        TextMeshProUGUI title = T(g, r.SongName ?? "", 40,   /* 곡명만 (부제 SubName 은 표시하지 않음) */ TextAlignmentOptions.MidlineLeft, TextMain, fonts.title, FontStyles.Bold);
         Box(title.rectTransform, 160, 748, 480, 56);
         Shrink(title, 0.55f);
         TextMeshProUGUI comp = T(g, r.Composer ?? "", 22, TextAlignmentOptions.MidlineLeft, TextSub, fonts.composer != null ? fonts.composer : fonts.info, FontStyles.Normal);
