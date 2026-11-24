@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -14,10 +14,9 @@ using UnityEngine.UI;
 //  - 좌측: 자켓 / 곡명 / 작곡가 / 곡 길이 / 난이도 이미지 3개(ON·OFF) + 난이도 숫자 3개
 //  - 우측: 악곡 정렬표 (뷰포트 밖으로 나간 줄은 RectMask2D 로 잘림)
 //  - ← → : 곡 이동 (길게 누르면 연속 이동)   ↑ ↓ : 난이도 변경
-//  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속   ESC : 설정창   T : GAME SETTING   M : 게임 모드
+//  - Enter : 게임 시작 / G + Enter : 에디터   F : MV   A : 오토플레이   F1/F2 : 배속   ESC : 설정창   T : GAME SETTING
 //  - TAB : 기존 3난이도 목록 ↔ SPECIAL 목록 (SPECIAL 이 있는 곡만, SPECIAL 하나뿐인 곡은 SPECIAL 목록에만 나옴)
 //          4난이도 곡은 ↑ ↓ 로도 SPECIAL 에 들어가고 나옴 (INSANE ↑ → SPECIAL, SPECIAL ↓ → INSANE)
-//  - R : MODE RANDOM 켜고 끄기 (MODE 바 옆 RANDOM 버튼과 같음) — 켜져 있으면 시작할 때 모드 3개를 무작위로 고르는 연출 뒤 시작
 // ============================================================
 public class SongSelectManager : MonoBehaviour
 {
@@ -200,11 +199,6 @@ public class SongSelectManager : MonoBehaviour
     public bool showDetailPanel = true;
     [Tooltip("패널 글꼴 (비우면 정렬표 글꼴 → 기본 글꼴)")]
     public TMP_FontAsset detailFont;
-    [Header("Mode Window")]
-    [Tooltip("모드 창 제목 \"MODE\" 글꼴 (비우면 기본 굵은 글꼴)")]
-    public TMP_FontAsset modeTitleFont;
-    [Tooltip("모드 창 제목 \"MODE\" 글자 크기")]
-    public float modeTitleFontSize = 42f;
     private SongDetailPanel detailPanel;
 
 
@@ -229,45 +223,24 @@ public class SongSelectManager : MonoBehaviour
             var st = SettingsStore.Current;
             st.SettingSpeed = Math.Round(Math.Min(12.0, Math.Max(1.0, st.SettingSpeed + d)), 1);
             SettingsStore.MarkDirty();
+            Sfx.Play(Sfx.Id.Tick);
         };
-        detailPanel.OnToggleMv = () => { if (CurrentSong.HasMV == 1) isMvOn = !isMvOn; };
+        detailPanel.OnToggleMv = () => { if (CurrentSong.HasMvFor(currentDifficulty)) ToggleMv(); };
         detailPanel.OnToggleAuto = ToggleAutoPlayMode;
-        detailPanel.OnOpenModes = OpenModeWindow;
-        detailPanel.OnToggleRandom = ToggleRandomMode;
     }
 
-    // AUTO PLAY 는 게임 모드와 따로. 켜져 있는 동안은 모드를 고를 수 없고, 고른 모드도 적용되지 않음
     private void ToggleAutoPlayMode()
     {
         if (CoreManager.Instance == null) return;
         CoreManager.Instance.IsAutoPlay = !CoreManager.Instance.IsAutoPlay;
-        Debug.Log(CoreManager.Instance.IsAutoPlay ? "AUTO PLAY 개시 (게임 모드 잠금)" : "AUTO PLAY 종료");
+        Sfx.Play(CoreManager.Instance.IsAutoPlay ? Sfx.Id.ToggleOn : Sfx.Id.ToggleOff);
+        Debug.Log(CoreManager.Instance.IsAutoPlay ? "AUTO PLAY 개시" : "AUTO PLAY 종료");
     }
 
-    // R 키 / RANDOM 버튼: MODE RANDOM 켜고 끄기 (AUTO PLAY 중이면 MODE 바를 깜빡임)
-    private void ToggleRandomMode()
+    private void ToggleMv()
     {
-        if (GameModeWindow.BlocksInput || SettingsWindow.BlocksGameInput || isLeaving || GameModeRoulette.IsOpen) return;
-        if (GameModes.Locked)
-        {
-            if (detailPanel != null) detailPanel.FlashModeFull();
-            return;
-        }
-        GameModes.SetRandomPick(!GameModes.RandomPick);
-    }
-
-    // M 키 / MODE 바 클릭: 게임 모드 설정창 (AUTO PLAY 중이면 열지 않고 MODE 바를 깜빡임)
-    private void OpenModeWindow()
-    {
-        if (GameModeWindow.BlocksInput || SettingsWindow.BlocksGameInput || isLeaving) return;
-        if (GameModes.Locked)
-        {
-            if (detailPanel != null) detailPanel.FlashModeFull();
-            return;
-        }
-        GameModeWindow.TitleFont = modeTitleFont;            // 제목 "MODE" 글꼴 · 크기 (인스펙터)
-        GameModeWindow.TitleFontSize = modeTitleFontSize;
-        GameModeWindow.Open(gameObject.scene, detailFont != null ? detailFont : rowFont);
+        isMvOn = !isMvOn;
+        Sfx.Play(isMvOn ? Sfx.Id.ToggleOn : Sfx.Id.ToggleOff);
     }
 
     // 난이도를 바로 고르기 (패널 클릭)
@@ -282,6 +255,7 @@ public class SongSelectManager : MonoBehaviour
         int prev = currentDifficulty;
         currentDifficulty = level;
         lastNormalDifficulty = level;
+        Sfx.Play(Sfx.Id.Difficulty);
         UpdateDifficultyUI(song, dir);
         ApplyRowDifficultyColors();
         MoveHeaderIndicator(false);
@@ -309,7 +283,7 @@ public class SongSelectManager : MonoBehaviour
 
     void LateUpdate()
     {
-        if (detailPanel != null && songList != null && songList.Count > 0) detailPanel.Show(CurrentSong, currentDifficulty, isMvOn, CurrentSong.HasMV == 1);
+        if (detailPanel != null && songList != null && songList.Count > 0) detailPanel.Show(CurrentSong, currentDifficulty, isMvOn, CurrentSong.HasMvFor(currentDifficulty));
         UpdateHeaderMode();
     }
 
@@ -337,6 +311,7 @@ public class SongSelectManager : MonoBehaviour
         bool toSpecial = !specialList;
         List<SongData> target = toSpecial ? specialSongs : normalSongs;
         if (target.Count == 0) return;                                   // 옮겨 갈 곡이 없으면 그대로
+        Sfx.Play(Sfx.Id.ListSwitch);
 
         SongData cur = CurrentSong;
         int idx = target.FindIndex(x => x.Id == cur.Id);
@@ -466,7 +441,7 @@ public class SongSelectManager : MonoBehaviour
         // 두 목록: 기존 3난이도 목록 (SPECIAL 하나뿐인 곡 제외) / SPECIAL 목록 (SPECIAL 이 있는 곡)
         foreach (var x in allSongs)
         {
-            if (!DifficultyHelper.IsSpecialOnly(x)) normalSongs.Add(x);
+            if (x.ShowInNormal && !DifficultyHelper.IsSpecialOnly(x)) normalSongs.Add(x);   // songs.json ExistSongbar 0 이면 SPECIAL 목록에만
             if (DifficultyHelper.HasSpecial(x)) specialSongs.Add(x);
         }
         SetList(normalSongs.Count == 0);                                  // 기존 목록이 비었으면 SPECIAL 목록으로 시작
@@ -551,8 +526,8 @@ public class SongSelectManager : MonoBehaviour
         if (!File.Exists(path)) { Debug.LogWarning("[SongSelect] songs.json 이 없습니다: " + path); return; }
 
         string json = SongJson.Normalize(File.ReadAllText(path, System.Text.Encoding.UTF8)); // "BPM": 132 → "132"
-        SongData[] arr = JsonHelper.FromJson<SongData>(json);
-        if (arr != null) allSongs.AddRange(arr.Where(s => s.ExistSongbar == 1 || s.ExistSongbar == 2));
+        // songs.json + songs_Special.json ("Special": "1" 인 곡은 SPECIAL 정보를 songs_Special.json 에서)
+        allSongs.AddRange(SongDatabase.LoadVisible());
         SongData.ApplyNameLanguage(allSongs);   // 설정 > 곡명 표기 (원어 / 영어)
         nameLanguage = SettingsStore.Current != null ? SettingsStore.Current.SongNameLanguage : 0;
 
@@ -646,7 +621,7 @@ public class SongSelectManager : MonoBehaviour
         currentVirtualIndex = idx;
         if (specialList) currentDifficulty = DifficultyHelper.Special;
         else { currentDifficulty = lv == DifficultyHelper.Special ? 3 : lv; lastNormalDifficulty = currentDifficulty; }
-        isMvOn = core.IsMvOn && songList[idx].HasMV == 1;
+        isMvOn = core.IsMvOn && songList[idx].HasMvFor(currentDifficulty);
     }
 
     private void SetupViewport()
@@ -725,10 +700,10 @@ public class SongSelectManager : MonoBehaviour
 
         // 설정창이 열려 있으면(또는 이번 프레임에 닫혔으면) 곡 선택 조작은 막고 화면 연출만 계속한다
         // 설정창 또는 플레이 확인 창(경고 · 알림)이 열려 있으면 곡 선택 조작을 막음
-        bool inputBlocked = SettingsWindow.BlocksGameInput || PlayConfirmDialog.IsOpen || GameModeWindow.BlocksInput   // 모드 설정창이 열려 있어도 막음
-                         || GameModeRoulette.IsOpen;                                                                // MODE RANDOM 연출 중에도
+        bool inputBlocked = SettingsWindow.BlocksGameInput || PlayConfirmDialog.IsOpen;
         if (!inputBlocked && kb.escapeKey.wasPressedThisFrame)
         {
+            Sfx.Play(Sfx.Id.Open);
             SettingsWindow.Open();
             inputBlocked = true;
         }
@@ -746,18 +721,12 @@ public class SongSelectManager : MonoBehaviour
 
             if (kb.aKey.wasPressedThisFrame && CoreManager.Instance != null) ToggleAutoPlayMode();
 
-            // R : MODE RANDOM 켜고 끄기
-            if (kb.rKey.wasPressedThisFrame) ToggleRandomMode();
-
-            // M : 게임 모드 설정창 (MIRROR · RANDOM · HARD … 최대 3개)
-            if (kb.mKey.wasPressedThisFrame) { OpenModeWindow(); return; }
-
             // T : GAME SETTING (실제 채보로 노트 속도 · 판정 · 표시 맞추기, 5_Test 씬)
             if (kb.tKey.wasPressedThisFrame && CoreManager.Instance != null) { OpenGameSetting(); return; }
 
             var st = SettingsStore.Current;
-            if (kb.f1Key.wasPressedThisFrame) { st.SettingSpeed = Math.Round(Math.Max(1.0, st.SettingSpeed - 0.1), 1); SettingsStore.MarkDirty(); }
-            if (kb.f2Key.wasPressedThisFrame) { st.SettingSpeed = Math.Round(Math.Min(12.0, st.SettingSpeed + 0.1), 1); SettingsStore.MarkDirty(); }
+            if (kb.f1Key.wasPressedThisFrame) { st.SettingSpeed = Math.Round(Math.Max(1.0, st.SettingSpeed - 0.1), 1); SettingsStore.MarkDirty(); Sfx.Play(Sfx.Id.Tick); }
+            if (kb.f2Key.wasPressedThisFrame) { st.SettingSpeed = Math.Round(Math.Min(12.0, st.SettingSpeed + 0.1), 1); SettingsStore.MarkDirty(); Sfx.Play(Sfx.Id.Tick); }
         }
         else
         {
@@ -765,8 +734,8 @@ public class SongSelectManager : MonoBehaviour
         }
 
         SongData song = CurrentSong;
-        bool hasMv = song.HasMV == 1;
-        if (!inputBlocked && hasMv && kb.fKey.wasPressedThisFrame) isMvOn = !isMvOn;
+        bool hasMv = song.HasMvFor(currentDifficulty);   // SPECIAL 은 songs_Special.json 의 HasMV
+        if (!inputBlocked && hasMv && kb.fKey.wasPressedThisFrame) ToggleMv();
         else if (!hasMv) isMvOn = false;
 
         // 미리듣기 볼륨: 설정의 MUSIC VOLUME 을 따라가고, 오프셋 측정 중에는 끈다
@@ -815,6 +784,7 @@ public class SongSelectManager : MonoBehaviour
             if (next == currentVirtualIndex) return;
         }
         currentVirtualIndex = next;
+        Sfx.Play(Sfx.Id.Move);
         RefreshSelectedSong(dir, false);
     }
 
@@ -868,6 +838,7 @@ public class SongSelectManager : MonoBehaviour
         }
 
         lastNormalDifficulty = currentDifficulty;
+        Sfx.Play(Sfx.Id.Difficulty);
         UpdateDifficultyUI(song, direction);
         ApplyRowDifficultyColors();
         MoveHeaderIndicator(false);
@@ -1243,6 +1214,8 @@ public class SongSelectManager : MonoBehaviour
         if (songLengthText == null) return;
         if (lengthRoutine != null) { StopCoroutine(lengthRoutine); lengthRoutine = null; }
 
+        string own = song.LengthFor(currentDifficulty);   // SPECIAL 은 songs_Special.json 의 Length
+        if (own != null) { songLengthText.text = FormatLengthString(own); return; }
         if (lengthOverride.TryGetValue(song.Id, out string raw)) { songLengthText.text = FormatLengthString(raw); return; }
         if (lengthCache.TryGetValue(song.Id, out float sec)) { songLengthText.text = FormatSeconds(sec); return; }
 
@@ -1580,21 +1553,22 @@ public class SongSelectManager : MonoBehaviour
         if (!anyAvailable) return;
         if (!toEditor && !SongRowUI.IsDifficultyAvailable(GetDifficultyValue(song, currentDifficulty))) return;
 
-        if (toEditor) { BeginLeave(); CoreManager.Instance.LoadEditorScene(song.ForLevel(currentDifficulty), currentDifficulty); return; }
+        if (toEditor) { Sfx.Play(Sfx.Id.Confirm); BeginLeave(); CoreManager.Instance.LoadEditorScene(song.ForLevel(currentDifficulty), currentDifficulty); return; }
 
         // 플레이 전 확인 창
         //  · 경고창: MV 를 켠 채로, songs.json 에 "MvWarning" 이 있는 곡   → [돌아가기] [MV를 끈 채로 진행하기] [그대로 진행하기]
         //  없으면 바로 시작
         var pages = new List<PlayConfirmDialog.Page>();
         string label = SongLabel(song.ForLevel(currentDifficulty));
-        if (isMvOn && song.HasMV == 1 && !string.IsNullOrWhiteSpace(song.MvWarning))
+        if (isMvOn && song.HasMvFor(currentDifficulty) && !string.IsNullOrWhiteSpace(song.MvWarning))
             pages.Add(PlayConfirmDialog.WarningPage(label, song.MvWarning));
 
         if (pages.Count == 0) { StartGame(song, isMvOn); return; }
         int level = currentDifficulty;
+        Sfx.Play(Sfx.Id.Open);
         PlayConfirmDialog.Show(pages, DialogFont, (proceed, mvOff) =>
         {
-            if (!proceed || isLeaving) return;            // 돌아가기 → 곡 선택 그대로
+            if (!proceed || isLeaving) { Sfx.Play(Sfx.Id.Back); return; }   // 돌아가기 → 곡 선택 그대로
             if (mvOff) isMvOn = false;                    // MV 를 끈 채로 진행
             currentDifficulty = level;
             StartGame(song, isMvOn);
@@ -1618,19 +1592,19 @@ public class SongSelectManager : MonoBehaviour
             Debug.LogWarning("[GameSetting] songs.json 에 곡 ID " + GameSettingSession.SongId + " 이 없어 열 수 없습니다.");
             return;
         }
+        Sfx.Play(Sfx.Id.Confirm);
         BeginLeave();
         CoreManager.Instance.LoadTestScene();
     }
 
-    // MODE RANDOM 이 켜져 있으면: 지난 조합을 버리고 시작 → 게임 화면에서 레인이 다 펼쳐진 뒤 새로 고르는 연출
     private void StartGame(SongData song, bool mv)
     {
-        if (GameModes.RandomPick && !GameModes.Locked) GameModes.ClearRandomResult();
         LaunchGame(song, mv);
     }
 
     private void LaunchGame(SongData song, bool mv)
     {
+        Sfx.Play(Sfx.Id.SongStart);   // 곡 진입
         BeginLeave();
         CoreManager.Instance.LoadGameScene(song.ForLevel(currentDifficulty), mv, currentDifficulty);   // SPECIAL 이면 SPECIAL_Name 등으로 바뀐 곡 정보
     }

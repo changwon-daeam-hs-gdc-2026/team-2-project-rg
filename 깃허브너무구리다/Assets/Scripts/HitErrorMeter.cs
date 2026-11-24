@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -14,14 +14,17 @@ using UnityEngine.UI;
 //  - 왼쪽 = 빨리 침(FAST, -ms), 오른쪽 = 늦게 침(SLOW, +ms)
 //  - GameManager 가 만들고 판정마다 Add(오차ms, 판정) 을 부른다. 설정 > 게임플레이 > 판정 그래프 로 켜고 끔
 //  - 모든 게임 화면(GAME UI)에서 나옴, 곡 종료 / FAILED 페이드를 따라 사라짐
+//  - SIMPLE 스킨: 간소화 표기 — 판정 범위 띠 · 어두운 바탕 · FAST/SLOW 글자 없이
+//      가는 기준선 하나 + 가운데 눈금 + 판정 색 눈금(가늘고 짧게) + 평균 오차 점만
 // ============================================================
 public class HitErrorMeter : MonoBehaviour
 {
     // ----- 모양 (1920 x 1080 기준) -----
-    private const float Width = 380f;       // 띠 전체 폭 (= ±BAD)
+    private float Width = 380f;             // 띠 전체 폭 (= ±BAD)
     private const float BottomY = 34f;      // 화면 아래에서 띠 중심까지
     private const float BandH = 6f;
-    private const float TickW = 3f, TickH = 22f;
+    private float TickW = 3f, TickH = 22f;
+    private bool simple;                    // SIMPLE 스킨: 간소화 표기
     private const float TickLife = 3.5f;    // 눈금이 사라지는 시간
     private const int TickCount = 80;
 
@@ -58,6 +61,11 @@ public class HitErrorMeter : MonoBehaviour
 
     private void Build()
     {
+        // (이 그래프는 스킨보다 먼저 만들어질 수 있어서 설정 값으로도 판단)
+        simple = SimpleGameSkin.ThickActive
+              || (SimpleGameSkin.Active == null && GameSkins.Normalize(SettingsStore.Current.GameSkin) == GameSkins.Simple);
+        if (simple) { Width = 300f; TickW = 2f; TickH = 14f; }
+
         Canvas c = gameObject.AddComponent<Canvas>();
         c.renderMode = RenderMode.ScreenSpaceOverlay;
         c.sortingOrder = 60;                         // 게임 화면 위, 일시정지(450) · 설정창(500) 아래
@@ -75,13 +83,22 @@ public class HitErrorMeter : MonoBehaviour
         bar.sizeDelta = new Vector2(Width, TickH + 8f);
         bar.anchoredPosition = new Vector2(0f, BottomY);
 
-        // 어두운 바탕 + 판정 범위 띠 (바깥부터 그려서 안쪽이 위에 오도록)
-        Img("Back", bar, new Color(0f, 0f, 0f, 0.35f), 0f, Width + 8f, BandH + 6f);
-        Band(wBad, JudgeColors[3]);
-        Band(wGood, JudgeColors[2]);
-        Band(wGreat, JudgeColors[1]);
-        Band(wPerfect, JudgeColors[0]);
-        Band(GameManager.JustWindowMs / 1000.0, new Color(1f, 1f, 1f, 1f));   // JUST (±20ms, ULTIMATE ±13ms) — 가장 안쪽 흰 띠
+        if (simple)
+        {
+            // 간소화: 가는 기준선 하나 (PERFECT 범위만 살짝 밝게)
+            Img("Line", bar, new Color(1f, 1f, 1f, 0.22f), 0f, Width, 2f);
+            Img("PerfectZone", bar, new Color(1f, 1f, 1f, 0.30f), 0f, (float)(wPerfect / wBad) * Width, 2f);
+        }
+        else
+        {
+            // 어두운 바탕 + 판정 범위 띠 (바깥부터 그려서 안쪽이 위에 오도록)
+            Img("Back", bar, new Color(0f, 0f, 0f, 0.35f), 0f, Width + 8f, BandH + 6f);
+            Band(wBad, JudgeColors[3]);
+            Band(wGood, JudgeColors[2]);
+            Band(wGreat, JudgeColors[1]);
+            Band(wPerfect, JudgeColors[0]);
+            Band(GameManager.JustWindowMs / 1000.0, new Color(1f, 1f, 1f, 1f));   // JUST (±20ms, ULTIMATE ±13ms) — 가장 안쪽 흰 띠
+        }
 
         // 눈금 풀
         for (int i = 0; i < TickCount; i++)
@@ -94,16 +111,20 @@ public class HitErrorMeter : MonoBehaviour
         // 가운데 기준선 (0ms)
         Img("Center", bar, Color.white, 0f, 2f, TickH + 6f);
 
-        // 평균 오차 표시 (작은 마름모, 띠 아래)
-        Image avg = Img("Average", bar, Color.white, 0f, 9f, 9f);
+        // 평균 오차 표시 (작은 마름모, 띠 아래 / 간소화: 더 작게)
+        float am = simple ? 6f : 9f;
+        Image avg = Img("Average", bar, Color.white, 0f, am, am);
         avg.rectTransform.localEulerAngles = new Vector3(0f, 0f, 45f);
         avgMarker = avg.rectTransform;
-        avgMarker.anchoredPosition = new Vector2(0f, -(TickH * 0.5f + 8f));
+        avgMarker.anchoredPosition = new Vector2(0f, -(TickH * 0.5f + (simple ? 6f : 8f)));
         avg.enabled = false;
 
-        // 양 끝 글자
-        Label("FAST", -Width * 0.5f - 10f, TextAlignmentOptions.MidlineRight, new Color(0.53f, 0.81f, 0.92f, 0.75f));
-        Label("SLOW", Width * 0.5f + 10f, TextAlignmentOptions.MidlineLeft, new Color(1f, 0.42f, 0.42f, 0.75f));
+        // 양 끝 글자 (간소화 표기에는 없음)
+        if (!simple)
+        {
+            Label("FAST", -Width * 0.5f - 10f, TextAlignmentOptions.MidlineRight, new Color(0.53f, 0.81f, 0.92f, 0.75f));
+            Label("SLOW", Width * 0.5f + 10f, TextAlignmentOptions.MidlineLeft, new Color(1f, 0.42f, 0.42f, 0.75f));
+        }
     }
 
     // 오차(ms, FAST = -, SLOW = +) · 판정(0 PERFECT, 1 GREAT, 2 GOOD, 3 BAD)
@@ -135,7 +156,7 @@ public class HitErrorMeter : MonoBehaviour
             avgShown = Mathf.Lerp(avgShown, avgMs, 1f - Mathf.Exp(-dt * 10f));
             avgMarker.anchoredPosition = new Vector2(X(avgShown), avgMarker.anchoredPosition.y);
         }
-        float a = gm != null ? (gm.HideAllUi ? 0f : gm.EndUiAlpha) : 1f;   // UNKNOWN UI: 숨김
+        float a = gm != null ? (gm.HideAllUi ? 0f : gm.EndUiAlpha * gm.LaneUiAlpha) : 1f;   // 레인 테두리가 사라질 때 함께 사라짐   // UNKNOWN UI: 숨김
         if (!Mathf.Approximately(group.alpha, a)) group.alpha = a;
     }
 

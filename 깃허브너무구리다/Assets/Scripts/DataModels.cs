@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -30,7 +30,7 @@ public class SettingsData
     public double SettingSpeed = 1.0; 
     public int judgeoverrange = 10;    // FAST/SLOW 를 표시하는 최소 오차(ms)
     public bool ShowFastSlow = true;
-    public int GameSkin = 0;           // 게임 화면 UI: 0 = DEFAULT, 1 = SIMPLE (GameSkins 참고)
+    public int GameSkin = 1;           // 게임 화면 UI: 0 = DEFAULT(비활성화 → SIMPLE 로 바뀜), 1 = SIMPLE, 2 = SIMPLE-DIVERSE, 3 = CIRCLE (GameSkins 참고)
     public float LaneOpacity = 0.85f;  // SIMPLE 레인 배경 불투명도 (0 = 완전 투명, 1 = 불투명)
     public bool ShowInfoUI = true;     // 게임 화면 Information UI (곡 정보 · 난이도 · 시간 · 점수 · 배속 · 진행 막대)
     public bool LaneLines = true;      // SIMPLE 레인 사이 구분선 3개 켜기/끄기
@@ -40,6 +40,7 @@ public class SettingsData
     public bool ShowJustPerfect = false; // ±20ms 안의 PERFECT 를 'JUST' 로 표시 (끄면 그냥 PERFECT)
     public int SongNameLanguage = 0;   // 곡명 표기: 0 = 원어 (Name_Original …), 1 = 영어 (Name_English …)
     public string[] LaneKeys = { "D", "F", "J", "K" }; // UnityEngine.InputSystem.Key 이름
+    public string[] LaneKeys6 = { "S", "D", "F", "J", "K", "L" }; // 6키 구간 키 (채보의 LANES 확장)
     // 시작 타임 조정 (초, 0 = 처음부터). 예) 109.2 → 음악을 109.2초부터 틀고, 그 뒤 2초 안의 노트는 빼고 111.2초 노트부터 내려옴
     public double StartTime = 0.0;
 
@@ -47,6 +48,7 @@ public class SettingsData
     public float MasterVolume = 1f;
     public float MusicVolume = 1f;     // 게임 음악 + 곡 선택 미리듣기
     public float HitSoundVolume = 1f;  // 키 탭 사운드
+    public float SfxVolume = 0.8f;     // 효과음 (곡 넘김 · 곡 진입 · FULL COMBO 등, Sfx)
     public bool HitSoundOn = true;
 
     // ----- 화면 -----
@@ -95,6 +97,15 @@ public class SongData
     public string SPECIAL_Name;
     public string SPECIAL_SubName;
     public string SPECIAL_Vocal;
+    // ---- 새 형식: songs.json "Special": "1" 이면 SPECIAL 정보는 songs_Special.json 에서 같은 Id 로 가져옴 ----
+    //  "0" = SPECIAL 없음 / "1" = 있음.  칸이 아예 없으면(예전 형식) songs.json 안의 SPECIAL 칸을 그대로 씀
+    //  아래 칸은 SongDatabase 가 songs_Special.json 값으로 채움 (비어 있으면 기본 곡 정보를 씀)
+    public string Special;
+    [NonSerialized] public string SPECIAL_Composer, SPECIAL_illustration, SPECIAL_BPM, SPECIAL_Length;
+    [NonSerialized] public int SPECIAL_HasMV = -1;          // -1 = 기본 HasMV 를 씀
+    [NonSerialized] public int SPECIAL_ExistSongbar = -1;   // -1 = 기본 ExistSongbar 를 씀
+    [NonSerialized] public bool ShowInNormal = true;        // 기존 3난이도 목록에 보이는가 (songs.json ExistSongbar)
+    public string Length;                                   // 곡 길이 "2:27" (SPECIAL 은 songs_Special.json 의 Length)
     public string Composer;
     public string illustration; 
     public string Vocal;
@@ -165,16 +176,40 @@ public class SongData
 
     // 이 난이도로 보여 줄 곡 정보: SPECIAL(4) 이면 SPECIAL_Name · SPECIAL_SubName · SPECIAL_Vocal 로 바꾼 복사본, 아니면 그대로
     //  (SPECIAL_Name 이 있으면 부제는 SPECIAL_SubName 만 씀 — 기본 부제가 섞이지 않게)
+    //  songs_Special.json 의 작곡가 · 일러스트 · BPM · 길이 · HasMV · ExistSongbar 도 (값이 있으면) 바꿔 넣음
     public SongData ForLevel(int levelId)
     {
         if (levelId != DifficultyHelper.Special) return this;
         bool hasName = !string.IsNullOrEmpty(SPECIAL_Name), hasSub = !string.IsNullOrEmpty(SPECIAL_SubName), hasVocal = !string.IsNullOrEmpty(SPECIAL_Vocal);
-        if (!hasName && !hasSub && !hasVocal) return this;
+        bool hasComposer = !string.IsNullOrEmpty(SPECIAL_Composer), hasIllust = !string.IsNullOrEmpty(SPECIAL_illustration);
+        bool hasBpm = !string.IsNullOrEmpty(SPECIAL_BPM), hasLen = !string.IsNullOrEmpty(SPECIAL_Length);
+        if (!hasName && !hasSub && !hasVocal && !hasComposer && !hasIllust && !hasBpm && !hasLen
+            && SPECIAL_HasMV < 0 && SPECIAL_ExistSongbar < 0) return this;
         SongData c = (SongData)MemberwiseClone();
         if (hasName) c.Name = SPECIAL_Name;
         if (hasName || hasSub) c.SubName = SPECIAL_SubName ?? "";
         if (hasVocal) c.Vocal = SPECIAL_Vocal;
+        if (hasComposer) c.Composer = SPECIAL_Composer;
+        if (hasIllust) c.illustration = SPECIAL_illustration;
+        if (hasBpm) c.BPM = SPECIAL_BPM;
+        if (hasLen) c.Length = SPECIAL_Length;
+        if (SPECIAL_HasMV >= 0) c.HasMV = SPECIAL_HasMV;
+        if (SPECIAL_ExistSongbar >= 0) c.ExistSongbar = SPECIAL_ExistSongbar;
         return c;
+    }
+
+    // 이 난이도에서 MV 가 있는가 (SPECIAL 은 songs_Special.json 의 HasMV)
+    public bool HasMvFor(int levelId)
+    {
+        if (levelId == DifficultyHelper.Special && SPECIAL_HasMV >= 0) return SPECIAL_HasMV == 1;
+        return HasMV == 1;
+    }
+
+    // 이 난이도의 곡 길이 글자 ("2:27", 없으면 null)
+    public string LengthFor(int levelId)
+    {
+        if (levelId == DifficultyHelper.Special && !string.IsNullOrWhiteSpace(SPECIAL_Length)) return SPECIAL_Length.Trim();
+        return string.IsNullOrWhiteSpace(Length) ? null : Length.Trim();
     }
 }
 
@@ -314,7 +349,129 @@ public static class SongJson
         json = System.Text.RegularExpressions.Regex.Replace(json, "(\"MvWarning\"\\s*:\\s*)(false|0)(?=\\s*[,}])", "$1\"\"");
         // "LockedValue": 1010 / 0010  →  "1010" / "0010" (앞의 0 이 사라지지 않게 글자로)
         json = System.Text.RegularExpressions.Regex.Replace(json, "(\"LockedValue\"\\s*:\\s*)([0-9]+)", "$1\"$2\"");
+        // "Special": 1  →  "1",  "Length": 219.5  →  "219.5"  (숫자로 적어도 글자로 읽히게)
+        json = System.Text.RegularExpressions.Regex.Replace(json, "(\"Special\"\\s*:\\s*)(-?[0-9]+)", "$1\"$2\"");
+        json = System.Text.RegularExpressions.Regex.Replace(json, "(\"Length\"\\s*:\\s*)(-?[0-9]+(?:\\.[0-9]+)?)", "$1\"$2\"");
         return json;
+    }
+}
+
+// ============================================================
+// SPECIAL 전용 곡 정보 (StreamingAssets/data/songs_Special.json) — songs.json 에서 "Special": "1" 인 곡만 같은 Id 로 찾음
+//  [ { "Id": 8, "Name_Original": "", "SubName_Original": "", "Name_English": "", "SubName_English": "",
+//      "Difficulty_SPECIAL": "14", "Composer": "", "illustration": "", "Vocal": "", "BPM": "",
+//      "NoteCount_SPECIAL": 0, "HasMV": 0, "ExistSongbar": 1, "Length": "" }, ... ]
+//  - 비어 있는 글자 칸은 기본 곡 정보(songs.json)를 그대로 씀
+//  - "Difficulty_SPECIAL_REALVALUE" 도 적을 수 있음 (숨긴 난이도 "?")
+//  - ExistSongbar 0 이면 SPECIAL 목록에 나오지 않음 (2 = 잠김 표시)
+// ============================================================
+[Serializable]
+public class SpecialSongEntry
+{
+    public int Id;
+    public string Name_Original, SubName_Original, Name_English, SubName_English;
+    public string Difficulty_SPECIAL, Difficulty_SPECIAL_REALVALUE;
+    public string Composer, illustration, Vocal, BPM, Length;
+    public int NoteCount_SPECIAL;
+    public int HasMV;
+    public int ExistSongbar = 1;
+}
+
+// ============================================================
+// 곡 목록 읽기 (songs.json + songs_Special.json) — 곡 선택창 · GAME SETTING 이 같이 씀
+// ============================================================
+public static class SongDatabase
+{
+    public static string SongsPath { get { return System.IO.Path.Combine(Application.streamingAssetsPath, "data", "songs.json"); } }
+    public static string SpecialPath { get { return System.IO.Path.Combine(Application.streamingAssetsPath, "data", "songs_Special.json"); } }
+    // 에디터가 노트 수 · 길이를 적을 파일: SPECIAL 은 songs_Special.json (새 형식인 곡만), 나머지는 songs.json
+    public static string JsonPathFor(SongData song, int levelId)
+    {
+        bool split = levelId == DifficultyHelper.Special && (song == null || song.Special != null) && System.IO.File.Exists(SpecialPath);
+        return split ? SpecialPath : SongsPath;
+    }
+    public static string JsonPathFor(int songId, int levelId)
+    {
+        SongData s = CoreManager.Instance != null && CoreManager.Instance.CurrentSongData != null && CoreManager.Instance.CurrentSongData.Id == songId
+                   ? CoreManager.Instance.CurrentSongData : null;
+        return JsonPathFor(s, levelId);
+    }
+
+    // 모든 곡 (ExistSongbar 와 상관없이). 실패하면 빈 배열
+    public static SongData[] LoadAll()
+    {
+        SongData[] arr = null;
+        try
+        {
+            if (!System.IO.File.Exists(SongsPath)) { Debug.LogWarning("[SongDatabase] songs.json 이 없습니다: " + SongsPath); return new SongData[0]; }
+            arr = JsonHelper.FromJson<SongData>(SongJson.Normalize(System.IO.File.ReadAllText(SongsPath, System.Text.Encoding.UTF8)));
+        }
+        catch (Exception e) { Debug.LogWarning("[SongDatabase] songs.json 을 읽지 못했습니다: " + e.Message); }
+        if (arr == null) return new SongData[0];
+
+        Dictionary<int, SpecialSongEntry> sp = LoadSpecial();
+        foreach (var s in arr) if (s != null) ApplySpecial(s, sp);
+        return arr;
+    }
+
+    // 곡 선택창에 보일 곡 (기존 목록 또는 SPECIAL 목록 어느 한쪽에라도 나오는 곡)
+    public static List<SongData> LoadVisible()
+    {
+        var list = new List<SongData>();
+        foreach (var s in LoadAll())
+        {
+            if (s == null) continue;
+            s.ShowInNormal = s.ExistSongbar == 1 || s.ExistSongbar == 2;
+            if (s.ShowInNormal || DifficultyHelper.HasSpecial(s)) list.Add(s);
+        }
+        return list;
+    }
+
+    public static SongData Load(int id)
+    {
+        foreach (var s in LoadAll()) if (s != null && s.Id == id) return s;
+        return null;
+    }
+
+    private static Dictionary<int, SpecialSongEntry> LoadSpecial()
+    {
+        var d = new Dictionary<int, SpecialSongEntry>();
+        try
+        {
+            if (!System.IO.File.Exists(SpecialPath)) return d;
+            SpecialSongEntry[] arr = JsonHelper.FromJson<SpecialSongEntry>(SongJson.Normalize(System.IO.File.ReadAllText(SpecialPath, System.Text.Encoding.UTF8)));
+            if (arr != null) foreach (var e in arr) if (e != null) d[e.Id] = e;
+        }
+        catch (Exception e) { Debug.LogWarning("[SongDatabase] songs_Special.json 을 읽지 못했습니다: " + e.Message); }
+        return d;
+    }
+
+    // "Special" 칸: 없으면 예전 형식 (songs.json 안의 SPECIAL 칸 그대로), "0" 이면 SPECIAL 없음, "1" 이면 songs_Special.json 에서
+    private static void ApplySpecial(SongData s, Dictionary<int, SpecialSongEntry> table)
+    {
+        if (s.Special == null) return;
+        bool wants = s.Special.Trim() == "1";
+        SpecialSongEntry e = null;
+        if (!wants || !table.TryGetValue(s.Id, out e) || e == null || e.ExistSongbar == 0)
+        {
+            if (wants && e == null) Debug.LogWarning("[SongDatabase] 곡 " + s.Id + " 은 \"Special\": \"1\" 이지만 songs_Special.json 에 없습니다.");
+            s.Difficulty_SPECIAL = null; s.Difficulty_SPECIAL_REALVALUE = null; s.NoteCount_SPECIAL = 0;
+            return;
+        }
+        s.Difficulty_SPECIAL = e.Difficulty_SPECIAL;
+        s.Difficulty_SPECIAL_REALVALUE = e.Difficulty_SPECIAL_REALVALUE;
+        s.NoteCount_SPECIAL = e.NoteCount_SPECIAL;
+        s.SPECIAL_Name_Original = e.Name_Original;
+        s.SPECIAL_SubName_Original = e.SubName_Original;
+        s.SPECIAL_Name_English = e.Name_English;
+        s.SPECIAL_SubName_English = e.SubName_English;
+        s.SPECIAL_Vocal = e.Vocal;
+        s.SPECIAL_Composer = e.Composer;
+        s.SPECIAL_illustration = e.illustration;
+        s.SPECIAL_BPM = e.BPM;
+        s.SPECIAL_Length = e.Length;
+        s.SPECIAL_HasMV = e.HasMV;
+        s.SPECIAL_ExistSongbar = e.ExistSongbar;
     }
 }
 
@@ -370,10 +527,6 @@ public class ResultData
     public bool IsMidStart;
     public double MidStartSeconds;
     public double Speed = 1.0;
-    // 게임 모드 (GameMode 번호) · 점수 배율 (1 = 100%, 최대 3 = 300%)
-    public int[] Modes = new int[0];
-    public double ScoreMultiplier = 1.0;
-    public double RandomBonus = 0.0;    // MODE RANDOM 보너스 (0.25 = +25%p). ScoreMultiplier 에 이미 들어 있음
 
     // 화면에 보여 줄 클리어 등급 (높을수록 좋음): 0 FAILED  1 CLEAR  2 FULL COMBO  3 ALL PERFECT
     public int ClearRank { get { return IsFailed ? 0 : (IsAllPerfect ? 3 : (IsFullCombo ? 2 : 1)); } }
@@ -537,6 +690,11 @@ public static class DifficultyHelper
         for (int i = 0; i < text.Length; i++)
         {
             if (text[i] == ' ') { sb.Append(' '); continue; }
+            if (text[i] == '<')   // 리치 텍스트 태그 (<sup> 등) 는 그대로 통과
+            {
+                int end = text.IndexOf('>', i);
+                if (end > i) { sb.Append(text, i, end - i + 1); i = end; continue; }
+            }
             Color c = SpecialAt(phase + 0.85f * i / n);
             sb.Append("<color=#").Append(ColorUtility.ToHtmlStringRGB(c)).Append('>').Append(text[i]).Append("</color>");
         }
@@ -682,6 +840,80 @@ public class NoteData
     // 층 정보 (NoteLayer.Bottom = 1층: 괄호 안 / NoteLayer.Top = 2층: 괄호 밖)
     // 기존 채보(괄호 없음)는 전부 Top(2층)으로 취급되어 동작이 바뀌지 않는다.
     public int Layer = 2;
+
+    // 1/4 칸 노트 (롱노트 · 드래그 · 슬라이드 점): 한 레인을 4칸으로 나눈 위치
+    //  채보 토큰 끝 "q{시작}{폭}"  예) "2q13" = 롱노트 머리, 이 레인의 1번째 1/4 칸부터 3칸 (0 ~ 3, 1 ~ 4)
+    //  Sub = 시작 칸 (0 ~ 3), SubW = 폭 (1/4 칸 단위). SubW 4 = 레인 전체 (예전 노트)
+    //  슬라이드 점은 레인을 넘는 폭도 됨: "2q05" = 이 레인 처음부터 5/4 칸 (1 + 1/4 칸)
+    //  판정: 이 노트가 속한 레인 키로 침 (같은 레인 · 같은 시각의 1/4 노트는 키 한 번에 모두)
+    public int Sub = 0;
+    public int SubW = 4;
+    public bool IsQuarter { get { return SubW != 4 || Sub != 0; } }   // 1/4 칸 뒤에서 시작하는 4/4 폭(1/4 ~ 5/4 칸) · 폭 0 점도 1/4 칸 노트
+    // 1/4 칸 노트가 걸친 레인 수 (레인을 넘는 슬라이드 점이면 2 이상)
+    public int QuarterLaneCount { get { return IsQuarter ? Mathf.Max(1, (Sub + SubW + 3) / 4) : Mathf.Max(1, Width); } }
+    // 레인 단위 왼쪽 · 오른쪽 끝 (1칸 = 1)
+    public float LeftLanes { get { return IsQuarter ? Lane + Sub * 0.25f : Lane; } }
+    public float RightLanes { get { return IsQuarter ? Lane + (Sub + SubW) * 0.25f : Lane + Mathf.Max(1, Width); } }
+}
+
+// ============================================================
+// 레인 수 (4키 ↔ 6키 확장)
+//  채보: LANES, 마디, 분자, 분모, 6[, 초]   → 이 시점부터 6키로 펼쳐짐 (초 = 펼쳐지는 시간, 기본 0.4)
+//        LANES, 마디, 분자, 분모, 4[, 초]   → 다시 4키로 접힘
+//        KeyMode: 6                         → 처음부터 6키로 시작
+//  6키 채보 안의 레인 번호: 0 ~ 5 (왼쪽부터). 4키 레인 ABCD = 6키의 1 ~ 4번 → "(+)ABCD(+)"
+//  NOTE 줄: 레인 칸이 4개면 4키 줄(ABCD → 1 ~ 4번), 6개면 6키 줄(0 ~ 5번) — 예전 채보는 그대로 읽힘
+// ============================================================
+public static class Lanes
+{
+    public const int Max = 6;          // 가장 넓을 때 레인 수
+    public const int Quarters = 4;     // 한 레인을 나누는 칸 수 (1/4 노트)
+    public const int FourOffset = 1;   // 6키 채보에서 4키 레인 A 의 번호
+    public const double DefaultExpandSeconds = 0.4;
+}
+
+public class LaneModeEvent { public double Time; public int Keys; public double Duration; }
+
+// 채보에 6키 구간이 있는가 (게임 화면을 만들기 전에 미리 확인 — LANES 6 · KeyMode: 6 · 레인 칸이 6개인 NOTE 줄)
+public static class ChartLaneScan
+{
+    public static bool UsesSixLanes(string path)
+    {
+        try
+        {
+            if (!System.IO.File.Exists(path)) return false;
+            return UsesSixLanesLines(System.IO.File.ReadLines(path));
+        }
+        catch (Exception) { return false; }
+    }
+
+    public static bool UsesSixLanesLines(IEnumerable<string> lines)
+    {
+        try
+        {
+            foreach (string raw in lines)
+            {
+                string line = raw.Trim();
+                if (line.Length == 0) continue;
+                if (line.StartsWith("KeyMode:", StringComparison.OrdinalIgnoreCase))
+                {
+                    int k;
+                    if (int.TryParse(line.Substring(8).Trim(), out k) && k >= 6) return true;
+                    continue;
+                }
+                if (line.StartsWith("LANES", StringComparison.OrdinalIgnoreCase))
+                {
+                    string[] d = line.Split(',');
+                    int k;
+                    if (d.Length >= 5 && int.TryParse(d[4].Trim(), out k) && k >= 6) return true;
+                    continue;
+                }
+                if (line.StartsWith("NOTE", StringComparison.OrdinalIgnoreCase) && line.Split(',').Length >= 4 + Lanes.Max) return true;
+            }
+        }
+        catch (Exception) { }
+        return false;
+    }
 }
 
 // ============================================================
@@ -772,6 +1004,7 @@ public static class NoteCellParser
     // "0(2)"     -> top = "0",    bottom = "2"
     // 한 칸 → 층별 토큰 (인덱스 1 ~ 5, 없으면 null)
     //  형식: "2층(1층)|토큰@층|토큰@층"   예) "1(2)|11_2@5|1@3"  = 2층 탭, 1층 롱노트 시작, 5층 RED 2칸, 3층 탭
+    //  한 층에 1/4 칸 노트가 여러 개면 '+' 로 이어짐  예) "2q01+2q21" (읽는 쪽에서 Split('+'))
     //   · 앞부분은 예전과 같은 "2층(1층)" — 예전 채보는 그대로 읽힘
     //   · 3 ~ 5층(또는 아무 층)은 '|' 뒤에 "토큰@층"
     public static string[] SplitLayers(string cell)
@@ -787,7 +1020,7 @@ public static class NoteCellParser
             if (at > 0 && int.TryParse(p.Substring(at + 1).Trim(), out int L) && L >= NoteLayer.Min && L <= NoteLayer.Max)
             {
                 string tok = p.Substring(0, at).Trim();
-                if (tok.Length > 0 && tok != "0") r[L] = tok;
+                if (tok.Length > 0 && tok != "0") r[L] = r[L] == null ? tok : r[L] + "+" + tok;   // 같은 층이 또 나오면 이어 붙임
                 continue;
             }
             if (i == 0)
@@ -841,6 +1074,7 @@ public static class NoteCellParser
         if (token == "0") return false;
         int sl = token.IndexOf('~');                     // 슬라이드 표시("~번호")는 떼고 읽음
         if (sl >= 0) token = token.Substring(0, sl).Trim();
+        token = SplitQuarter(token, out _, out _);       // 1/4 칸 표시("q13")도 떼고 읽음
 
         if (token.Contains("_"))
         {
@@ -848,7 +1082,7 @@ public static class NoteCellParser
             if (parts.Length < 2) return false;
             if (!int.TryParse(parts[0].Trim(), out type)) return false;
             if (!int.TryParse(parts[1].Trim(), out width)) return false;
-            width = Math.Max(1, Math.Min(4, width));
+            width = Math.Max(1, Math.Min(Lanes.Max, width));
             isRed = type >= 11 && type <= 13;
             return type != 0;
         }
@@ -873,6 +1107,39 @@ public static class NoteCellParser
         string c = tail.Substring(end).Trim().ToLowerInvariant();
         curve = c == "i" ? SlideCurve.EaseIn : c == "o" ? SlideCurve.EaseOut : c == "r" ? SlideCurve.Corner : SlideCurve.Straight;
         return core;
+    }
+
+    // 1/4 칸 표시 떼기: "2q13" → core "2", sub 1, subW 3  /  표시 없으면 sub 0, subW 4 (레인 전체)
+    //  (슬라이드 표시보다 앞에 붙음: "2q13~5i")
+    public static string SplitQuarter(string core, out int sub, out int subW)
+    {
+        sub = 0; subW = Lanes.Quarters;
+        if (string.IsNullOrEmpty(core)) return core;
+        int q = core.IndexOf('q');
+        if (q < 0) q = core.IndexOf('Q');
+        if (q < 0) return core;
+        string tail = core.Substring(q + 1).Trim();
+        if (tail.Length >= 2 && char.IsDigit(tail[0]) && char.IsDigit(tail[1]))
+        {
+            // "q{시작}{폭}" — 폭은 여러 자리도 됨 (레인을 넘는 슬라이드 점: "q05" = 5/4 칸, "q113" = 1/4 칸 뒤부터 13/4 칸)
+            sub = Math.Max(0, Math.Min(4, tail[0] - '0'));
+            int k = 1, w = 0;
+            while (k < tail.Length && char.IsDigit(tail[k]) && k < 4) { w = w * 10 + (tail[k] - '0'); k++; }
+            if (w == 0) { subW = 0; return core.Substring(0, q).Trim(); }   // 폭 0 슬라이드 점 (롱노트 끝이 한 점으로 모임): "q00" 왼쪽 · "q20" 가운데 · "q40" 오른쪽
+            sub = Math.Min(3, sub);
+            subW = Math.Max(1, Math.Min(Lanes.Max * Lanes.Quarters - sub, w));
+            if (sub == 0 && subW % Lanes.Quarters == 0) subW = Lanes.Quarters;   // 레인에 딱 맞으면 레인 전체
+        }
+        return core.Substring(0, q).Trim();
+    }
+
+    // 1/4 칸 표시 붙이기: ("2", 1, 3) → "2q13"  (폭 4 = 레인 전체면 그대로)
+    public static string QuarterToken(string core, int sub, int subW)
+    {
+        if (subW == Lanes.Quarters && sub == 0) return core;
+        if (subW <= 0) return core + "q" + Mathf.Clamp(sub, 0, 4) + "0";              // 폭 0 점 (0 왼쪽 · 2 가운데 · 4 오른쪽)
+        int s = Mathf.Clamp(sub, 0, 3);
+        return core + "q" + s + Mathf.Clamp(subW, 1, Lanes.Max * Lanes.Quarters - s);   // 폭 5 이상 = 레인을 넘는 슬라이드 점
     }
 
     // 슬라이드 표시 붙이기: ("2_3", 5, EaseIn) → "2_3~5i"
@@ -914,8 +1181,13 @@ public class SlidePoint
 {
     public double Time;
     public int Lane, Width = 1;
+    public int Sub = 0, SubW = Lanes.Quarters;   // 1/4 칸 위치 · 폭 (SubW 4 = 레인 전체)
     public int Curve;          // 이 점 → 다음 점
     public NoteData Note;
+    // 레인 단위 왼쪽 · 오른쪽 끝 (1/4 칸 점은 그 칸만)
+    public bool IsQuarter { get { return SubW != Lanes.Quarters || Sub != 0; } }
+    public float Left { get { return IsQuarter ? Lane + Sub * 0.25f : Lane; } }
+    public float Right { get { return IsQuarter ? Lane + (Sub + SubW) * 0.25f : Lane + Width; } }
 }
 
 public class SlidePath
@@ -929,8 +1201,8 @@ public class SlidePath
     {
         if (Points.Count == 0) { left = 0f; right = 1f; return; }
         SlidePoint a = Points[0], b = Points[Points.Count - 1];
-        if (t <= a.Time) { left = a.Lane; right = a.Lane + a.Width; return; }
-        if (t >= b.Time) { left = b.Lane; right = b.Lane + b.Width; return; }
+        if (t <= a.Time) { left = a.Left; right = a.Right; return; }
+        if (t >= b.Time) { left = b.Left; right = b.Right; return; }
         for (int i = 0; i < Points.Count - 1; i++)
         {
             if (t <= Points[i + 1].Time) { a = Points[i]; b = Points[i + 1]; break; }
@@ -938,18 +1210,20 @@ public class SlidePath
         double span = b.Time - a.Time;
         float u = span <= 1e-9 ? 1f : (float)((t - a.Time) / span);
         float e = SlideCurve.Ease(a.Curve, u);
-        left = Mathf.Lerp(a.Lane, b.Lane, e);
-        right = Mathf.Lerp(a.Lane + a.Width, b.Lane + b.Width, e);
+        left = Mathf.Lerp(a.Left, b.Left, e);
+        right = Mathf.Lerp(a.Right, b.Right, e);
     }
 
     // 시각 t 에 덮는 레인들 (조금이라도 걸치면 포함, 아주 살짝 걸친 건 제외)
+    //  1/4 칸 슬라이드는 폭이 좁으므로 '살짝'의 기준도 폭에 맞춰 줄임
     public void CoveredLanes(double t, bool[] outLanes)
     {
         Evaluate(t, out float l, out float r);
+        float min = Mathf.Min(0.2f, (r - l) * 0.5f);
         for (int lane = 0; lane < outLanes.Length; lane++)
         {
             float overlap = Mathf.Min(r, lane + 1f) - Mathf.Max(l, lane);
-            if (overlap > 0.2f) outLanes[lane] = true;
+            if (overlap > min) outLanes[lane] = true;
         }
     }
 }

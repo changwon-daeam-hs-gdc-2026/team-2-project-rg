@@ -13,6 +13,10 @@ public static class HitSound
 {
     public static bool UseResource = false;
 
+    // 게임 탭음 크기 배율 (음악 100% 기준으로 탭음은 150%) — 게임 · 설정창 미리 듣기에서 씀
+    //  (PlayOneShot 의 volumeScale 은 1 을 넘겨도 그만큼 커짐)
+    public const float Gain = 1.5f;
+
     private static AudioClip clip;
 
     public static AudioClip Clip
@@ -39,7 +43,19 @@ public static class HitSound
         byte[] pcm = Convert.FromBase64String(Data);
         int n = pcm.Length / 2;
         float[] d = new float[n];
-        for (int i = 0; i < n; i++) d[i] = (short)(pcm[i * 2] | (pcm[i * 2 + 1] << 8)) / 32768f;
+        float peak = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            d[i] = (short)(pcm[i * 2] | (pcm[i * 2 + 1] << 8)) / 32768f;
+            peak = Mathf.Max(peak, Mathf.Abs(d[i]));
+        }
+        // [버그 수정] 원래 hitsound.mp3 는 Unity 가져오기 설정 Normalize 가 켜져 있어서 최대 크기(1.0)로 키워져 재생됐음
+        //  담아 둔 원본 데이터는 최대 약 0.48 (-6.3dB) 이라 그대로 쓰면 탭음이 절반 크기로 작게 들림 → 똑같이 정규화
+        if (peak > 0f)
+        {
+            float gain = 1f / peak;
+            for (int i = 0; i < n; i++) d[i] *= gain;
+        }
         AudioClip c = AudioClip.Create("HitSound", n, 1, 44100, false);
         c.SetData(d, 0);
         return c;

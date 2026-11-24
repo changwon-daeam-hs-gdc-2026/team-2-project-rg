@@ -60,11 +60,7 @@ public static class GameSettingSession
     {
         try
         {
-            string path = Path.Combine(Application.streamingAssetsPath, "data", "songs.json");
-            if (!File.Exists(path)) return null;
-            string json = SongJson.Normalize(File.ReadAllText(path, System.Text.Encoding.UTF8));
-            SongData[] arr = JsonHelper.FromJson<SongData>(json);
-            SongData found = arr != null ? arr.FirstOrDefault(s => s != null && s.Id == id) : null;
+            SongData found = SongDatabase.Load(id);   // songs.json + songs_Special.json
             if (found != null) found.ApplyNameLanguage(SongData.EnglishNames);   // 곡명 표기 (원어 / 영어)
             return found;
         }

@@ -14,8 +14,12 @@ using UnityEngine;
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class SlideBody : MonoBehaviour
 {
-    private const float LaneW = 0.8f;
-    private const float Inset = 0.02f;            // 일반 롱노트 몸통과 같은 폭 (레인 폭의 95%)
+    private static float LaneW { get { return SimpleGameSkin.GameLaneWidth; } }   // CIRCLE 은 레인이 넓음
+    // 일반 롱노트 몸통과 같은 폭 (SIMPLE: 레인 폭의 95% / CIRCLE: 원보다 가는 몸통)
+    private static float Inset { get { return SimpleGameSkin.CircleActive ? (LaneW - SimpleGameSkin.BodySpan(1)) * 0.5f : 0.02f; } }
+    // 1/4 칸 점: 1/4 노트와 같은 작은 틈 (레인 전체 점은 원래 Inset)
+    private static float InsetFor(SlidePoint p) { return Mathf.Min(p.IsQuarter ? LaneW * 0.02f : Inset, (p.Right - p.Left) * LaneW * 0.5f); }   // 폭 0 점: 여백도 0
+    private static float InsetAt(float width) { return width < 0.99f ? LaneW * 0.02f : Inset; }
     private const int StraightSteps = 6;           // 직선 구간도 변속에 따라 휘어 보일 수 있어 몇 조각으로
     private const int CurveSteps = 18;
     // 직각 꺾임: 가로 띠 두께 = 몸통 폭 (앞 · 뒤 점과 가까우면 그 간격까지만) — 에디터와 같은 규칙
@@ -108,8 +112,8 @@ public class SlideBody : MonoBehaviour
             if (cornerFrom != null && t > t0 + 1e-6)
             {
                 SlidePoint to = NextPoint(path, cornerFrom);
-                float al = x0 + cornerFrom.Lane * LaneW + Inset, ar = x0 + (cornerFrom.Lane + cornerFrom.Width) * LaneW - Inset;
-                float bl = x0 + to.Lane * LaneW + Inset, br = x0 + (to.Lane + to.Width) * LaneW - Inset;
+                float al = x0 + cornerFrom.Left * LaneW + InsetFor(cornerFrom), ar = x0 + cornerFrom.Right * LaneW - InsetFor(cornerFrom);   // 1/4 칸 점은 그 칸만
+                float bl = x0 + to.Left * LaneW + InsetFor(to), br = x0 + to.Right * LaneW - InsetFor(to);
                 // 가로 띠 두께 = 몸통 폭 (관처럼 같은 굵기로 꺾임). 앞 · 뒤 점과 너무 가까우면 그 간격에 맞춰 얇게
                 float thick = Mathf.Min(ar - al, br - bl);
                 float yPrev = YAt(gm, cornerFrom.Time);
@@ -128,7 +132,8 @@ public class SlideBody : MonoBehaviour
                 continue;
             }
             path.Evaluate(t, out float l, out float r);
-            float xl = x0 + l * LaneW + Inset, xr = x0 + r * LaneW - Inset;
+            float ins = Mathf.Min(InsetAt(r - l), (r - l) * LaneW * 0.5f);   // 끝이 한 점으로 모이면 여백도 줄어 뒤집히지 않게
+            float xl = x0 + l * LaneW + ins, xr = x0 + r * LaneW - ins;
             if (rowY.Count > 0 && y < rowY[rowY.Count - 1]) y = rowY[rowY.Count - 1];   // 띠 위 변보다 아래로 내려오지 않게
             AddRawRow(y, xl, xr);
         }
@@ -166,7 +171,7 @@ public class SlideBody : MonoBehaviour
 
     private float YAt(GameManager gm, double t)
     {
-        return hitYNow + (float)(gm.GetScrollDistance(t, layerNow) - curDistNow) * 0.01f;
+        return hitYNow - gm.hitLineY + gm.NoteYFromDist(gm.GetScrollDistance(t, layerNow) - curDistNow);
     }
 
     // 모아 둔 줄들을 사각형으로 이어 붙이고 비움 (u: 왼쪽 u0 → 오른쪽 u1)

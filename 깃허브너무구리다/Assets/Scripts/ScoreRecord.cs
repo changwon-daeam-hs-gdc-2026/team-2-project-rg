@@ -44,6 +44,8 @@ public static class ScoreRecords
             {
                 FileData loaded = JsonUtility.FromJson<FileData>(File.ReadAllText(FilePath));
                 if (loaded != null && loaded.Records != null) data = loaded;
+                // 예전 게임 모드(점수 배율) 기록은 최고 1,000,000 점으로 맞춤
+                foreach (var r in data.Records) if (r != null) r.BestScore = Math.Min(r.BestScore, GameManager.MaxScore);
             }
         }
         catch (Exception e)

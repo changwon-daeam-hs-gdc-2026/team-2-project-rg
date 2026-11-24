@@ -18,9 +18,6 @@ using UnityEngine.UI;
 //   ┌────────────────────┐ ┌────────────────────┐
 //   │  MV            ON  │ │  AUTO PLAY    OFF  │   ← 칸을 누르면 켜고 끔
 //   └━━━━━━━━━━━━━━━━━━━━┘ └────────────────────┘      켜지면 아래 선이 색으로 펼쳐짐
-//   ┌──────────────────────────────────────────┐
-//   │  MODE   [◇][◎][≡]                   240%  │   ← 고른 게임 모드 (최대 3개) + 점수 배율. 누르면(또는 M 키) 모드 설정창
-//   └──────────────────────────────────────────┘
 //
 //  - 납작한 어두운 칸 + 작은 모서리, 그림자 · 빛 효과 없음. 색은 난이도 블록과 켜진 상태에만.
 //  - 키보드 조작(↑↓ / F1 F2 / F / A)과 같은 기능을 마우스로도 할 수 있다 (씬에 EventSystem 필요)
@@ -38,8 +35,7 @@ public class SongDetailPanel : MonoBehaviour
     private static readonly Color AutoColor = new Color(1f, 0.80f, 0.36f, 1f);
     private const float Gap = 20f;            // 위쪽 곡 정보와의 간격
     private const float RowGap = 8f;
-    private const float DiffH = 84f, SpeedH = 54f, ToggleH = 54f, ModeH = 54f;
-    private const float ModeIcon = 30f;       // MODE 바 아이콘 크기
+    private const float DiffH = 84f, SpeedH = 54f, ToggleH = 54f;
     private const float Radius = 6f;          // 모든 칸 · 선택 블록 공통 모서리 반지름
     private const float NameValueGap = 4f;    // 난이도 이름(위) ↔ 숫자(아래) 사이 세로 간격
     private const float PadX = 18f;           // 칸 안 좌우 여백
@@ -49,8 +45,6 @@ public class SongDetailPanel : MonoBehaviour
     public Action<double> OnSpeedDelta;      // 배속 증감 (0.1 단위)
     public Action OnToggleMv;
     public Action OnToggleAuto;
-    public Action OnOpenModes;               // MODE 바 클릭 → 모드 설정창
-    public Action OnToggleRandom;            // (예전 MODE 바 옆 RANDOM 버튼 — 지금은 쓰지 않음. R 키 · 모드 설정창 버튼)
 
     private RectTransform rt;
     private RectTransform[] refs;
@@ -84,13 +78,6 @@ public class SongDetailPanel : MonoBehaviour
     // MV / AUTO PLAY
     private class Switch { public Image box, bar, baseLine; public TextMeshProUGUI label, state; public float on, target; public Color color; public bool enabled = true; }
     private Switch mv, auto;
-
-    // MODE 바
-    private Image modeBox;
-    private TextMeshProUGUI modeLabel, modeValue;
-    private readonly GameModeBadge[] modeSlots = new GameModeBadge[GameModes.MaxSelected];
-    private float modeFlash;                  // 3개가 차서 더 못 고를 때 잠깐 빨갛게
-    public static readonly Color RandomColor = new Color(1f, 0.82f, 0.36f, 1f);
 
     private string lastKey = "";
 
@@ -168,29 +155,7 @@ public class SongDetailPanel : MonoBehaviour
         // ---- MV · AUTO PLAY (반반) ----
         mv = MakeSwitch("MV", 0f, 0.5f, y, MvColor, () => { if (mv.enabled && OnToggleMv != null) OnToggleMv(); });
         auto = MakeSwitch("AUTO PLAY", 0.5f, 1f, y, AutoColor, () => { if (OnToggleAuto != null) OnToggleAuto(); });
-        y += ToggleH + RowGap;
-
-        // ---- MODE (한 상자: 누르면 모드 설정창) ----
-        modeBox = Box("Mode", 0f, 1f, y, ModeH, true);
-        RectTransform mb = modeBox.rectTransform;
-        AddButton(modeBox.gameObject, () => { if (OnOpenModes != null) OnOpenModes(); });
-        modeLabel = Txt(mb, "MODE", 14, TextAlignmentOptions.MidlineLeft, TextSub);
-        modeLabel.characterSpacing = 4f;
-        Span(modeLabel.rectTransform, 0f, 1f, 0f, 1f, PadX, PadX);
-        for (int i = 0; i < modeSlots.Length; i++)
-        {
-            RectTransform br = GameModes.CreateBadge(mb, GameMode.Mirror, ModeIcon);
-            br.anchorMin = br.anchorMax = new Vector2(0f, 0.5f);
-            br.pivot = new Vector2(0f, 0.5f);
-            br.anchoredPosition = new Vector2(PadX + 72f + i * (ModeIcon + 6f), 0f);
-            modeSlots[i] = br.GetComponent<GameModeBadge>();
-            foreach (var g in br.GetComponentsInChildren<Graphic>()) g.raycastTarget = false;
-        }
-        // (MODE RANDOM 켜고 끄기는 R 키 · 모드 설정창의 RANDOM 버튼)
-        modeValue = Txt(mb, "", 20, TextAlignmentOptions.MidlineRight, TextMain);
-        modeValue.fontStyle = FontStyles.Bold;
-        Span(modeValue.rectTransform, 0f, 1f, 0f, 1f, PadX, PadX);
-        y += ModeH;
+        y += ToggleH;
 
         fullHeight = y;
     }
@@ -233,7 +198,7 @@ public class SongDetailPanel : MonoBehaviour
         if (song == null) return;
         double speed = SettingsStore.Current.SettingSpeed;
         bool isAuto = CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay;
-        string key = song.Id + "|" + level + "|" + mvOn + "|" + hasMv + "|" + speed.ToString("0.0", CultureInfo.InvariantCulture) + "|" + isAuto + "|" + GameModes.Version;
+        string key = song.Id + "|" + level + "|" + mvOn + "|" + hasMv + "|" + speed.ToString("0.0", CultureInfo.InvariantCulture) + "|" + isAuto;
         if (key == lastKey) return;
         lastKey = key;
 
@@ -261,39 +226,7 @@ public class SongDetailPanel : MonoBehaviour
 
         SetSwitch(mv, hasMv, hasMv && mvOn, hasMv ? null : "NONE");
         SetSwitch(auto, true, isAuto, null);
-        ShowModes();
     }
-
-    // MODE 바: 고른 모드 아이콘 (빈 칸은 옅은 테두리) + 점수 배율
-    private void ShowModes()
-    {
-        var sel = GameModes.Selected;
-        bool rnd = GameModes.RandomPick;
-        for (int i = 0; i < modeSlots.Length; i++)
-        {
-            if (rnd) modeSlots[i].SetMystery(RandomColor);          // MODE RANDOM: 시작할 때 정해지므로 물음표
-            else if (i < sel.Count) modeSlots[i].Set(sel[i]);
-            else modeSlots[i].SetEmpty();
-        }
-        // AUTO PLAY 중: 모드를 고를 수 없고 적용도 안 됨 → 아이콘을 흐리게, 오른쪽에 AUTO PLAY
-        bool locked = GameModes.Locked;
-        for (int i = 0; i < modeSlots.Length; i++) modeSlots[i].SetDim(locked);
-        double k = GameModes.MultiplierOf(sel);
-        if (locked) { modeValue.text = "AUTO PLAY"; modeValue.color = TextDim; modeValue.fontSize = 14; }
-        else if (rnd) { modeValue.text = "???%"; modeValue.color = RandomColor; modeValue.fontSize = 20; }   // MODE RANDOM: 배율은 시작할 때 정해짐
-        else if (sel.Count == 0) { modeValue.text = "NONE"; modeValue.color = TextDim; modeValue.fontSize = 16; }
-        else
-        {
-            modeValue.text = GameModes.Percent(k);
-            modeValue.color = k > 1.0001 ? TextMain : TextSub;
-            modeValue.fontSize = 20;
-        }
-        modeValue.fontSizeMax = modeValue.fontSize;
-        modeLabel.color = locked ? TextDim : (sel.Count > 0 ? TextMain : TextSub);
-    }
-
-    // 모드를 고를 수 없을 때 (AUTO PLAY 중 M 키 · MODE 바 클릭) MODE 바를 잠깐 빨갛게
-    public void FlashModeFull() { modeFlash = 1f; }
 
     private static void SetSwitch(Switch s, bool enabled, bool on, string overrideText)
     {
@@ -341,12 +274,6 @@ public class SongDetailPanel : MonoBehaviour
 
         TickSwitch(mv, k);
         TickSwitch(auto, k);
-
-        if (modeBox != null)
-        {
-            modeFlash = Mathf.MoveTowards(modeFlash, 0f, Time.unscaledDeltaTime / 0.6f);
-            modeBox.color = Color.Lerp(BoxColor, new Color(0.55f, 0.08f, 0.12f, 0.75f), modeFlash * modeFlash);
-        }
     }
 
     private static void TickSwitch(Switch s, float k)
@@ -479,7 +406,7 @@ public class SongDetailPanel : MonoBehaviour
         UnityEngine.UI.Button b = go.AddComponent<UnityEngine.UI.Button>();
         b.transition = Selectable.Transition.None;
         b.navigation = new Navigation { mode = Navigation.Mode.None }; // 방향키가 버튼으로 가지 않도록
-        b.onClick.AddListener(() => { if (!SettingsWindow.BlocksGameInput && !GameModeWindow.BlocksInput) onClick(); });
+        b.onClick.AddListener(() => { if (!SettingsWindow.BlocksGameInput) onClick(); });
     }
 
     private TextMeshProUGUI Txt(Transform parent, string text, float size, TextAlignmentOptions align, Color c)

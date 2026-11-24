@@ -149,6 +149,62 @@ public static class NoteArt
         }
     }
 
+    // =====================================================================
+    //  두툼한 노트 앞면 (SIMPLE 평면 스킨, 흰색 → SpriteRenderer.color 로 레인 색)
+    //   · 두께 = SimpleGameSkin.ThickNoteHeight (52px / PPU 200 = 0.26) — 이 크기 그대로 그려야 세로로 늘어나지 않음
+    //   · 아래 약 1/4 은 어두운 옆면(두께감), 그 위 경계에 가는 어두운 홈 → 키캡처럼 도톰한 판
+    //   · 윗면: 세로 그라데이션 + 위쪽 광택 띠, 밝은 테두리 + 안쪽 어두운 선
+    //   · 바깥 은은한 빛 (NoteGlowPad 만큼 크게 그려야 함)
+    //   · 9-slice: 좌우 테두리만 고정, 가운데가 가로로 늘어남 (1 ~ 4칸 어떤 폭이든 같은 모양)
+    // =====================================================================
+    private static Sprite thickFace;
+    public static Sprite ThickNoteFaceSprite
+    {
+        get
+        {
+            if (thickFace != null) return thickFace;
+            const int G = 10, BW = 76, BH = 52, R = 10;
+            int W = BW + G * 2, H = BH + G * 2;
+            Texture2D tex = NewTex(W, H);
+            Color32[] px = new Color32[W * H];
+            const float Side = 0.24f;                                        // 아래 옆면 비율
+            for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                float fx = x + 0.5f, fy = y + 0.5f;
+                float cx = Mathf.Clamp(fx, G + R, W - G - R), cy = Mathf.Clamp(fy, G + R, H - G - R);
+                float d = Vector2.Distance(new Vector2(fx, fy), new Vector2(cx, cy)) - R;
+                float inside = Mathf.Clamp01(0.5f - d);
+                float v = Mathf.Clamp01((fy - G) / BH);                      // 0 = 아래, 1 = 위
+                float bright;
+                if (v < Side)
+                    bright = Mathf.Lerp(0.42f, 0.58f, v / Side);             // 옆면 (아래가 더 어두움)
+                else
+                {
+                    float t = (v - Side) / (1f - Side);                       // 윗면 0 ~ 1
+                    bright = Mathf.Lerp(0.80f, 0.97f, t);
+                    float gloss = Mathf.Clamp01(1f - Mathf.Abs(t - 0.74f) / 0.16f);   // 위쪽 광택 띠
+                    bright = Mathf.Lerp(bright, 1f, gloss * gloss * (3f - 2f * gloss));
+                }
+                float seam = Mathf.Abs(v - Side) * BH;                       // 옆면 · 윗면 경계 홈 (약 2px)
+                if (seam < 1.2f) bright *= 0.62f;
+                else if (seam < 2.2f && v > Side) bright = Mathf.Max(bright, 0.95f);   // 홈 바로 위 밝은 모서리
+                float edge = -d;
+                if (edge < 2.2f) bright = Mathf.Max(bright, v < Side ? 0.72f : 1f);  // 밝은 테두리 (옆면은 조금 어둡게)
+                else if (edge < 3.6f) bright *= 0.74f;                       // 안쪽 어두운 선
+                float glowA = d > 0f ? Mathf.Exp(-d / 3.2f) * 0.42f : 0f;   // 바깥 빛
+                float a = Mathf.Max(inside, glowA);
+                byte c = (byte)(Mathf.Clamp01(inside > 0.001f ? bright : 1f) * 255f);
+                px[y * W + x] = new Color32(c, c, c, (byte)(Mathf.Clamp01(a) * 255f));
+            }
+            tex.SetPixels32(px); tex.Apply();
+            int bd = G + R + 2, vb = H / 2 - 1;
+            thickFace = Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 200f, 0, SpriteMeshType.FullRect, new Vector4(bd, vb, bd, vb));
+            thickFace.name = "ThickNoteFace";
+            return thickFace;
+        }
+    }
+
     // 판정선의 키 자리(리셉터): 둥근 사각형 테두리만 (흰색, 9-slice)
     public static Sprite NoteOutlineSprite
     {

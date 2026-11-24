@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -18,6 +18,8 @@ public static class SettingsStore
 {
     public const string UserFileName = "user_settings.json";
     public static readonly string[] DefaultLaneKeys = { "D", "F", "J", "K" };
+    // 6키 구간(채보의 LANES 확장) 키 — 4키 키와 따로 정함
+    public static readonly string[] DefaultLaneKeys6 = { "S", "D", "F", "J", "K", "L" };
     public static readonly int[] FrameLimitOptions = { 30, 60, 120, 144, 165, 240, 360, 0 }; // 0 = 제한 없음
 
     // 레인 키로 쓸 수 없는 키 (ESC = 일시정지, SPACE = 프리키 스페이스 노트)
@@ -145,9 +147,11 @@ public static class SettingsStore
         to.ShowJustPerfect = from.ShowJustPerfect;
         to.SongNameLanguage = from.SongNameLanguage;   // 곡명 표기 (원어 / 영어)
         to.LaneKeys = from.LaneKeys != null ? (string[])from.LaneKeys.Clone() : (string[])DefaultLaneKeys.Clone();
+        to.LaneKeys6 = from.LaneKeys6 != null ? (string[])from.LaneKeys6.Clone() : (string[])DefaultLaneKeys6.Clone();
         to.MasterVolume = from.MasterVolume;
         to.MusicVolume = from.MusicVolume;
         to.HitSoundVolume = from.HitSoundVolume;
+        to.SfxVolume = from.SfxVolume;
         to.HitSoundOn = from.HitSoundOn;
         to.FrameLimit = from.FrameLimit;
         to.VSync = from.VSync;
@@ -162,15 +166,17 @@ public static class SettingsStore
         s.MasterVolume = Mathf.Clamp01(s.MasterVolume);
         s.MusicVolume = Mathf.Clamp01(s.MusicVolume);
         s.HitSoundVolume = Mathf.Clamp01(s.HitSoundVolume);
+        s.SfxVolume = Mathf.Clamp01(s.SfxVolume);
         s.AudioOffset = Math.Max(-1.0, Math.Min(1.0, s.AudioOffset));
         s.JudgeOffset = Math.Max(-0.3, Math.Min(0.3, s.JudgeOffset));
         s.SettingSpeed = Math.Round(Math.Max(1.0, Math.Min(12.0, s.SettingSpeed)), 1);
         s.judgeoverrange = Mathf.Clamp(s.judgeoverrange, 0, 120);
-        s.GameSkin = Mathf.Clamp(s.GameSkin, 0, GameSkins.Names.Length - 1);
+        s.GameSkin = GameSkins.Normalize(s.GameSkin);   // DEFAULT 비활성화 → SIMPLE
         s.LaneOpacity = Mathf.Clamp01(s.LaneOpacity);
         if (Array.IndexOf(FrameLimitOptions, s.FrameLimit) < 0) s.FrameLimit = 0;
         if (s.ScreenMode < -1 || s.ScreenMode > 2) s.ScreenMode = -1;
         s.LaneKeys = ToKeyNames(ParseLaneKeys(s.LaneKeys));
+        s.LaneKeys6 = ToKeyNames(ParseLaneKeys6(s.LaneKeys6));
     }
 
     // ===== 적용 =====
@@ -239,12 +245,20 @@ public static class SettingsStore
         return ParseLaneKeys(Current.LaneKeys);
     }
 
-    public static Key[] ParseLaneKeys(string[] names)
+    public static Key[] ParseLaneKeys(string[] names) { return ParseKeys(names, DefaultLaneKeys); }
+
+    // 6키 구간 키 (왼쪽부터 6개)
+    public static Key[] GetLaneKeys6() { return ParseLaneKeys6(Current.LaneKeys6); }
+    public static Key[] ParseLaneKeys6(string[] names) { return ParseKeys(names, DefaultLaneKeys6); }
+
+    // 키 이름 목록 → 키 (개수가 다르거나 · 쓸 수 없는 키 · 겹치는 키가 있으면 기본값)
+    private static Key[] ParseKeys(string[] names, string[] defaults)
     {
-        Key[] result = new Key[4];
+        int n = defaults.Length;
+        Key[] result = new Key[n];
         var used = new HashSet<Key>();
-        bool valid = names != null && names.Length == 4;
-        for (int i = 0; valid && i < 4; i++)
+        bool valid = names != null && names.Length == n;
+        for (int i = 0; valid && i < n; i++)
         {
             Key k;
             if (!Enum.TryParse(names[i], true, out k) || ReservedKeys.Contains(k) || !used.Add(k)) valid = false;
@@ -252,7 +266,7 @@ public static class SettingsStore
         }
         if (!valid)
         {
-            for (int i = 0; i < 4; i++) result[i] = (Key)Enum.Parse(typeof(Key), DefaultLaneKeys[i]);
+            for (int i = 0; i < n; i++) result[i] = (Key)Enum.Parse(typeof(Key), defaults[i]);
         }
         return result;
     }

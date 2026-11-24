@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -27,7 +27,7 @@ public static class ChartNoteCounter
 
     private class Bpm { public double Beats, Time, Value; public double Anchor = double.NaN; }
     private class Raw { public string Type; public long Measure, Num, Den; public string Value; }
-    private class Note { public double Time; public int Lane, Type, Layer, Width = 1, SlideId; public bool IsRed; public Note Next; }
+    private class Note { public double Time; public int Lane, Type, Layer, Width = 1, SlideId, Sub = 0, SubW = 4; public bool IsRed; public Note Next; }
 
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
@@ -102,8 +102,11 @@ public static class ChartNoteCounter
 
         // ---- 3) 노트 ----
         var notes = new List<Note>();
-        var byLane = new List<Note>[4];
-        for (int i = 0; i < 4; i++) byLane[i] = new List<Note>();
+        var byLane = new List<Note>[Lanes.Max];
+        for (int i = 0; i < Lanes.Max; i++) byLane[i] = new List<Note>();
+        // 6키 확장 채보(LANES 6 · 레인 칸 6개인 줄)면 4키 줄(ABCD)은 1 ~ 4번 레인 (게임과 같은 규칙)
+        bool six = ChartLaneScan.UsesSixLanesLines(lines);
+        int laneCount = six ? Lanes.Max : 4;
 
         foreach (var e in raws.Where(e => e.Type != "BPM" && e.Type != "TIMING"))
         {
@@ -115,22 +118,24 @@ public static class ChartNoteCounter
                 {
                     // 구형 압축 포맷 (예: 1000)
                     string val = lanes[0].Trim();
+                    int off0 = six ? Lanes.FourOffset : 0;
                     for (int lane = 0; lane < val.Length && lane < 4; lane++)
                     {
                         if (val[lane] == '0' || !char.IsDigit(val[lane])) continue;
                         int nt = NoteTypes.Normalize(val[lane] - '0');
                         if (nt == 5 || nt == 6) continue;
-                        var n = new Note { Time = t, Lane = lane, Type = nt, Layer = NoteLayer.Top };
-                        notes.Add(n); byLane[lane].Add(n);
+                        var n = new Note { Time = t, Lane = lane + off0, Type = nt, Layer = NoteLayer.Top };
+                        notes.Add(n); byLane[lane + off0].Add(n);
                     }
                 }
                 else
                 {
-                    for (int lane = 0; lane < lanes.Length && lane < 4; lane++)
+                    int off = six && lanes.Length < Lanes.Max ? Lanes.FourOffset : 0;
+                    for (int lane = 0; lane < lanes.Length && lane + off < laneCount; lane++)
                     {
                         string[] byLayer = NoteCellParser.SplitLayers(lanes[lane]);   // 1 ~ 5층
                         for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++)
-                            if (byLayer[L] != null) AddToken(byLayer[L], lane, t, L, notes, byLane);
+                            if (byLayer[L] != null) foreach (string tk in byLayer[L].Split('+')) AddToken(tk, lane + off, t, L, notes, byLane, laneCount);
                     }
                 }
             }
@@ -146,20 +151,22 @@ public static class ChartNoteCounter
             r.Notes += pts.Count;                            // 머리 + 중계점들 + 끝
             r.Ticks += LongNoteTickRule.Count(pts[0].Time, pts[pts.Count - 1].Time, bpmAt);
         }
-        for (int lane = 0; lane < 4; lane++)
+        for (int lane = 0; lane < laneCount; lane++)
         {
             var sorted = byLane[lane].OrderBy(n => n.Time).ThenByDescending(n => n.Layer).ToList();
-            Note[] last = new Note[NoteLayer.Max + 1];
+            var last = new Dictionary<int, Note>();   // 층 × 100 + 1/4 칸 (시작 × 10 + 폭) — 1/4 롱노트는 같은 칸끼리만
             foreach (var n in sorted)
             {
                 if (n.Lane != lane) continue;          // 넓은 노트(RED · 넓은 일반)는 기준 레인에서만 연결
                 if (n.SlideId > 0) continue;            // 슬라이드는 위에서 따로 셈
-                int ly = NoteLayer.Clamp(n.Layer);
-                if (NoteTypes.IsLongHead(n.Type)) last[ly] = n;
-                else if ((n.Type == 3 || n.Type == 13) && last[ly] != null)
+                int key = NoteLayer.Clamp(n.Layer) * 10000 + (n.SubW != 4 || n.Sub != 0 ? n.Sub * 100 + n.SubW : 4);
+                Note prev;
+                last.TryGetValue(key, out prev);
+                if (NoteTypes.IsLongHead(n.Type)) last[key] = n;
+                else if ((n.Type == 3 || n.Type == 13) && prev != null)
                 {
-                    if (last[ly].IsRed == n.IsRed) last[ly].Next = n;
-                    last[ly] = null;
+                    if (prev.IsRed == n.IsRed) prev.Next = n;
+                    last.Remove(key);
                 }
             }
         }
@@ -178,13 +185,15 @@ public static class ChartNoteCounter
         return r;
     }
 
-    private static void AddToken(string token, int lane, double t, int layer, List<Note> notes, List<Note>[] byLane)
+    private static void AddToken(string token, int lane, double t, int layer, List<Note> notes, List<Note>[] byLane, int laneCount)
     {
         string core = NoteCellParser.SplitSlide(token, out int slideId, out int curve);
+        core = NoteCellParser.SplitQuarter(core, out int sub, out int subW);   // 1/4 칸 표시
         if (!NoteCellParser.TryParseToken(core, out int type, out int width, out bool isRed)) return;
-        var n = new Note { Time = t, Lane = lane, Type = NoteTypes.Normalize(type), Layer = layer, IsRed = isRed, Width = width, SlideId = slideId };   // 예전 화살표(7 · 8) → 탭
+        if (subW != 4 || sub != 0) width = 1;
+        var n = new Note { Time = t, Lane = lane, Type = NoteTypes.Normalize(type), Layer = layer, IsRed = isRed, Width = width, SlideId = slideId, Sub = sub, SubW = subW };   // 예전 화살표(7 · 8) → 탭
         notes.Add(n);
-        for (int w = 0; w < width; w++) if (lane + w < 4) byLane[lane + w].Add(n);
+        for (int w = 0; w < width; w++) if (lane + w < laneCount) byLane[lane + w].Add(n);
     }
 
     private static double Beats(Raw e) { return ((e.Measure - 1) * 4.0) + ((double)e.Num / Math.Max(1, e.Den)) * 4.0; }

@@ -91,6 +91,14 @@ public class ClearEffect : MonoBehaviour
         fx.hold = Mathf.Max(0.5f, holdSeconds);
         fx.onDone = onDone;
         fx.Build();
+        switch (type)   // 연출 효과음
+        {
+            case ClearType.AllJust: Sfx.Play(Sfx.Id.AllJust); break;
+            case ClearType.AllPerfect: Sfx.Play(Sfx.Id.AllPerfect); break;
+            case ClearType.FullCombo: Sfx.Play(Sfx.Id.FullCombo); break;
+            case ClearType.Clear: Sfx.Play(Sfx.Id.Clear); break;
+            case ClearType.Failed: Sfx.Play(Sfx.Id.Failed); break;
+        }
         fx.StartCoroutine(fx.IsFailed ? fx.RunFailed() : (fx.IsComplete ? fx.RunComplete() : fx.RunClear()));
         return fx;
     }

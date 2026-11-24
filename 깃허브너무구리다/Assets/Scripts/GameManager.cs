@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -15,8 +15,6 @@ class RawEvent {
     public string Type = ""; public long Measure = 1; public long Num, Den; public string Value = "";
 }
 
-// 채보에서 SHOW 표시된 변속 (게임에서 SPEED UP / DOWN 글자를 띄움)
-public class SpeedNotice { public double Time; public int Layer; } // Layer 0 = 두 층 모두
 
 class GameScrollEvent { 
     public double Time; 
@@ -242,7 +240,7 @@ public class GameManager : MonoBehaviour
 
     private Queue<GameObject> blueEffectPool = new Queue<GameObject>();
     private Queue<GameObject> yellowEffectPool = new Queue<GameObject>();
-    private GameObject[] holdEffects = new GameObject[4];
+    private GameObject[] holdEffects = new GameObject[Lanes.Max];
 
 
     [Header("게임 설정")]
@@ -299,8 +297,10 @@ public class GameManager : MonoBehaviour
     // ALL JUST: 풀콤보 + 모든 판정이 JUST
     public bool IsAllJust { get { return !isFailed && chartJudgeCount > 0 && maxCombo >= chartJudgeCount && cntJust >= chartJudgeCount; } }
 
-    // 롱노트 슬롯: 층마다 레인 4칸 (층 L 의 레인 l = (L-1)×4 + l), 1 ~ 5층 → 20칸
-    private const int LongSlots = NoteLayer.Max * 4;
+    // 롱노트 슬롯: 층마다 '1/4 칸' 24개 (레인 6 × 4칸). 층 L 의 칸 c = (L-1)×24 + c
+    //  → 한 레인에 1/4 롱노트가 4개까지 동시에 진행될 수 있음 (레인 전체 롱노트는 그 레인 4칸을 모두 차지)
+    private const int CellsPerLayer = Lanes.Max * Lanes.Quarters;
+    private const int LongSlots = NoteLayer.Max * CellsPerLayer;
     private NoteData[] activeLongNote = new NoteData[LongSlots];
     private double[] nextLongNoteTickTime = new double[LongSlots]; 
     private double[] lnReleaseTime = new double[LongSlots]; 
@@ -367,7 +367,88 @@ public class GameManager : MonoBehaviour
     }
     
     private Key[] laneKeys = { Key.D, Key.F, Key.J, Key.K };
-    private bool[] prevKeyState = new bool[4];
+    private Key[] laneKeys6 = { Key.S, Key.D, Key.F, Key.J, Key.K, Key.L };   // 6키 구간 키 (설정 > CONTROLS)
+    private bool[] prevKeyState = new bool[Lanes.Max];
+
+    // =====================================================================
+    //  레인 수 (4키 ↔ 6키 확장, 채보의 LANES 줄)
+    //   LaneCount 4: 예전과 똑같음 (레인 0 ~ 3)
+    //   LaneCount 6: 이 채보에 6키 구간이 있음 → 레인 0 ~ 5, 4키 구간은 가운데 1 ~ 4번만 씀 ("(+)ABCD(+)")
+    //   펼쳐짐: 이벤트 시각 '전' Duration 동안 펼쳐져 그 시각에 6키 / 접힘: 이벤트 시각부터 Duration 동안 접힘
+    //   키: 그 시각부터 6키(설정의 6키 키) / 4키(설정의 4키 키, 가운데 4레인)
+    // =====================================================================
+    public int LaneCount { get; private set; } = 4;
+    public bool SixLane { get { return LaneCount == Lanes.Max; } }
+    private readonly List<LaneModeEvent> laneModeEvents = new List<LaneModeEvent>();
+    private int initialKeys = 4;
+
+    // 시각 t 의 키 수 (4 / 6)
+    public int KeysAt(double t)
+    {
+        if (!SixLane) return 4;
+        int k = initialKeys;
+        foreach (var e in laneModeEvents) { if (e.Time <= t) k = e.Keys; else break; }
+        return k;
+    }
+
+    // 시각 t 의 펼침 정도 (0 = 4키 · 1 = 6키, 펼쳐지는 / 접히는 중에는 그 사이)
+    public float LaneExpandAt(double t)
+    {
+        if (!SixLane) return 0f;
+        float v = initialKeys >= 6 ? 1f : 0f;
+        foreach (var e in laneModeEvents)
+        {
+            double d = Math.Max(0.0001, e.Duration);
+            bool expand = e.Keys >= 6;
+            double s = expand ? e.Time - d : e.Time;            // 펼침: 시각 전에 다 펼쳐짐 / 접힘: 시각부터
+            if (t < s) break;
+            float to = expand ? 1f : 0f;
+            float k = (float)Math.Min(1.0, (t - s) / d);
+            k = k * k * (3f - 2f * k);
+            v = Mathf.Lerp(v, to, k);
+            if (k < 1f) break;
+        }
+        return v;
+    }
+    public float LaneExpand { get { return LaneExpandAt(currentPlayTime); } }
+    // 지금 보이는 레인 전체 폭 (월드 유닛): 6키 확장 채보는 4레인 ~ 6레인 사이, 아니면 레인 전체
+    public float VisibleLanesWidth
+    {
+        get
+        {
+            float lw = SimpleGameSkin.GameLaneWidth;
+            if (!SixLane) return laneXPositions != null && laneXPositions.Length > 0 ? Mathf.Abs(laneXPositions[laneXPositions.Length - 1] - laneXPositions[0]) + lw : 4f * lw;
+            return (4f + 2f * LaneExpand) * lw;
+        }
+    }
+
+    // 이 레인을 지금 누르는 키 (4키 구간의 바깥 레인 0 · 5 는 키 없음)
+    private Key KeyForLane(int lane, bool six)
+    {
+        if (!SixLane) return lane >= 0 && lane < laneKeys.Length ? laneKeys[lane] : Key.None;
+        if (six) return lane >= 0 && lane < laneKeys6.Length ? laneKeys6[lane] : Key.None;
+        int i = lane - Lanes.FourOffset;
+        return i >= 0 && i < laneKeys.Length ? laneKeys[i] : Key.None;
+    }
+    // 화면 표시용 (키 이름): 지금 시각 기준
+    public Key DisplayKeyForLane(int lane) { return KeyForLane(lane, KeysAt(currentPlayTime) >= 6); }
+
+    // 이 채보에 6키 구간이 있으면 레인 위치를 6개로 늘림 (스킨을 만들기 전에)
+    private void SetupLaneCount()
+    {
+        LaneCount = 4;
+        if (currentSong == null || CoreManager.Instance == null) return;
+        string path = Path.Combine(Application.streamingAssetsPath, "chart", $"{currentSong.Id}_{CoreManager.Instance.CurrentLevelId}.txt");
+        if (!ChartLaneScan.UsesSixLanes(path)) return;
+        LaneCount = Lanes.Max;
+        float[] xs = laneXPositions;
+        if (xs != null && xs.Length == 4)
+        {
+            float lw = Mathf.Abs(xs[1] - xs[0]);
+            laneXPositions = new[] { xs[0] - lw, xs[0], xs[1], xs[2], xs[3], xs[3] + lw };   // (+)ABCD(+)
+        }
+        Debug.Log("[Lanes] 6키 확장이 있는 채보 — 레인 6개");
+    }
     
     private SongData currentSong;
     private Camera mainCam;
@@ -375,8 +456,8 @@ public class GameManager : MonoBehaviour
 
     private AudioClip hitSoundClip; 
     private Dictionary<NoteData, NoteObject> noteObjectDict = new Dictionary<NoteData, NoteObject>(); 
-    private List<NoteData>[] notesByLane = new List<NoteData>[4]; 
-    private int[] laneStartIndex = new int[4]; 
+    private List<NoteData>[] notesByLane = new List<NoteData>[Lanes.Max]; 
+    private int[] laneStartIndex = new int[Lanes.Max]; 
     private float judgmentAnimTimer = 0f; 
     private float comboAnimTimer = 0f;
 
@@ -389,6 +470,20 @@ public class GameManager : MonoBehaviour
     private Queue<GameObject> measureLinePool = new Queue<GameObject>();
     private List<MeasureLineObj> activeMeasureLines = new List<MeasureLineObj>();
     private List<double> allMeasureTimes = new List<double>();
+
+    // ===== 변속선 (변속마다 따로 켬: SPEED 줄 / SPEEDRAMP 줄 끝의 ", MARK") =====
+    //  변속이 들어가는 박에 마디선보다 훨씬 굵은 선 + 그 위로 그라데이션. 가속 = 빨강 계열, 감속 = 초록 계열
+    //  지속 가속(SPEEDRAMP)은 시작 박에만 그림. 선은 그 변속이 걸린 층의 스크롤을 따라 움직임 (모든 층 = 기본 층)
+    private class SpeedMark { public double Time; public int Layer; public bool Up; }
+    private class SpeedMarkObj { public GameObject go; public SpriteRenderer line, glow; public SpeedMark mark; }
+    private readonly List<SpeedMark> speedMarks = new List<SpeedMark>();
+    private readonly Queue<SpeedMarkObj> speedMarkPool = new Queue<SpeedMarkObj>();
+    private readonly List<SpeedMarkObj> activeSpeedMarks = new List<SpeedMarkObj>();
+    private int speedMarkSpawnIndex;
+    private const float SpeedMarkThickness = 0.075f;   // 마디선(0.015)의 5배
+    private const float SpeedMarkGlowHeight = 1.1f;    // 그라데이션 높이 (월드 유닛)
+    private static readonly Color SpeedUpColor = new Color(1f, 0.27f, 0.30f);
+    private static readonly Color SpeedDownColor = new Color(0.30f, 1f, 0.48f);
     private int measureSpawnIndex = 0;
 
     private Vector3 initialComboScale = Vector3.one;
@@ -400,7 +495,7 @@ public class GameManager : MonoBehaviour
         Instance = this; 
         SettingsStore.ApplyFrameRate(); // 설정 > DISPLAY 의 프레임 제한 / VSync
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < Lanes.Max; i++) {
             notesByLane[i] = new List<NoteData>();
             laneStartIndex[i] = 0;
         }
@@ -469,17 +564,18 @@ public class GameManager : MonoBehaviour
         GameTimelineDebug.Attach(this);   // 타임라인 표시 (F2 로 켜고 끄기)
         // GAME SETTING (5_Test 씬): 실제 채보로 맞추는 연습 공간 — 무한 반복 · FAILED/결과창 없음 · 조정 패널
         IsTestMode = GameSettingSession.Active;
-        // 게임 모드: 이번 판에 쓸 모드를 확정 (GAME SETTING 은 모드 없음) → 판정 범위 계산
-        GameModes.BeginPlay(IsTestMode);
+        GameModes.BeginPlay();   // (게임 모드 기능은 삭제됨 — 모든 판이 기본 규칙)
         ApplyJudgeWindows();
-        if (GameModes.Play.Modes.Length > 0) Debug.Log("[Mode] " + string.Join(", ", GameModes.Play.Modes.Select(m => GameModes.Info(m).Name)) + "  (점수 " + GameModes.Percent(GameModes.Play.ScoreMultiplier) + ")");
         currentSong = CoreManager.Instance.CurrentSongData;
         if (SongIntroOverlay.PreferredTitleFont == null && loadingTitleText != null) SongIntroOverlay.PreferredTitleFont = loadingTitleText.font;
         hitSoundClip = HitSound.Clip;   // hitsound.mp3 와 같은 소리, 앞의 빈 구간 없음 (HitSound.cs)
         // [버그 수정] 탭음 데이터를 미리 올려 둠 (첫 PlayOneShot 때 아직 안 올라와 있으면 첫 소리가 나지 않음)
         if (hitSoundClip != null && hitSoundClip.loadState == AudioDataLoadState.Unloaded) hitSoundClip.LoadAudioData();
         laneKeys = SettingsStore.GetLaneKeys();                        // 설정 > CONTROLS
+        laneKeys6 = SettingsStore.GetLaneKeys6();                      // 6키 구간 키
         InputTiming.Watch(laneKeys);                                     // 키를 실제로 누른 시각 기록 (프레임 단위 오차 제거)
+        InputTiming.Watch(laneKeys6);
+        SetupLaneCount();                                                // 6키 확장 채보면 레인 6개 (스킨보다 먼저)
         InputTiming.Watch(new[] { Key.Space });
         SetupAudioTiming();
         CreatePauseMenu();
@@ -488,8 +584,9 @@ public class GameManager : MonoBehaviour
             hitErrorMeter = HitErrorMeter.Create(this, W_EXCELLENT, W_GREAT, W_GOOD, W_BAD);
             UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(hitErrorMeter.gameObject, gameObject.scene);
         }
-        int skinId = SettingsStore.Current.GameSkin;                     // 설정 > GAME UI
-        if (GameSkins.UsesSimpleSkin(skinId)) simpleSkin = SimpleGameSkin.Create(this, skinId == GameSkins.Diverse);
+        int skinId = GameSkins.Normalize(SettingsStore.Current.GameSkin);   // 설정 > GAME UI (DEFAULT 는 비활성화 → SIMPLE)
+        // CIRCLE: 원 노트 · 넓은 레인 (laneXPositions 를 넓힘 — 아래의 이펙트 · 정보 UI 는 넓힌 위치를 씀)
+        if (GameSkins.UsesSimpleSkin(skinId)) simpleSkin = SimpleGameSkin.Create(this, GameSkins.UsesPerspective(skinId), GameSkins.UsesCircle(skinId));
         if (GameModes.Play.Reverse) ApplyReverseView();
         redFx = RedHitEffects.Create(this);  // RED 노트 전용 탭 / 롱노트 홀드 이펙트 (일반 이펙트 아래)
         infoHud = GameInfoHud.Create(this); // 곡 정보 · 난이도 · 시간 · 점수 · 배속 · 진행 막대 (모든 GAME UI 공통, 설정 > INFORMATION UI)
@@ -537,7 +634,7 @@ public class GameManager : MonoBehaviour
         if (loadingDiffText != null) {
             // 난이도 이름은 난이도 색 (SPECIAL 은 솜사탕 그라데이션), 숫자는 같은 색
             loadingDiffText.richText = true;
-            loadingDiffText.text = DifficultyHelper.ColoredText(levelId, diffName) + " " + DifficultyHelper.ColoredText(levelId, diffVal ?? "");
+            loadingDiffText.text = DifficultyHelper.ColoredText(levelId, diffName) + " " + DifficultyHelper.ColoredText(levelId, SongRowUI.FormatDifficulty(diffVal));
             loadingDiffText.color = Color.white;
             loadingDiffText.alignment = TextAlignmentOptions.Center; 
         }
@@ -587,6 +684,9 @@ public class GameManager : MonoBehaviour
         //  지금: 마디선은 텍스처 · 스프라이트 하나를 같이 씀
         Texture2D mlTex = new Texture2D(1, 1); mlTex.SetPixel(0, 0, new Color(128, 128, 128, 0.2f)); mlTex.Apply();
         Sprite mlSprite = Sprite.Create(mlTex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+        // 마디선 폭 = 레인 전체 폭 (CIRCLE 은 레인이 넓음)
+        float mlWidth = laneXPositions != null && laneXPositions.Length > 0
+            ? Mathf.Abs(laneXPositions[laneXPositions.Length - 1] - laneXPositions[0]) + SimpleGameSkin.GameLaneWidth : 3.2f;
         for (int i = 0; i < 50; i++) {
             GameObject ml = new GameObject("MeasureLine");
             SpriteRenderer sr = ml.AddComponent<SpriteRenderer>();
@@ -594,11 +694,12 @@ public class GameManager : MonoBehaviour
             sr.sortingOrder = 1; 
             sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask; // 판정선 아래로는 안 그려짐
             ml.transform.SetParent(this.transform);
-            ml.transform.localScale = new Vector3(3.2f, 0.015f, 1f); 
+            ml.transform.localScale = new Vector3(mlWidth, 0.015f, 1f);
             ml.SetActive(false);
             measureLinePool.Enqueue(ml);
             if (simpleSkin != null) simpleSkin.AdoptToPlayfield(ml); // SIMPLE-DIVERSE: 원근 재질 (판정선 아래 자름)
         }
+        BuildSpeedMarkPool(mlWidth);
         yield return null;
 
         blueEffectPool.Clear();
@@ -611,9 +712,9 @@ public class GameManager : MonoBehaviour
         }
         yield return null;
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < LaneCount; i++) {
             if (holdEffects[i] != null) Destroy(holdEffects[i]);
-            bool isBlue = (i == 0 || i == 3);
+            bool isBlue = (i == 0 || i == LaneCount - 1);
             GameObject prefab = isBlue ? blueHitEffectPrefab : yellowHitEffectPrefab;
             if (prefab != null) {
                 holdEffects[i] = Instantiate(prefab, transform);
@@ -718,7 +819,7 @@ public class GameManager : MonoBehaviour
         for (int i = 0; i < 16; i++) px[i] = new Color32(255, 255, 255, 255);
         tex.SetPixels32(px); tex.Apply();
         mask.sprite = Sprite.Create(tex, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0f), 4f); // 1x1 유닛, 피벗 아래 가운데
-        float clipY = hitLineY + noteClipOffset;
+        float clipY = hitLineY + noteClipOffset - (simpleSkin != null ? simpleSkin.NoteClipExtra : 0f);   // CIRCLE: 원 아래 절반까지 보이게
         float camX = mainCam != null ? mainCam.transform.position.x : 0f;
         noteClipMask.transform.position = new Vector3(camX, clipY, 0f);
         Vector3 ps = transform.lossyScale;
@@ -747,17 +848,17 @@ public class GameManager : MonoBehaviour
     // 노트를 알 때: SIMPLE 스킨은 노트 색(화살표 · RED) · 종류(롱노트 끝은 작게)에 맞춘 히트 이펙트
     public void SpawnHitEffect(int lane, NoteData n)
     {
-        if (lane < 0 || lane > 3) return;
+        if (lane < 0 || lane >= LaneCount) return;
         if (simpleSkin != null) { simpleSkin.Hit(lane, n); return; }
         SpawnHitEffect(lane);
     }
 
     public void SpawnHitEffect(int lane)
     {
-        if (lane < 0 || lane > 3) return;
+        if (lane < 0 || lane >= LaneCount) return;
         if (simpleSkin != null) { simpleSkin.Hit(lane); return; }
 
-        bool isBlue = (lane == 0 || lane == 3);
+        bool isBlue = (lane == 0 || lane == LaneCount - 1);
         if (isBlue && blueHitEffectPrefab == null) return;
         if (!isBlue && yellowHitEffectPrefab == null) return;
 
@@ -792,6 +893,7 @@ public class GameManager : MonoBehaviour
 
     public void StartHoldEffect(int lane)
     {
+        if (lane < 0 || lane >= LaneCount) return;
         if (simpleSkin != null) { simpleSkin.SetHold(lane, true); return; }
         if (holdEffects[lane] == null) return;
         holdEffects[lane].transform.position = new Vector3(laneXPositions[lane], hitLineY + hitEffectOffsetY, -4.9f);
@@ -801,6 +903,7 @@ public class GameManager : MonoBehaviour
 
     public void StopHoldEffect(int lane)
     {
+        if (lane < 0 || lane >= LaneCount) return;
         if (simpleSkin != null) { simpleSkin.SetHold(lane, false); return; }
         if (holdEffects[lane] == null) return;
         ParticleSystem[] pss = holdEffects[lane].GetComponentsInChildren<ParticleSystem>();
@@ -887,16 +990,6 @@ public class GameManager : MonoBehaviour
             yield return new WaitForSeconds(0.15f);
         }
 
-        // MODE RANDOM: 레인이 펼쳐지기 전에 모드 3개를 고르는 연출 (REVERSE 등 화면이 바뀌는 모드가 있으므로 먼저 보여 줌)
-        //  모드는 이미 정해져 적용된 상태, 연출은 보여 주기만 → 창이 사라지면 레인이 펼쳐지고 곡 시작
-        if (GameModes.Play.RandomFresh && !IsTestMode)
-        {
-            bool rouletteDone = false;
-            GameModeRoulette.Show(gameObject.scene, null, () => rouletteDone = true, null, true);
-            while (!rouletteDone) yield return null;
-            yield return new WaitForSecondsRealtime(0.25f);
-        }
-
         LaneIntroStarted = true; // SIMPLE 스킨: 레인이 좌우로 펼쳐지기 시작
         t = 0;
         while (t < 0.5f) {
@@ -933,14 +1026,15 @@ public class GameManager : MonoBehaviour
         notes.Clear(); bpmChanges.Clear(); 
         uiEvents.Clear();
         laneFoldEvents.Clear(); longHeadOf.Clear(); slideParts.Clear();
+        laneModeEvents.Clear(); initialKeys = 4;
         difficultyRevealTime = double.PositiveInfinity;
+        speedMarks.Clear(); speedMarkSpawnIndex = 0;
         for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++) { speedChangesByLayer[L].Clear(); scrollEventsByLayer[L].Clear(); notesByLayer[L].Clear(); }
-        speedNotices.Clear();
 
         songStartOffset = 0; chartAudioOffset = 0;
         bool hasMusicOffset = false;
         BuildLaneMap();
-        for(int i=0; i<4; i++) notesByLane[i].Clear();
+        for(int i=0; i<Lanes.Max; i++) notesByLane[i].Clear();
 
         string path = Path.Combine(Application.streamingAssetsPath, "chart", $"{songId}_{levelId}.txt");
         if (!File.Exists(path))
@@ -972,6 +1066,10 @@ public class GameManager : MonoBehaviour
                 }
                 continue; 
             }
+            else if (type == "BACKGROUND") {
+                // 예전 Re:SPACE 배경 줄 (삭제된 기능) — 무시
+                continue;
+            }
             else if (type == "DEATHAREA") {
                 // DEATHAREA, 시작초, 끝초 : 에디터 전용 표시(노트 배치 금지 구간). 시간 보정은 BPM 이벤트로 이미 반영됨.
                 continue;
@@ -982,6 +1080,13 @@ public class GameManager : MonoBehaviour
             }
             else if (type == "SPEED" && data.Length == 2) {
                 initialSpeed = double.Parse(data[1].Trim(), System.Globalization.CultureInfo.InvariantCulture);
+                continue;
+            }
+            else if (type == "SPEEDMARK") continue;   // (잠깐 있던 채보 전체 켜기 줄 — 무시)
+            else if (line.StartsWith("KeyMode:", StringComparison.OrdinalIgnoreCase)) {
+                // KeyMode: 6 → 처음부터 6키 (6키 확장이 있는 채보에서만 의미 있음)
+                int km;
+                if (int.TryParse(line.Substring(8).Trim(), out km)) initialKeys = km >= 6 ? 6 : 4;
                 continue;
             }
             else if (line.StartsWith("NoteSpeed:", StringComparison.OrdinalIgnoreCase)) {
@@ -1057,7 +1162,6 @@ public class GameManager : MonoBehaviour
                 // 형식1(구형): SPEED, 마디, 분자, 분모, 속도           → 1층/2층 모두
                 // 형식2(신형): SPEED, 마디, 분자, 분모, 층, 속도       → 해당 층만
                 ParseSpeedEventValue(e.Value, out int spdLayer, out double spdValue);
-                if (IsSpeedShowFlag(e.Value)) speedNotices.Add(new SpeedNotice { Time = exactTime, Layer = spdLayer });
                 for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++) {
                     if (spdLayer != 0 && spdLayer != L) continue;
                     currentSpeedByLayer[L] = spdValue;
@@ -1076,6 +1180,14 @@ public class GameManager : MonoBehaviour
                 if (!double.TryParse(e.Value.Split(',')[0].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out dur)) dur = 0.5;
                 laneFoldEvents.Add(new LaneFoldEvent { Time = exactTime, Fold = e.Type == "FOLD" || e.Type == "HIDE", Duration = Math.Max(0.0, dur) });
             }
+            else if (e.Type == "LANES") {
+                // 레인 수: LANES, 마디, 분자, 분모, 6 또는 4 [, 초]
+                string[] lv = e.Value.Split(',');
+                int keys; double dur;
+                if (!int.TryParse(lv[0].Trim(), out keys)) keys = 4;
+                if (lv.Length < 2 || !double.TryParse(lv[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out dur)) dur = Lanes.DefaultExpandSeconds;
+                laneModeEvents.Add(new LaneModeEvent { Time = exactTime, Keys = keys >= 6 ? 6 : 4, Duration = Math.Max(0.0, dur) });
+            }
             else if (e.Type == "REVEAL") {
                 // 숨긴 난이도(?) 공개: REVEAL, 마디, 분자, 분모, LEVEL — 이 시점부터 게임 화면 난이도가 실제 값으로 바뀜 (여러 개면 가장 앞)
                 difficultyRevealTime = Math.Min(difficultyRevealTime, exactTime);
@@ -1086,21 +1198,24 @@ public class GameManager : MonoBehaviour
                 // 구형 압축 포맷 (예: 1000) - 층 개념이 없으므로 전부 2층(Top)
                 if (lanesData.Length == 1 && !lanesData[0].Contains("_") && !lanesData[0].Contains("(")) {
                     string val = lanesData[0].Trim();
+                    int off0 = SixLane ? Lanes.FourOffset : 0;   // 4키 줄 → 6키 채보에서는 가운데 1 ~ 4번
                     for (int lane = 0; lane < val.Length && lane < 4; lane++) {
                         if (val[lane] != '0') {
                             int noteType = NoteTypes.Normalize(int.Parse(val[lane].ToString()));   // 예전 화살표(7 · 8) → 탭
                             if (noteType == 6 || noteType == 5) continue;
-                            int ml = MapLaneStart(lane, 1);   // MIRROR / RANDOM
+                            int ml = MapLaneStart(lane, 1) + off0;   // MIRROR / RANDOM
                             var newNote = new NoteData { HitTime = exactTime, Lane = ml, Type = noteType, IsHit = false, isTimeLogged = false, Layer = NoteLayer.Top };
                             notes.Add(newNote); notesByLane[ml].Add(newNote); 
                         }
                     }
                 } else {
                     // 레인 칸 형식: "2층노트(1층노트)|노트@층…"  예) 11_3(12)|1@5  (NoteCellParser.SplitLayers)
-                    for (int lane = 0; lane < lanesData.Length && lane < 4; lane++) {
+                    //  칸이 6개면 6키 줄(레인 0 ~ 5), 4개면 4키 줄(ABCD → 6키 채보에서는 1 ~ 4번)
+                    int off = SixLane && lanesData.Length < Lanes.Max ? Lanes.FourOffset : 0;
+                    for (int lane = 0; lane < lanesData.Length && lane + off < LaneCount; lane++) {
                         string[] byLayer = NoteCellParser.SplitLayers(lanesData[lane]);
                         for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++)
-                            if (byLayer[L] != null) AddNoteFromToken(byLayer[L], lane, exactTime, L);
+                            if (byLayer[L] != null) foreach (string tk in byLayer[L].Split('+')) AddNoteFromToken(tk, lane + off, exactTime, L);
                     }
                 }
             }
@@ -1108,11 +1223,13 @@ public class GameManager : MonoBehaviour
 
         for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++) speedChangesByLayer[L] = speedChangesByLayer[L].OrderBy(s => s.Time).ToList();
         laneFoldEvents.Sort((a, b) => a.Time.CompareTo(b.Time));
+        laneModeEvents.Sort((a, b) => a.Time.CompareTo(b.Time));
+        if (laneModeEvents.Count > 0) Debug.Log($"[Lanes] 레인 수 바뀜 {laneModeEvents.Count}번 (처음 {initialKeys}키)");
         if (laneFoldEvents.Count > 0)
             Debug.Log($"[Chart] 레인 사라짐/드러남 {laneFoldEvents.Count}개 (첫 이벤트 {laneFoldEvents[0].Time:0.000}s, {(laneFoldEvents[0].Fold ? "사라짐" : "드러남")})");
         BuildSlides();   // 슬라이드: 같은 번호의 점들을 이음
         notes = notes.OrderBy(n => n.HitTime).ToList();
-        for (int i = 0; i < 4; i++) notesByLane[i] = notesByLane[i].OrderBy(n => n.HitTime).ThenByDescending(n => n.Layer).ToList();
+        for (int i = 0; i < Lanes.Max; i++) notesByLane[i] = notesByLane[i].OrderBy(n => n.HitTime).ThenByDescending(n => n.Layer).ToList();
 
         // 층별 스폰 리스트
         foreach (var n in notes) notesByLayer[NoteLayer.Clamp(n.Layer)].Add(n);
@@ -1138,23 +1255,28 @@ public class GameManager : MonoBehaviour
             }
         }
 
+        BuildSpeedMarks(rawEvents, GetExactTime, initialSpeed);   // 변속선 (", MARK" 붙은 변속만)
+
         // 롱노트 연결: (레인, 층) 단위로 분리해서 연결한다.
         //  → 2층의 시작 판정과 1층의 끝 판정은 절대 서로 연결되지 않는다.
         //  → 빨간 노트는 기준 레인(Lane)에서만 연결해 에디터의 몸통 연결 규칙과 일치시킨다.
-        for (int lane = 0; lane < 4; lane++) {
-            NoteData[] lastLinkNode = new NoteData[NoteLayer.Max + 1]; // 인덱스 = 층(1 ~ 5)
+        //  1/4 칸 롱노트는 같은 1/4 위치(시작 칸 · 폭)끼리만 연결 → 한 레인에 4개까지 따로 이어짐
+        for (int lane = 0; lane < LaneCount; lane++) {
+            var lastLinkNode = new Dictionary<int, NoteData>();   // 키 = 층 × 100 + 시작 칸 × 10 + 폭
             foreach (var note in notesByLane[lane]) {
                 if (note.Lane != lane) continue;   // 넓은 노트(RED · 넓은 일반)는 기준 레인에서만 연결
                 if (note.Slide != null) continue;   // 슬라이드는 BuildSlides 에서 이미 이음
-                int ly = NoteLayer.Clamp(note.Layer);
+                int key = NoteLayer.Clamp(note.Layer) * 10000 + (note.IsQuarter ? note.Sub * 100 + note.SubW : 4);
+                NoteData last;
+                lastLinkNode.TryGetValue(key, out last);
 
-                if (NoteTypes.IsLongHead(note.Type)) lastLinkNode[ly] = note;
-                else if ((note.Type == 3 || note.Type == 13) && lastLinkNode[ly] != null) {
-                    if (lastLinkNode[ly].IsRedNote == note.IsRedNote) {
-                        lastLinkNode[ly].NextLongNote = note; longHeadOf[note] = lastLinkNode[ly];
-                        note.DragTail = lastLinkNode[ly].Type == NoteTypes.DragLongHead;   // 드래그로 시작한 롱노트의 끝 (표시용 정보, 판정 · 색은 일반 끝과 같음)
+                if (NoteTypes.IsLongHead(note.Type)) lastLinkNode[key] = note;
+                else if ((note.Type == 3 || note.Type == 13) && last != null) {
+                    if (last.IsRedNote == note.IsRedNote) {
+                        last.NextLongNote = note; longHeadOf[note] = last;
+                        note.DragTail = last.Type == NoteTypes.DragLongHead;   // 드래그로 시작한 롱노트의 끝 (표시용 정보, 판정 · 색은 일반 끝과 같음)
                     }
-                    lastLinkNode[ly] = null;
+                    lastLinkNode.Remove(key);
                 }
             }
         }
@@ -1184,7 +1306,6 @@ public class GameManager : MonoBehaviour
         if (rawEvents.Count > 0) {
             maxBeat = rawEvents.Max(e => ((e.Measure - 1) * 4.0) + ((double)e.Num / Math.Max(1, e.Den)) * 4.0);
         }
-        speedNotices.Sort((x, y) => x.Time.CompareTo(y.Time));
 
         allMeasureTimes.Clear();
         // 같은 박자에 채보에서 직접 추가한 마디선(Type 4)이 있으면 원래 마디선은 만들지 않음
@@ -1227,7 +1348,7 @@ public class GameManager : MonoBehaviour
             double a = n.HitTime - GameModes.FakeGap;
             double b = (NoteTypes.IsLongHead(n.Type) && n.NextLongNote != null ? n.NextLongNote.HitTime : n.HitTime) + GameModes.FakeGap;
             for (int w = 0; w < Mathf.Max(1, n.Width); w++)
-                if (n.Lane + w < 4) busy[n.Lane + w].Add(new KeyValuePair<double, double>(a, b));
+                if (n.Lane + w < LaneCount) busy[n.Lane + w].Add(new KeyValuePair<double, double>(a, b));
         }
 
         var times = notes.Where(n => n.Type != 4 && n.Type != 3 && n.Type != 13).Select(n => n.HitTime).Distinct().OrderBy(t => t).ToList();
@@ -1285,22 +1406,28 @@ public class GameManager : MonoBehaviour
     // 토큰("11_3", "2" ...) 하나를 노트로 만들어 등록한다.
     private void AddNoteFromToken(string token, int lane, double hitTime, int layer)
     {
-        if (lane < 0 || lane >= 4) return;
+        if (lane < 0 || lane >= LaneCount) return;
         string core = NoteCellParser.SplitSlide(token, out int slideId, out int curve);   // 슬라이드 표시 "~번호[곡선]"
+        core = NoteCellParser.SplitQuarter(core, out int sub, out int subW);               // 1/4 칸 표시 "q{시작}{폭}"
         if (!NoteCellParser.TryParseToken(core, out int type, out int width, out bool isRed)) return;
         type = NoteTypes.Normalize(type);   // 예전 화살표 노트(7 · 8) → 일반 탭
 
-        // 폭(Width): RED 노트 · 넓은 일반 노트("1_3" 처럼) 모두 1~4칸. 덮는 레인 모두에서 칠 수 있음
-        int w0 = Mathf.Clamp(width, 1, 4 - lane);
+        // 폭(Width): RED 노트 · 넓은 일반 노트("1_3" 처럼) 모두 1~레인 수 칸. 덮는 레인 모두에서 칠 수 있음
+        //  1/4 칸 노트는 한 레인 안 (폭 1)
+        bool quarter = subW != Lanes.Quarters || sub != 0;   // 1/4 ~ 5/4 칸 같은 4/4 폭 · 폭 0 점도
+        //  레인을 넘는 1/4 칸 슬라이드 점 (예: 5/4 칸): 폭 = 걸친 레인 수 (머리는 그 레인들 키로 침)
+        int w0 = quarter ? Mathf.Clamp((sub + subW + 3) / Lanes.Quarters, 1, LaneCount - lane) : Mathf.Clamp(width, 1, LaneCount - lane);
+        if (quarter) subW = Mathf.Min(subW, (LaneCount - lane) * Lanes.Quarters - sub);
         int ml = MapLaneStart(lane, w0);   // MIRROR / RANDOM
         var newNote = new NoteData { HitTime = hitTime, Lane = ml, Type = type, IsHit = false, isTimeLogged = false, Layer = layer };
         newNote.IsRedNote = isRed;
         newNote.Width = w0;
         newNote.SlideId = slideId;
         newNote.Curve = curve;
+        if (quarter) { newNote.Sub = sub; newNote.SubW = subW; }
         notes.Add(newNote);
         if (slideId > 0) { slideParts.Add(newNote); return; }   // 슬라이드의 점: BuildSlides 에서 잇고, 레인 목록에는 머리만
-        for (int w = 0; w < newNote.Width; w++) notesByLane[ml + w].Add(newNote);
+        for (int w = 0; w < newNote.Width; w++) if (ml + w < LaneCount) notesByLane[ml + w].Add(newNote);
     }
 
     // =====================================================================
@@ -1335,7 +1462,7 @@ public class GameManager : MonoBehaviour
             {
                 if (p != head && p != tail) { p.Type = NoteTypes.SlideRelay; p.IsRedNote = head.IsRedNote; }
                 if (p != head) { p.SlideHead = head; longHeadOf[p] = head; }
-                path.Points.Add(new SlidePoint { Time = p.HitTime, Lane = p.Lane, Width = Mathf.Max(1, p.Width), Curve = p.Curve, Note = p });
+                path.Points.Add(new SlidePoint { Time = p.HitTime, Lane = p.Lane, Width = Mathf.Max(1, p.Width), Sub = p.Sub, SubW = p.SubW, Curve = p.Curve, Note = p });
             }
             head.Slide = path;
             head.NextLongNote = tail;
@@ -1346,7 +1473,7 @@ public class GameManager : MonoBehaviour
 
     private void AddToLaneLists(NoteData n)
     {
-        for (int w = 0; w < Mathf.Max(1, n.Width); w++) if (n.Lane + w < 4) notesByLane[n.Lane + w].Add(n);
+        for (int w = 0; w < Mathf.Max(1, n.Width); w++) if (n.Lane + w < LaneCount) notesByLane[n.Lane + w].Add(n);
     }
 
     // =====================================================================
@@ -1453,7 +1580,7 @@ public class GameManager : MonoBehaviour
         if (removed.Count == 0) return;
 
         notes.RemoveAll(n => removed.Contains(n));
-        for (int i = 0; i < 4; i++) notesByLane[i].RemoveAll(n => removed.Contains(n));
+        for (int i = 0; i < Lanes.Max; i++) notesByLane[i].RemoveAll(n => removed.Contains(n));
         for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++) notesByLayer[L].RemoveAll(n => removed.Contains(n));
         Debug.Log($"[StartTime] {s:0.0}s 부터 시작 · 앞 {MidStartSkipSeconds:0}초 안의 노트 {removed.Count}개 제외 (첫 노트 ≥ {s + MidStartSkipSeconds:0.0}s)");
     }
@@ -1486,6 +1613,9 @@ public class GameManager : MonoBehaviour
 
     // 레인 보임 정도 (1 = 다 보임, 0 = 다 사라짐) — 예전 이름은 '펼침 정도'
 
+    // 레인 테두리가 사라지는 만큼 UI 도 함께 사라짐 (모든 스킨 공통: 점수 · 콤보 · 판정 · LIFE · 곡 정보 · 판정 오차 막대) — 1 = 다 보임
+    public float LaneUiAlpha { get { return HasLaneFolds ? LaneFoldAt(currentPlayTime) : 1f; } }
+
     public float LaneFoldAt(double t)
     {
         LaneFoldEvent last = null;
@@ -1497,17 +1627,7 @@ public class GameManager : MonoBehaviour
         return last.Fold ? 1f - e : e;
     }
 
-    // "층, 속도, SHOW" 처럼 끝에 SHOW 가 붙은 변속 = 에디터에서 SPEED UP / DOWN 표시를 켠 변속
-    private static bool IsSpeedShowFlag(string value)
-    {
-        string[] p = value.Split(',');
-        return p.Length >= 3 && p[2].Trim().ToUpperInvariant() == "SHOW";
-    }
-
-    // SPEED UP / DOWN 을 표시할 변속 목록 (시간 순)
-    private readonly List<SpeedNotice> speedNotices = new List<SpeedNotice>();
-    public List<SpeedNotice> SpeedNotices { get { return speedNotices; } }
-
+    // "층, 속도" 또는 "속도" (예전 채보 끝의 ", SHOW" 칸은 무시)
     private static void ParseSpeedEventValue(string value, out int layer, out double speed)
     {
         layer = 0;
@@ -1522,6 +1642,170 @@ public class GameManager : MonoBehaviour
         {
             speed = double.Parse(p[0].Trim(), System.Globalization.CultureInfo.InvariantCulture);
         }
+    }
+
+    // =====================================================================
+    //  변속 표시 (SPEEDMARK)
+    // =====================================================================
+    private void BuildSpeedMarkPool(float width)
+    {
+        foreach (var o in speedMarkPool) if (o.go != null) Destroy(o.go);
+        foreach (var o in activeSpeedMarks) if (o.go != null) Destroy(o.go);
+        speedMarkPool.Clear(); activeSpeedMarks.Clear();
+
+        Texture2D lineTex = new Texture2D(1, 1); lineTex.SetPixel(0, 0, Color.white); lineTex.Apply();
+        Sprite lineSprite = Sprite.Create(lineTex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+        // 세로 그라데이션 (아래 = 진함 → 위 = 투명), 1 x 1 유닛 · 아래 기준
+        const int GH = 64;
+        Texture2D glowTex = new Texture2D(4, GH, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+        for (int y = 0; y < GH; y++)
+        {
+            float a = Mathf.Pow(1f - y / (GH - 1f), 2.2f);
+            for (int x = 0; x < 4; x++) glowTex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+        }
+        glowTex.Apply();
+        Sprite glowSprite = Sprite.Create(glowTex, new Rect(0, 0, 4, GH), new Vector2(0.5f, 0f), GH);
+
+        for (int i = 0; i < 24; i++)
+        {
+            var o = new SpeedMarkObj { go = new GameObject("SpeedMark") };
+            o.go.transform.SetParent(this.transform);
+            o.go.transform.localScale = new Vector3(width, 1f, 1f);
+
+            GameObject g = new GameObject("Glow");
+            g.transform.SetParent(o.go.transform, false);
+            g.transform.localScale = new Vector3(GH / 4f, SpeedMarkGlowHeight, 1f);   // 스프라이트 폭 4/64 → 1 유닛
+            o.glow = g.AddComponent<SpriteRenderer>();
+            o.glow.sprite = glowSprite; o.glow.sortingOrder = 1;
+            o.glow.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+
+            GameObject l = new GameObject("Line");
+            l.transform.SetParent(o.go.transform, false);
+            l.transform.localScale = new Vector3(1f, SpeedMarkThickness, 1f);
+            o.line = l.AddComponent<SpriteRenderer>();
+            o.line.sprite = lineSprite; o.line.sortingOrder = 2;
+            o.line.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+
+            o.go.SetActive(false);
+            if (simpleSkin != null) simpleSkin.AdoptToPlayfield(o.go);   // SIMPLE-DIVERSE: 원근 재질 (판정선 아래 자름)
+            speedMarkPool.Enqueue(o);
+        }
+    }
+
+    // 채보의 SPEED / SPEEDRAMP 로 변속 표시 위치를 만듦 (박 순서로 훑으며 바로 전 속도와 비교)
+    private void BuildSpeedMarks(List<RawEvent> rawEvents, Func<double, double> timeOfBeat, double initialSpeed)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        Func<long, long, long, double> beatOf = (m, n, d) => (m - 1) * 4.0 + (double)n / Math.Max(1, d) * 4.0;
+
+        Func<string[], int, bool> hasMark = (v, from) => { for (int i = from; i < v.Length; i++) if (v[i].Trim().ToUpperInvariant() == "MARK") return true; return false; };
+
+        // 지속 가속: SPEEDRAMP, 마디, 분자, 분모, 끝마디, 끝분자, 끝분모, 층, 시작 속도, 끝 속도 [, MARK]
+        var ramps = new List<double[]>();   // { 시작 시각, 끝 시각, 층, 시작 속도, 끝 속도, 변속선 }
+        foreach (var e in rawEvents)
+        {
+            if (e.Type != "SPEEDRAMP") continue;
+            string[] v = e.Value.Split(',');
+            if (v.Length < 6) continue;
+            try
+            {
+                double t0 = timeOfBeat(beatOf(e.Measure, e.Num, e.Den));
+                double t1 = timeOfBeat(beatOf(long.Parse(v[0].Trim()), long.Parse(v[1].Trim()), long.Parse(v[2].Trim())));
+                ramps.Add(new[] { t0, t1, int.Parse(v[3].Trim()), double.Parse(v[4].Trim(), inv), double.Parse(v[5].Trim(), inv), hasMark(v, 6) ? 1.0 : 0.0 });
+            }
+            catch (Exception) { }
+        }
+
+        // { 시각, 층, 속도, 지속 가속이면 1, 끝 속도, 변속선 }   (변속선이 없는 변속도 '바로 전 속도' 계산에 씀)
+        var items = new List<double[]>();
+        foreach (var e in rawEvents)
+        {
+            if (e.Type != "SPEED") continue;
+            int ly; double sv;
+            try { ParseSpeedEventValue(e.Value, out ly, out sv); } catch (Exception) { continue; }
+            double t = timeOfBeat(beatOf(e.Measure, e.Num, e.Den));
+            bool inRamp = false;   // 지속 가속이 만든 잘게 나눈 SPEED 줄은 건너뜀
+            foreach (var r in ramps)
+                if (((int)r[2] == 0 || (int)r[2] == ly) && t >= r[0] - 1e-6 && t <= r[1] + 1e-6) { inRamp = true; break; }
+            if (!inRamp) items.Add(new[] { t, ly, sv, 0.0, sv, hasMark(e.Value.Split(','), 1) ? 1.0 : 0.0 });
+        }
+        foreach (var r in ramps) items.Add(new[] { r[0], r[2], r[3], 1.0, r[4], r[5] });
+        items = items.OrderBy(x => x[0]).ToList();
+
+        double[] cur = new double[NoteLayer.Max + 1];
+        for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++) cur[L] = initialSpeed;
+        const double Eps = 1e-6;
+        foreach (var it in items)
+        {
+            int ly = (int)it[1];
+            int refL = ly == 0 ? NoteLayer.Top : NoteLayer.Clamp(ly);
+            double prev = cur[refL], from = it[2], to = it[4];
+            bool ramp = it[3] > 0.5;
+            int dir;
+            if (ramp && Math.Abs(to - from) > Eps) dir = Math.Sign(to - from);
+            else dir = Math.Abs(from - prev) > Eps ? Math.Sign(from - prev) : 0;
+            for (int L = NoteLayer.Min; L <= NoteLayer.Max; L++) if (ly == 0 || ly == L) cur[L] = to;
+            if (it[5] < 0.5 || dir == 0 || it[0] <= 1e-6) continue;   // 변속선 꺼짐 · 속도 그대로 · 시작 속도는 표시 안 함
+            var last = speedMarks.Count > 0 ? speedMarks[speedMarks.Count - 1] : null;
+            if (last != null && Math.Abs(last.Time - it[0]) < 1e-4 && last.Layer == refL && last.Up == (dir > 0)) continue;
+            speedMarks.Add(new SpeedMark { Time = it[0], Layer = refL, Up = dir > 0 });
+        }
+    }
+
+    private void ClearSpeedMarks()
+    {
+        foreach (var o in activeSpeedMarks) { if (o.go != null) o.go.SetActive(false); o.mark = null; speedMarkPool.Enqueue(o); }
+        activeSpeedMarks.Clear();
+        speedMarkSpawnIndex = 0;
+    }
+
+    private void UpdateSpeedMarks(double maxVisibleDist)
+    {
+        if (speedMarks.Count == 0) return;
+        double gone = W_BAD + 0.5;
+        while (speedMarkSpawnIndex < speedMarks.Count)
+        {
+            SpeedMark m = speedMarks[speedMarkSpawnIndex];
+            if (currentPlayTime - m.Time > gone) { speedMarkSpawnIndex++; continue; }   // 이미 지나감 (중간부터 · 되감기)
+            double distDiff = GetScrollDistance(m.Time, m.Layer) - currentScrollDistByLayer[m.Layer];
+            if (m.Time <= currentPlayTime + SPAWN_LOOKAHEAD || distDiff <= maxVisibleDist)
+            {
+                if (speedMarkPool.Count == 0) break;   // 화면에 너무 많음 → 자리가 나면 다음 프레임에
+                SpeedMarkObj o = speedMarkPool.Dequeue();
+                o.mark = m;
+                activeSpeedMarks.Add(o);
+                speedMarkSpawnIndex++;
+            }
+            else break;
+        }
+
+        for (int i = activeSpeedMarks.Count - 1; i >= 0; i--)
+        {
+            SpeedMarkObj o = activeSpeedMarks[i];
+            SpeedMark m = o.mark;
+            if (m == null || currentPlayTime - m.Time > gone)
+            {
+                o.go.SetActive(false); o.mark = null;
+                speedMarkPool.Enqueue(o);
+                activeSpeedMarks.RemoveAt(i);
+                continue;
+            }
+            bool hidden = IsNoteHiddenByFutureReverseScroll(currentPlayTime, m.Time, m.Layer);
+            o.go.SetActive(!hidden);
+            if (hidden) continue;
+            double dist = GetScrollDistance(m.Time, m.Layer) - currentScrollDistByLayer[m.Layer];
+            o.go.transform.position = new Vector3(0f, NoteYFromDist(dist) - 0.1f, 0f);   // 마디선과 같은 높이 기준
+            if (SixLane) o.go.transform.localScale = new Vector3(VisibleLanesWidth, 1f, 1f);
+            Color c = m.Up ? SpeedUpColor : SpeedDownColor;
+            o.line.color = new Color(c.r, c.g, c.b, 0.95f * endUiAlpha);
+            o.glow.color = new Color(c.r, c.g, c.b, 0.42f * endUiAlpha);
+        }
+    }
+
+    // 스크롤 거리 차이(채보 단위) → 화면에 놓일 월드 y (판정선 + 거리 × 0.01)
+    public float NoteYFromDist(double distDiff)
+    {
+        return hitLineY + (float)(distDiff * 0.01);
     }
 
     public double GetCurrentScrollDist(int layer)
@@ -1665,7 +1949,7 @@ public class GameManager : MonoBehaviour
     // 채보 · 음악을 처음부터 다시 (노트 · 판정 · 콤보 · LIFE 초기화, 채보는 다시 읽지 않음)
     public void RestartTestLoop()
     {
-        for (int i = 0; i < 4; i++) StopHoldEffect(i);
+        for (int i = 0; i < LaneCount; i++) StopHoldEffect(i);
         if (redFx != null) redFx.StopAll();
         if (bgmSource != null) bgmSource.Stop();
 
@@ -1675,10 +1959,11 @@ public class GameManager : MonoBehaviour
         activeSlides.Clear();
         foreach (var ml in activeMeasureLines) { ml.go.SetActive(false); measureLinePool.Enqueue(ml.go); }
         activeMeasureLines.Clear();
+        ClearSpeedMarks();
         foreach (var n in notes) n.IsHit = false;
 
         for (int L = 0; L < layerSpawnIndex.Length; L++) layerSpawnIndex[L] = 0;
-        for (int i = 0; i < 4; i++) laneStartIndex[i] = 0;
+        for (int i = 0; i < Lanes.Max; i++) laneStartIndex[i] = 0;
         measureSpawnIndex = 0;
         chartEndCursor = 0;
 
@@ -1747,13 +2032,14 @@ public class GameManager : MonoBehaviour
 
         for(int i = 0; i < LongSlots; i++) activeLongNote[i] = null;
         activeSlides.Clear();
-        for(int i = 0; i < 4; i++) StopHoldEffect(i);
+        for(int i = 0; i < LaneCount; i++) StopHoldEffect(i);
 
         foreach (var ml in activeMeasureLines) {
             ml.go.SetActive(false);
             measureLinePool.Enqueue(ml.go);
         }
         activeMeasureLines.Clear();
+        ClearSpeedMarks();
 
         double targetRewindTime = Math.Max(playStartTime, currentPlayTime - 1.0);
         double startRewindTime = currentPlayTime;
@@ -1780,7 +2066,7 @@ public class GameManager : MonoBehaviour
                 layerSpawnIndex[L]++;
             }
         }
-        for(int i = 0; i < 4; i++) {
+        for(int i = 0; i < Lanes.Max; i++) {
             laneStartIndex[i] = 0;
             while(laneStartIndex[i] < notesByLane[i].Count && notesByLane[i][laneStartIndex[i]].HitTime < currentPlayTime) {
                 laneStartIndex[i]++;
@@ -2029,8 +2315,9 @@ public class GameManager : MonoBehaviour
             } else {
                 ml.go.SetActive(true);
                 double mTargetDist = GetScrollDistance(ml.hitTime);
-                float rawYPos = hitLineY + (float)(mTargetDist - currentScrollDist) * 0.01f;
+                float rawYPos = NoteYFromDist(mTargetDist - currentScrollDist);
                 ml.go.transform.position = new Vector3(0f, rawYPos - 0.1f, 0f);
+                if (SixLane) ml.go.transform.localScale = new Vector3(VisibleLanesWidth, ml.go.transform.localScale.y, 1f);   // 4키 구간은 가운데 4레인 폭
             }
 
             if (currentPlayTime - ml.hitTime > W_BAD + 0.5) {
@@ -2039,6 +2326,8 @@ public class GameManager : MonoBehaviour
                 activeMeasureLines.RemoveAt(i);
             }
         }
+
+        UpdateSpeedMarks(maxVisibleDist);
 
         UpdateJudgmentAnim();
 
@@ -2134,51 +2423,83 @@ public class GameManager : MonoBehaviour
 
 
     // ===== 층별 롱노트 슬롯 헬퍼 =====
-    private int SlotBase(NoteData n) { return (NoteLayer.Clamp(n.Layer) - 1) * 4; }
-    private int CoveredLaneCount(NoteData n) { return Mathf.Max(1, n.Width); }
+    //  슬롯 = 층 × 24 + (레인 × 4 + 1/4 칸). 레인 전체 노트는 덮는 레인의 4칸을 모두 차지
+    private int SlotBase(NoteData n) { return (NoteLayer.Clamp(n.Layer) - 1) * CellsPerLayer; }
+    private static int FirstCell(NoteData n) { return n.Lane * Lanes.Quarters + (n.IsQuarter ? n.Sub : 0); }
+    private static int CellCount(NoteData n) { return n.IsQuarter ? n.SubW : Mathf.Max(1, n.Width) * Lanes.Quarters; }
+    private int HeadSlot(NoteData n) { return SlotBase(n) + FirstCell(n); }     // 틱은 이 슬롯에서만
+    private int CoveredLaneCount(NoteData n) { return n.QuarterLaneCount; }
+    private int CellLimit { get { return LaneCount * Lanes.Quarters; } }
 
     // 레인별 일반 홀드 효과가 필요한가 (RED 롱노트는 RED 전용 효과를 쓰므로 제외)
     private bool LaneNeedsHoldEffect(int lane)
     {
         bool redOnly = redFx != null;
         for (int L = 0; L < NoteLayer.Max; L++)
-        {
-            NoteData a = activeLongNote[lane + L * 4];
-            if (a != null && !(redOnly && a.IsRedNote)) return true;
-        }
+            for (int q = 0; q < Lanes.Quarters; q++)
+            {
+                NoteData a = activeLongNote[L * CellsPerLayer + lane * Lanes.Quarters + q];
+                if (a != null && !(redOnly && a.IsRedNote)) return true;
+            }
         return SlideHoldsLane(lane);
+    }
+
+    // 이 레인을 덮으며 진행 중인 롱노트 · 슬라이드의 지금 범위 (레인 단위 left ~ right, 1칸 = 1)
+    //  돌려주는 값 = 그 롱노트(머리) — 같은 롱노트를 여러 레인이 겹쳐 그리지 않게 구분하는 데 씀. 없으면 null
+    //  SIMPLE 스킨: 판정선 노트 모양 · 홀드 맥박의 폭 맞추기용 (RED 롱노트는 RED 전용 효과라 제외)
+    public object HoldSpanOnLane(int lane, out float left, out float right)
+    {
+        left = lane; right = lane + 1f;
+        if (lane < 0 || lane >= Lanes.Max) return null;
+        bool redOnly = redFx != null;
+        for (int L = NoteLayer.Max - 1; L >= 0; L--)
+            for (int q = 0; q < Lanes.Quarters; q++)
+            {
+                NoteData a = activeLongNote[L * CellsPerLayer + lane * Lanes.Quarters + q];
+                if (a == null || (redOnly && a.IsRedNote)) continue;
+                left = a.LeftLanes;
+                right = a.IsQuarter ? a.Lane + (a.Sub + a.SubW) * 0.25f : a.Lane + Mathf.Max(1, a.Width);
+                return a;
+            }
+        foreach (var s in activeSlides)
+            if (s.Fx[lane]) { s.Head.Slide.Evaluate(slideFxTime, out left, out right); return s.Head; }   // 슬라이드: 지금 폭 (움직이며 바뀜)
+        return null;
     }
 
     private bool IsLaneHeldByLongNote(int lane)
     {
-        for (int L = 0; L < NoteLayer.Max; L++) if (activeLongNote[lane + L * 4] != null) return true;
+        for (int L = 0; L < NoteLayer.Max; L++)
+            for (int q = 0; q < Lanes.Quarters; q++)
+                if (activeLongNote[L * CellsPerLayer + lane * Lanes.Quarters + q] != null) return true;
         return false;
     }
 
     private void RegisterActiveLongNote(NoteData n, double tickInterval)
     {
         if (n.Slide != null) { RegisterSlide(n, tickInterval); return; }   // 슬라이드는 레인 슬롯 대신 따로 (UpdateSlides)
-        int b = SlotBase(n);
-        int cnt = CoveredLaneCount(n);
-        for (int k = 0; k < cnt; k++) {
-            int l = n.Lane + k;
-            if (l >= 4) continue;
-            activeLongNote[b + l] = n;
-            nextLongNoteTickTime[b + l] = n.HitTime + tickInterval;
-            if (!n.IsRedNote || redFx == null) StartHoldEffect(l); // RED 롱노트는 RED 전용 홀드 효과만
+        int b = SlotBase(n), c0 = FirstCell(n), cc = CellCount(n);
+        for (int k = 0; k < cc; k++) {
+            int c = c0 + k;
+            if (c >= CellLimit) continue;
+            activeLongNote[b + c] = n;
+            nextLongNoteTickTime[b + c] = n.HitTime + tickInterval;
         }
+        if (!n.IsRedNote || redFx == null)   // RED 롱노트는 RED 전용 홀드 효과만
+            for (int k = 0; k < CoveredLaneCount(n); k++) StartHoldEffect(n.Lane + k);
         if (n.IsRedNote && redFx != null) redFx.StartHold(n);
     }
 
     private void ClearActiveLongNote(NoteData n)
     {
-        int b = SlotBase(n);
-        int cnt = CoveredLaneCount(n);
-        for (int k = 0; k < cnt; k++) {
+        int b = SlotBase(n), c0 = FirstCell(n), cc = CellCount(n);
+        for (int k = 0; k < cc; k++) {
+            int c = c0 + k;
+            if (c >= CellLimit) continue;
+            if (activeLongNote[b + c] == n) activeLongNote[b + c] = null;
+        }
+        for (int k = 0; k < CoveredLaneCount(n); k++) {
             int l = n.Lane + k;
-            if (l >= 4) continue;
-            if (activeLongNote[b + l] == n) activeLongNote[b + l] = null;
-            if (!LaneNeedsHoldEffect(l)) StopHoldEffect(l);
+            if (l < LaneCount && !LaneNeedsHoldEffect(l)) StopHoldEffect(l);
         }
         if (redFx != null) redFx.StopHold(n);
     }
@@ -2189,24 +2510,23 @@ public class GameManager : MonoBehaviour
         int cnt = CoveredLaneCount(ln);
         for (int k = 0; k < cnt; k++) {
             int l = ln.Lane + k;
-            if (l < 4 && prevKeyState[l]) return true;
+            if (l < LaneCount && prevKeyState[l]) return true;   // 1/4 칸 롱노트도 그 레인 키
         }
         return false;
     }
 
     private void SetLongNoteReleaseTime(NoteData ln, double time)
     {
-        int b = SlotBase(ln);
-        int cnt = CoveredLaneCount(ln);
-        for (int k = 0; k < cnt; k++) {
-            int l = ln.Lane + k;
-            if (l < 4) lnReleaseTime[b + l] = time;
+        int b = SlotBase(ln), c0 = FirstCell(ln), cc = CellCount(ln);
+        for (int k = 0; k < cc; k++) {
+            int c = c0 + k;
+            if (c < CellLimit) lnReleaseTime[b + c] = time;
         }
     }
 
     private void HandleAutoPlay(double T_sys)
     {
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < LaneCount; i++)
         {
             var laneNotes = notesByLane[i];
             while (laneStartIndex[i] < laneNotes.Count)
@@ -2227,16 +2547,16 @@ public class GameManager : MonoBehaviour
                     
                     if (n.IsRedNote) {
                         // RED 노트: 레인별 일반 히트 효과 대신 노트 폭만큼의 RED 전용 효과 하나
-                        if (redFx != null) redFx.Tap(n); else for (int w = 0; w < n.Width; w++) if (n.Lane + w < 4) SpawnHitEffect(n.Lane + w, n);
+                        if (redFx != null) redFx.Tap(n); else for (int w = 0; w < n.Width; w++) if (n.Lane + w < LaneCount) SpawnHitEffect(n.Lane + w, n);
                         for (int w = 0; w < n.Width; w++) {
                             int l = n.Lane + w;
-                            if (l < 4) StartCoroutine(AutoPlayLaneVisual(l, isTail));
+                            if (l < LaneCount) StartCoroutine(AutoPlayLaneVisual(l, isTail));
                         }
                     } else {
                         // 넓은 일반 노트는 덮는 레인 모두에 효과 (1칸이면 기존과 같음)
                         for (int w = 0; w < Mathf.Max(1, n.Width); w++) {
                             int l = n.Lane + w;
-                            if (l < 4) { SpawnHitEffect(l, n); StartCoroutine(AutoPlayLaneVisual(l, isTail)); }
+                            if (l < LaneCount) { SpawnHitEffect(l, n); StartCoroutine(AutoPlayLaneVisual(l, isTail)); }
                         }
                     }
 
@@ -2255,9 +2575,8 @@ public class GameManager : MonoBehaviour
         {
             NoteData ln = activeLongNote[s];
             if (ln == null) continue;
-            int lane = s % 4;
 
-            if (ln.Lane == lane) ProcessLongNoteTick(s, T_sys);   // 넓은 롱노트는 기준 레인 슬롯에서만 틱
+            if (s == HeadSlot(ln)) ProcessLongNoteTick(s, T_sys);   // 넓은 · 1/4 롱노트 모두 첫 칸 슬롯에서만 틱
 
             if (T_sys >= GetLongNoteEndTime(ln)) FinishLongNote(ln);
         }
@@ -2266,23 +2585,37 @@ public class GameManager : MonoBehaviour
     }
 
     // 탭 사운드 (설정 > SOUND 의 ON/OFF · 볼륨 반영)
+    //  [개선] 동타 '따닥' 막기: 직전 탭음 후 HitSkipWindow 안에 또 나면 두 번째 소리는 내지 않음
+    //   (예전처럼 재생 위치를 맞춰 겹치면 '탁' 하는 앞부분이 잘려 작고 이상하게 들렸음 → 항상 처음부터 하나만)
+    //   AUTO PLAY 의 같은 프레임 동타도 똑같이 하나만 나서 직접 칠 때와 같은 소리
+    //  크기: 설정 볼륨 × HitSound.Gain (1.5배)
+    private const double HitSkipWindow = 0.030;
+    private double hitLastTime = -1.0;
+
     private void PlayHitSound()
     {
-        SettingsStore.PlayHitSound(sfxSource, hitSoundClip);
+        var s = SettingsStore.Current;
+        if (!s.HitSoundOn || sfxSource == null || hitSoundClip == null || s.HitSoundVolume <= 0f) return;
+
+        double now = Time.realtimeSinceStartupAsDouble;
+        if (hitLastTime >= 0.0 && now - hitLastTime < HitSkipWindow) return;
+        hitLastTime = now;
+
+        sfxSource.PlayOneShot(hitSoundClip, s.HitSoundVolume * HitSound.Gain);
     }
 
     private IEnumerator AutoPlayLaneVisual(int lane, bool skipSound = false)
     {
-        if (beamRenderers != null && beamRenderers[lane] != null && onSprites != null) beamRenderers[lane].sprite = onSprites[lane];
-        if (whiteLights != null && whiteLights[lane] != null) whiteLights[lane].SetActive(true);
+        if (beamRenderers != null && lane < beamRenderers.Length && beamRenderers[lane] != null && onSprites != null) beamRenderers[lane].sprite = onSprites[lane];
+        if (whiteLights != null && lane < whiteLights.Length && whiteLights[lane] != null) whiteLights[lane].SetActive(true);
         if (simpleSkin != null) simpleSkin.SetPressed(lane, true);
         if (!skipSound) PlayHitSound();
 
         yield return new WaitForSeconds(0.05f);
 
         if (!IsLaneHeldByLongNote(lane)) {
-            if (beamRenderers != null && beamRenderers[lane] != null && offSprites != null) beamRenderers[lane].sprite = offSprites[lane];
-            if (whiteLights != null && whiteLights[lane] != null) whiteLights[lane].SetActive(false);
+            if (beamRenderers != null && lane < beamRenderers.Length && beamRenderers[lane] != null && offSprites != null) beamRenderers[lane].sprite = offSprites[lane];
+            if (whiteLights != null && lane < whiteLights.Length && whiteLights[lane] != null) whiteLights[lane].SetActive(false);
             if (simpleSkin != null) simpleSkin.SetPressed(lane, false);
         }
     }
@@ -2296,22 +2629,23 @@ public class GameManager : MonoBehaviour
         //  (그 순간 눌려 있던 키는 한 번만 뗀 상태로 되돌림)
         if (clearChecked)
         {
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < LaneCount; i++)
             {
                 if (!prevKeyState[i]) continue;
                 prevKeyState[i] = false;
-                if (beamRenderers != null && beamRenderers[i] != null && offSprites != null) beamRenderers[i].sprite = offSprites[i];
-                if (whiteLights != null && whiteLights[i] != null) whiteLights[i].SetActive(false);
+                if (beamRenderers != null && i < beamRenderers.Length && beamRenderers[i] != null && offSprites != null) beamRenderers[i].sprite = offSprites[i];
+                if (whiteLights != null && i < whiteLights.Length && whiteLights[i] != null) whiteLights[i].SetActive(false);
                 if (simpleSkin != null) simpleSkin.SetPressed(i, false);
                 StopHoldEffect(i);
             }
             return;
         }
 
-        for (int i = 0; i < 4; i++) 
+        bool sixNow = KeysAt(T_sys - SettingsStore.JudgeDelay) >= 6;   // 4키 / 6키 구간 (6키 확장 채보)
+        for (int i = 0; i < LaneCount; i++) 
         {
-            Key targetKey = laneKeys[i];
-            bool isCurrentlyPressed = kb[targetKey].isPressed;
+            Key targetKey = KeyForLane(i, sixNow);
+            bool isCurrentlyPressed = targetKey != Key.None && kb[targetKey].isPressed;
 
             bool wasPressed = isCurrentlyPressed && !prevKeyState[i];
             bool wasReleased = !isCurrentlyPressed && prevKeyState[i];
@@ -2324,15 +2658,15 @@ public class GameManager : MonoBehaviour
             if (wasReleased) 
             {
                 double releaseT = T_sys - InputTiming.ReleaseAge(targetKey);
-                if (beamRenderers != null && beamRenderers[i] != null && offSprites != null) beamRenderers[i].sprite = offSprites[i];
-                if (whiteLights != null && whiteLights[i] != null) whiteLights[i].SetActive(false);
+                if (beamRenderers != null && i < beamRenderers.Length && beamRenderers[i] != null && offSprites != null) beamRenderers[i].sprite = offSprites[i];
+                if (whiteLights != null && i < whiteLights.Length && whiteLights[i] != null) whiteLights[i].SetActive(false);
                 if (simpleSkin != null) simpleSkin.SetPressed(i, false);
                 if (!SlideHoldsLane(i)) StopHoldEffect(i);   // 슬라이드가 지나가는 레인이면 (다른 키로 옮겨 잡는 중) 효과 유지
                 
-                // 이 레인의 층별(1 ~ 5층) 롱노트를 각각 검사
-                for (int layerSlot = 0; layerSlot < NoteLayer.Max; layerSlot++)
+                // 이 레인의 층별(1 ~ 5층) · 1/4 칸별 롱노트를 각각 검사
+                for (int layerSlot = 0; layerSlot < NoteLayer.Max * Lanes.Quarters; layerSlot++)
                 {
-                    NoteData ln = activeLongNote[i + layerSlot * 4];
+                    NoteData ln = activeLongNote[(layerSlot / Lanes.Quarters) * CellsPerLayer + i * Lanes.Quarters + layerSlot % Lanes.Quarters];
                     if (ln == null) continue;
                     if (IsLongNoteHeld(ln)) continue; // 와이드 빨간 노트: 다른 레인 키가 아직 눌려 있음
 
@@ -2345,8 +2679,8 @@ public class GameManager : MonoBehaviour
 
             if (wasPressed) 
             {
-                if (beamRenderers != null && beamRenderers[i] != null && onSprites != null) beamRenderers[i].sprite = onSprites[i];
-                if (whiteLights != null && whiteLights[i] != null) whiteLights[i].SetActive(true);
+                if (beamRenderers != null && i < beamRenderers.Length && beamRenderers[i] != null && onSprites != null) beamRenderers[i].sprite = onSprites[i];
+                if (whiteLights != null && i < whiteLights.Length && whiteLights[i] != null) whiteLights[i].SetActive(true);
                 if (simpleSkin != null) simpleSkin.SetPressed(i, true);
                 PlayHitSound();
                 
@@ -2364,13 +2698,12 @@ public class GameManager : MonoBehaviour
             NoteData ln = activeLongNote[s];
             if (ln == null) continue;
 
-            int lane = s % 4;
             double endTime = GetLongNoteEndTime(ln);
             bool isHeld = IsLongNoteHeld(ln);
 
-            if (isHeld) 
+            if (isHeld)
             {
-                if (ln.Lane == lane) ProcessLongNoteTick(s, T_sys);   // 넓은 롱노트는 기준 레인 슬롯에서만 틱
+                if (s == HeadSlot(ln)) ProcessLongNoteTick(s, T_sys);   // 넓은 · 1/4 롱노트 모두 첫 칸 슬롯에서만 틱
                 SetLongNoteReleaseTime(ln, 0);
             }
             else if (T_sys - lnReleaseTime[s] > 0.2) 
@@ -2388,8 +2721,8 @@ public class GameManager : MonoBehaviour
     private void FinishLongNote(NoteData head, double tailErrorMs = 0.0)
     {
         // 끝나기 직전(0.15초 이내)에 손을 떼서 완료 처리된 경우, 남은 틱을 마저 정산한다 (풀콤보가 깨지지 않도록)
-        int tickSlot = SlotBase(head) + head.Lane;
-        if (head.Lane >= 0 && head.Lane < 4 && activeLongNote[tickSlot] == head)
+        int tickSlot = HeadSlot(head);
+        if (head.Lane >= 0 && head.Lane < LaneCount && activeLongNote[tickSlot] == head)
             ProcessLongNoteTick(tickSlot, GetLongNoteEndTime(head));
 
         NoteData tailNote = head.NextLongNote;
@@ -2401,7 +2734,7 @@ public class GameManager : MonoBehaviour
             if (head.IsRedNote && redFx != null) redFx.Tap(head); // RED: 노트 폭만큼의 전용 효과 하나
             else
                 for (int w = 0; w < cnt; w++) {
-                    if (head.Lane + w < 4) SpawnHitEffect(head.Lane + w, tailNote);
+                    if (head.Lane + w < LaneCount) SpawnHitEffect(head.Lane + w, tailNote);
                 }
             HideNoteObject(tailNote);
         }
@@ -2498,11 +2831,11 @@ public class GameManager : MonoBehaviour
             if (redFx != null) redFx.Tap(targetNote);
             else
                 for (int w = 0; w < targetNote.Width; w++) {
-                    if (targetNote.Lane + w < 4) SpawnHitEffect(targetNote.Lane + w, targetNote);
+                    if (targetNote.Lane + w < LaneCount) SpawnHitEffect(targetNote.Lane + w, targetNote);
                 }
         } else if (targetNote.Width > 1) {
             // 넓은 일반 노트: 덮는 레인 모두에 효과
-            for (int w = 0; w < targetNote.Width; w++) if (targetNote.Lane + w < 4) SpawnHitEffect(targetNote.Lane + w, targetNote);
+            for (int w = 0; w < targetNote.Width; w++) if (targetNote.Lane + w < LaneCount) SpawnHitEffect(targetNote.Lane + w, targetNote);
         } else {
             SpawnHitEffect(lane, targetNote); 
         }
@@ -2510,6 +2843,23 @@ public class GameManager : MonoBehaviour
         if (NoteTypes.IsLongHead(targetNote.Type))
         {
             RegisterActiveLongNote(targetNote, GetTickInterval(targetNote.HitTime));
+        }
+
+        // 1/4 칸 노트: 같은 레인 · 같은 시각의 다른 1/4 노트도 이 키 한 번에 함께 판정
+        if (targetNote.IsQuarter)
+        {
+            for (int i = laneStartIndex[lane]; i < currentLaneNotes.Count; i++)
+            {
+                var n = currentLaneNotes[i];
+                if (n.HitTime - targetNote.HitTime > 0.002) break;
+                if (n == targetNote || n.IsHit || !n.IsQuarter || n.Lane != lane) continue;
+                if (Math.Abs(n.HitTime - targetNote.HitTime) > 0.002) continue;
+                if (NoteTypes.IsDrag(n.Type) || (!NoteTypes.IsTapLike(n.Type) && !NoteTypes.IsLongHead(n.Type))) continue;
+                n.IsHit = true;
+                ApplyJudgment(n.HitTime - adjustedHitTime);
+                SpawnHitEffect(lane, n);
+                if (NoteTypes.IsLongHead(n.Type)) RegisterActiveLongNote(n, GetTickInterval(n.HitTime));
+            }
         }
     }
 
@@ -2523,7 +2873,7 @@ public class GameManager : MonoBehaviour
     // =====================================================================
     private void CheckDragHolds(double judgeNow)
     {
-        for (int lane = 0; lane < 4; lane++)
+        for (int lane = 0; lane < LaneCount; lane++)
         {
             if (!prevKeyState[lane]) continue;
             var laneNotes = notesByLane[lane];
@@ -2546,11 +2896,11 @@ public class GameManager : MonoBehaviour
         if (hitErrorMeter != null) hitErrorMeter.Add(0.0, 0);
         if (byHold) PlayHitSound();                                 // 누르고 있다가 받은 경우에도 탭음 (누른 경우는 누를 때 이미 남)
         int cnt = Mathf.Max(1, n.Width);
-        for (int w = 0; w < cnt; w++) if (n.Lane + w < 4) SpawnHitEffect(n.Lane + w, n);
+        for (int w = 0; w < cnt; w++) if (n.Lane + w < LaneCount) SpawnHitEffect(n.Lane + w, n);
         if (NoteTypes.IsLongHead(n.Type))
         {
             RegisterActiveLongNote(n, GetTickInterval(n.HitTime));
-            for (int w = 0; w < cnt; w++) { int l = n.Lane + w; if (l < 4 && prevKeyState[l] && LaneNeedsHoldEffect(l)) StartHoldEffect(l); }
+            for (int w = 0; w < cnt; w++) { int l = n.Lane + w; if (l < LaneCount && prevKeyState[l] && LaneNeedsHoldEffect(l)) StartHoldEffect(l); }
         }
     }
 
@@ -2626,8 +2976,8 @@ public class GameManager : MonoBehaviour
     //  (판정 수 합계 = 전체 노트 수가 되도록. 판정 글자는 꼬리 MISS 한 번만 표시)
     private void FailLongNote(NoteData ln)
     {
-        int slot = SlotBase(ln) + ln.Lane;
-        double from = (ln.Lane >= 0 && ln.Lane < 4 && activeLongNote[slot] == ln) ? nextLongNoteTickTime[slot] : currentPlayTime;
+        int slot = HeadSlot(ln);
+        double from = (ln.Lane >= 0 && ln.Lane < LaneCount && activeLongNote[slot] == ln) ? nextLongNoteTickTime[slot] : currentPlayTime;
         int remaining = CountTicksFrom(from, GetLongNoteEndTime(ln));
         for (int i = 0; i < remaining; i++) RegisterTickMiss();
         MissSlideRelays(ln);
@@ -2695,10 +3045,10 @@ public class GameManager : MonoBehaviour
         public double NextTick;
         public double ReleaseTime;          // 0 = 눌림, 그 밖 = 손을 뗀 시각
         public int NextRelay = 1;           // 다음에 판정할 중계점 (Points 의 번호)
-        public readonly bool[] Fx = new bool[4];   // 홀드 효과를 켠 레인
+        public readonly bool[] Fx = new bool[Lanes.Max];   // 홀드 효과를 켠 레인
     }
     private readonly List<ActiveSlide> activeSlides = new List<ActiveSlide>();
-    private readonly bool[] slideLanes = new bool[4];
+    private readonly bool[] slideLanes = new bool[Lanes.Max];
 
     private void RegisterSlide(NoteData head, double tickInterval)
     {
@@ -2724,12 +3074,12 @@ public class GameManager : MonoBehaviour
             double end = path.EndTime;
 
             // 지금 (앞뒤 조금 포함) 덮는 레인 중 하나라도 눌려 있는가
-            Array.Clear(slideLanes, 0, 4);
+            Array.Clear(slideLanes, 0, Lanes.Max);
             path.CoveredLanes(t - SlideGrace, slideLanes);
             path.CoveredLanes(t, slideLanes);
             path.CoveredLanes(t + SlideGrace, slideLanes);
             bool held = auto || autoHeld.Contains(a.Head);
-            for (int l = 0; l < 4 && !held; l++) if (slideLanes[l] && prevKeyState[l]) held = true;
+            for (int l = 0; l < LaneCount && !held; l++) if (slideLanes[l] && prevKeyState[l]) held = true;
 
             if (held)
             {
@@ -2758,11 +3108,14 @@ public class GameManager : MonoBehaviour
     }
 
     // 홀드 효과: 지금 덮는 레인에만 (눌린 동안)
+    private double slideFxTime;   // 슬라이드 홀드 효과를 마지막으로 맞춘 판정 시각 (HoldSpanOnLane 이 지금 폭을 구할 때 씀)
+
     private void UpdateSlideFx(ActiveSlide a, double t, bool held)
     {
-        Array.Clear(slideLanes, 0, 4);
+        slideFxTime = t;
+        Array.Clear(slideLanes, 0, Lanes.Max);
         if (held) a.Head.Slide.CoveredLanes(t, slideLanes);
-        for (int l = 0; l < 4; l++)
+        for (int l = 0; l < LaneCount; l++)
         {
             if (slideLanes[l] == a.Fx[l]) continue;
             a.Fx[l] = slideLanes[l];
@@ -2776,7 +3129,7 @@ public class GameManager : MonoBehaviour
         if (relay == null || relay.IsHit) return;
         relay.IsHit = true;
         ProcessHit("EXCELLENT", 0.0, true);                         // 중계점 = JUST
-        for (int w = 0; w < Mathf.Max(1, relay.Width); w++) if (relay.Lane + w < 4) SpawnHitEffect(relay.Lane + w, relay);
+        for (int w = 0; w < Mathf.Max(1, relay.Width); w++) if (relay.Lane + w < LaneCount) SpawnHitEffect(relay.Lane + w, relay);
         HideNoteObject(relay);
     }
 
@@ -2803,7 +3156,7 @@ public class GameManager : MonoBehaviour
         {
             tail.IsHit = true;
             ProcessHit("EXCELLENT", 0.0, true);
-            for (int w = 0; w < Mathf.Max(1, tail.Width); w++) if (tail.Lane + w < 4) SpawnHitEffect(tail.Lane + w, tail);
+            for (int w = 0; w < Mathf.Max(1, tail.Width); w++) if (tail.Lane + w < LaneCount) SpawnHitEffect(tail.Lane + w, tail);
             HideNoteObject(tail);
         }
         RemoveSlide(a);
@@ -2824,7 +3177,7 @@ public class GameManager : MonoBehaviour
     private void RemoveSlide(ActiveSlide a)
     {
         activeSlides.Remove(a);
-        for (int l = 0; l < 4; l++)
+        for (int l = 0; l < LaneCount; l++)
             if (a.Fx[l]) { a.Fx[l] = false; if (!LaneNeedsHoldEffect(l)) StopHoldEffect(l); }
     }
 
@@ -2953,7 +3306,7 @@ public class GameManager : MonoBehaviour
         ProcessHit("EXCELLENT", 0.0, false);                 // 오차 기록 없이 JUST
         if (simpleSkin != null) simpleSkin.FlashFloor(SimpleGameSkin.SaveFlashColor);   // 레인 아래 빛이 초록으로 번쩍
         if (n.IsRedNote && redFx != null) redFx.Tap(n);
-        else for (int w = 0; w < Mathf.Max(1, n.Width); w++) if (n.Lane + w < 4) SpawnHitEffect(n.Lane + w, n);
+        else for (int w = 0; w < Mathf.Max(1, n.Width); w++) if (n.Lane + w < LaneCount) SpawnHitEffect(n.Lane + w, n);
         if (NoteTypes.IsLongHead(n.Type) && n.NextLongNote != null)
         {
             autoHeld.Add(n);
@@ -3147,7 +3500,7 @@ public class GameManager : MonoBehaviour
             string title = currentSong != null ? (currentSong.Name ?? "") : "";   // 곡명만 (부제 없음)
             int lv = CoreManager.Instance != null ? CoreManager.Instance.CurrentLevelId : 2;
             string sub = (currentSong != null && !string.IsNullOrWhiteSpace(currentSong.Composer) ? currentSong.Composer + "   ·   " : "") +
-                         DifficultyHelper.GetName(lv) + " " + DifficultyHelper.GetValue(currentSong, lv);
+                         DifficultyHelper.GetName(lv) + " " + SongRowUI.FormatDifficulty(DifficultyHelper.GetValue(currentSong, lv));
             pauseMenu.Show(title, sub);
             pauseShowRoutine = null;
             yield break;
@@ -3184,7 +3537,7 @@ public class GameManager : MonoBehaviour
     {
         isLeaving = true;
         HidePauseUIImmediate();
-        for (int i = 0; i < 4; i++) StopHoldEffect(i);
+        for (int i = 0; i < LaneCount; i++) StopHoldEffect(i);
         if (bgmSource != null) bgmSource.Stop();
         if (mvPlayer != null) mvPlayer.Stop();
 
@@ -3281,11 +3634,7 @@ public class GameManager : MonoBehaviour
         if (n <= 0) return 0;
         double judge = JudgeScoreMax * currentAccSum / n;
         double combo = n > 1 ? ComboScoreMax * 2.0 / ((double)(n - 1) * n) * comboSum : (maxCombo >= 1 ? ComboScoreMax : 0);
-        int baseScore = Mathf.Clamp((int)Math.Round(judge + combo), 0, MaxScore);
-        // 게임 모드 점수 배율 (고른 모드 배율의 곱, 최대 400%. MODE RANDOM 보너스는 그 위에 더함 → 최대 430% = 4,300,000)
-        double k = GameModes.Play.ScoreMultiplier;
-        if (Math.Abs(k - 1.0) < 1e-9) return baseScore;
-        return (int)Math.Min(GameModes.MaxScoreWithModes, Math.Round(baseScore * k));
+        return Mathf.Clamp((int)Math.Round(judge + combo), 0, MaxScore);   // 최고 1,000,000 점
     }
 
     // =====================================================================
@@ -3542,7 +3891,7 @@ public class GameManager : MonoBehaviour
         failProgress = PlayProgress();
         finishRoutineStarted = true; // 일반 종료 흐름 대신 FAILED 흐름으로
         clearChecked = true;
-        for (int i = 0; i < 4; i++) StopHoldEffect(i);
+        for (int i = 0; i < LaneCount; i++) StopHoldEffect(i);
         if (redFx != null) redFx.StopAll();
         Debug.Log($"[Life] FAILED at {currentPlayTime:0.00}s");
         StartCoroutine(FailRoutine());
@@ -4057,10 +4406,7 @@ public class GameManager : MonoBehaviour
             IsMv = CoreManager.Instance.IsMvOn,
             IsMidStart = IsMidStart,
             MidStartSeconds = MidStartSeconds,
-            Speed = SettingsStore.Current.SettingSpeed,
-            Modes = GameModes.Play.Modes.Select(m => (int)m).ToArray(),
-            ScoreMultiplier = GameModes.Play.ScoreMultiplier,
-            RandomBonus = GameModes.Play.RandomBonus
+            Speed = SettingsStore.Current.SettingSpeed
         };
     }
 
@@ -4070,7 +4416,7 @@ public class GameManager : MonoBehaviour
     private IEnumerator FinishToResultRoutine()
     {
         isLeaving = true;                       // 일시정지 · 입력 막힘 (마지막 노트 뒤라 입력은 이미 받지 않음)
-        for (int i = 0; i < 4; i++) StopHoldEffect(i);
+        for (int i = 0; i < LaneCount; i++) StopHoldEffect(i);
 
         ResultData result = BuildResultData();
 

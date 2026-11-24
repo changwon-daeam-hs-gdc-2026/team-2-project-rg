@@ -267,8 +267,8 @@ public class PlayConfirmDialog : MonoBehaviour
         if (!accepting) return;
         var kb = Keyboard.current;
         if (kb == null) return;
-        if (kb.leftArrowKey.wasPressedThisFrame) { selected = (selected - 1 + buttons.Count) % buttons.Count; RefreshButtons(); }
-        if (kb.rightArrowKey.wasPressedThisFrame || kb.tabKey.wasPressedThisFrame) { selected = (selected + 1) % buttons.Count; RefreshButtons(); }
+        if (kb.leftArrowKey.wasPressedThisFrame) { selected = (selected - 1 + buttons.Count) % buttons.Count; RefreshButtons(); Sfx.Play(Sfx.Id.Move); }
+        if (kb.rightArrowKey.wasPressedThisFrame || kb.tabKey.wasPressedThisFrame) { selected = (selected + 1) % buttons.Count; RefreshButtons(); Sfx.Play(Sfx.Id.Move); }
         if (kb.escapeKey.wasPressedThisFrame) { Choose(0); return; }
         if (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame) Choose(selected);
     }

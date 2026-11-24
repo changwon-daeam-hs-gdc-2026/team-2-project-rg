@@ -152,6 +152,7 @@ public class PauseMenu : MonoBehaviour
         transform.SetAsLastSibling();
         for (int i = 0; i < rows.Count; i++) rows[i].ResetIntro();
         Refresh();
+        Sfx.Play(Sfx.Id.Open);
         if (!capturing) StartCoroutine(CaptureRoutine());
     }
 
@@ -200,9 +201,9 @@ public class PauseMenu : MonoBehaviour
         if (SettingsWindow.BlocksGameInput) return;            // 설정창이 열려 있음
         var kb = Keyboard.current;
         if (kb == null) return;
-        if (kb.upArrowKey.wasPressedThisFrame) { selected = (selected - 1 + rows.Count) % rows.Count; Refresh(); }
-        if (kb.downArrowKey.wasPressedThisFrame || kb.tabKey.wasPressedThisFrame) { selected = (selected + 1) % rows.Count; Refresh(); }
-        if (kb.escapeKey.wasPressedThisFrame) { if (onResume != null) onResume(); return; }
+        if (kb.upArrowKey.wasPressedThisFrame) { selected = (selected - 1 + rows.Count) % rows.Count; Refresh(); Sfx.Play(Sfx.Id.Move); }
+        if (kb.downArrowKey.wasPressedThisFrame || kb.tabKey.wasPressedThisFrame) { selected = (selected + 1) % rows.Count; Refresh(); Sfx.Play(Sfx.Id.Move); }
+        if (kb.escapeKey.wasPressedThisFrame) { Sfx.Play(Sfx.Id.Back); if (onResume != null) onResume(); return; }
         if (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame) Choose(selected);
     }
 
@@ -211,6 +212,7 @@ public class PauseMenu : MonoBehaviour
         if (SettingsWindow.BlocksGameInput || i == selected) return;
         selected = i;
         Refresh();
+        Sfx.Play(Sfx.Id.Move);
     }
 
     private void Choose(int i)
@@ -219,6 +221,7 @@ public class PauseMenu : MonoBehaviour
         if (i < 0 || i >= items.Count) return;
         selected = i;
         Refresh();
+        Sfx.Play(Sfx.Id.Confirm);
         if (items[i].Action != null) items[i].Action();
     }
 

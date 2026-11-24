@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using TMPro;
@@ -16,8 +16,22 @@ public static class GameSkins
     public const int Default = 0;
     public const int Simple = 1;
     public const int Diverse = 2;   // SIMPLE-DIVERSE: SIMPLE 디자인 + 원근(기울어진) 레인
-    public static readonly string[] Names = { "DEFAULT", "SIMPLE", "SIMPLE-DIVERSE" };
-    public static bool UsesSimpleSkin(int skin) { return skin == Simple || skin == Diverse; }
+    public const int Circle = 3;    // CIRCLE: SIMPLE 디자인 + 원 모양 노트 · 넓은 레인
+    public static readonly string[] Names = { "DEFAULT", "SIMPLE", "SIMPLE-DIVERSE", "CIRCLE" };
+    // DEFAULT 는 비활성화 — 설정창에서 고를 수 있는 스킨 (번호는 저장된 설정과 맞추기 위해 그대로 둠)
+    public static readonly int[] Selectable = { Simple, Diverse, Circle };
+    // 저장된 값이 DEFAULT(또는 잘못된 값)이면 SIMPLE 로
+    public static int Normalize(int skin) { return Array.IndexOf(Selectable, skin) >= 0 ? skin : Simple; }
+    // 설정창 좌우 버튼: 고를 수 있는 스킨 안에서 d 칸 이동
+    public static int Step(int skin, int d)
+    {
+        int i = Array.IndexOf(Selectable, Normalize(skin));
+        int n = Selectable.Length;
+        return Selectable[((i + d) % n + n) % n];
+    }
+    public static bool UsesSimpleSkin(int skin) { return skin == Simple || skin == Diverse || skin == Circle; }
+    public static bool UsesPerspective(int skin) { return skin == Diverse; }
+    public static bool UsesCircle(int skin) { return skin == Circle; }
 }
 
 // ============================================================
@@ -38,7 +52,7 @@ public class SimpleSkinFonts
 // SIMPLE 게임 화면 (에셋 없이 코드로 전부 그림)
 //
 //  [월드]  (MV 블러) · 어두운 레인 배경 · 양쪽 벽 · 판정선 · 키 누름 빛 · 히트 플래시 · 단색 둥근 노트
-//  [HUD ]  레인 위 콤보·판정·FAST/SLOW / 판정선 아래 키 이름 / LIFE / SPEED UP·DOWN / RED 예고
+//  [HUD ]  레인 위 콤보·판정·FAST/SLOW / 판정선 아래 키 이름 / LIFE / RED 예고
 //          (곡 정보 · 난이도 · 시간 · 점수 · 배속 · 진행 막대는 GameInfoHud 로 옮김 — 모든 GAME UI 공통)
 //
 //  - 기본 화면의 레인·키빔·판정 이미지·콤보 숫자·정확도 텍스트는 숨기고 이 화면으로 대신한다.
@@ -57,13 +71,41 @@ public class SimpleGameSkin : MonoBehaviour
     public const float RedTailHeight = 0.11f;
     public const float BodyAlpha = 0.30f;
 
+    // SIMPLE (평면) 전용: 살짝 넓은 레인 + 두툼한 노트 (SIMPLE-DIVERSE · CIRCLE 은 그대로)
+    public const float SimpleLaneWidth = 0.92f;      // 레인 한 칸 폭 (기본 0.8)
+    public const float ThickNoteHeight = 0.26f;      // 일반 노트 두께 (기본 0.16)
+    public const float ThickTailHeight = 0.10f;      // 롱노트 끝 두께
+    public const float ThickRedNoteHeight = 0.32f;   // RED 노트 두께 (일반보다 조금 더 두껍게)
+    public const float ThickRedTailHeight = 0.13f;
+    // 두툼한 노트를 쓰는가 (SIMPLE 평면 스킨)
+    public bool IsThick { get { return !IsDiverse && !IsCircle; } }
+    public static bool ThickActive { get { return Active != null && Active.IsThick; } }
+    // 지금 스킨의 노트 두께 (이펙트 · 키 자리 크기 기준)
+    public float CurNoteHeight { get { return IsThick ? ThickNoteHeight : NoteHeight; } }
+
     private static readonly Color OuterLane = new Color(0.95f, 0.97f, 1f, 1f);     // 1, 4번 레인
     private static readonly Color InnerLane = new Color(0.36f, 0.88f, 0.90f, 1f);  // 2, 3번 레인 (#5ce1e6)
     private static readonly Color RedNote = new Color(1f, 0.38f, 0.45f, 1f);
     public static Color RedColor { get { return RedNote; } }
     private static readonly Color TextSub = new Color(1f, 1f, 1f, 0.55f);
 
-    public static Color LaneColor(int lane) { return (lane == 0 || lane == 3) ? OuterLane : InnerLane; }
+    // CIRCLE: 바깥 레인 흰색 · 안쪽 레인 회색
+    private static readonly Color CircleOuter = new Color(0.96f, 0.97f, 1f, 1f);
+    private static readonly Color CircleInner = new Color(0.60f, 0.63f, 0.68f, 1f);
+    public static Color LaneColor(int lane)
+    {
+        // (CIRCLE 도 처음 디자인대로 SIMPLE 과 같은 흰색 · 청록 — 흰/회색으로 바꾸려면 CircleOuter / CircleInner 를 쓰면 됨)
+        if (GameManager.Instance != null && GameManager.Instance.SixLane) return LaneColor(lane, true);
+        return (lane == 0 || lane == 3) ? OuterLane : InnerLane;
+    }
+    // six: 6키 확장 채보의 레인 번호 (0 ~ 5). 가운데 1 ~ 4번은 4키 ABCD 와 같은 색, 바깥 0 · 5번은 청록
+    public static Color LaneColor(int lane, bool six)
+    {
+        if (!six) return (lane == 0 || lane == 3) ? OuterLane : InnerLane;
+        int i = lane - Lanes.FourOffset;
+        if (i < 0 || i > 3) return InnerLane;
+        return (i == 0 || i == 3) ? OuterLane : InnerLane;
+    }
     public static Color NoteColor(NoteData n)
     {
         if (n.IsRedNote) return RedNote;
@@ -105,24 +147,25 @@ public class SimpleGameSkin : MonoBehaviour
     // 월드 요소
     private Transform worldRoot;
     private readonly List<KeyValuePair<SpriteRenderer, Color>> worldSprites = new List<KeyValuePair<SpriteRenderer, Color>>();
-    private SpriteRenderer[] glows = new SpriteRenderer[4];
-    private readonly float[] glowLevel = new float[4];
-    private readonly bool[] pressed = new bool[4];
-    private readonly bool[] held = new bool[4];
+    private SpriteRenderer[] glows = new SpriteRenderer[Lanes.Max];
+    private readonly float[] glowLevel = new float[Lanes.Max];
+    private readonly bool[] pressed = new bool[Lanes.Max];
+    private readonly bool[] held = new bool[Lanes.Max];
     private float worldAlpha = -1f;
 
     // 히트 이펙트 (노트 하나 칠 때 레인마다 1개)
     //  · core : 노트 모양 섬광 — 흰색에서 노트 색으로 바뀌며 위아래로 부풀었다 사라짐
     //  · ring : 둥근 빛 — 판정선을 중심으로 넓게 퍼짐
-    //  · beam : 빛기둥 — 판정선에서 레인 위쪽으로 짧게 솟았다 사라짐
     //  · wave : 노트 테두리 모양 충격파 — 노트 자리에서 바깥으로 퍼지며 옅어짐
+    //  (위로 솟는 빛기둥은 없앰)
     private class Burst
     {
-        public SpriteRenderer core, ring, beam, wave, wave2, flare, star;
+        public SpriteRenderer core, ring, wave, wave2, flare, star;
         public SpriteRenderer hot, hotCore;                                  // 판정선 위 밝은 광원 (넓은 빛 + 가운데 흰 심)
         public bool perfect;                                                 // PERFECT(EXCELLENT) 판정 → 4갈래 반짝임
         public bool mini;                                                    // 롱노트 홀드 중 맥박 (충격파 · 둥근 빛만 작게)
         public float t = 1f; public int lane; public Color c; public float power = 1f; public float x;
+        public float wf = 1f;                                                // 폭 배율 (1/4 칸 노트는 0.25 ~ 0.75)
         // 드래그 노트 전용 (심플 · 고급): 판정선을 따라 양옆으로 뻗는 빛 칼날 + 납작하게 번지는 연노랑 빛무리
         //  + 노트 모양 잔상 2개가 위로 미끄러지며 사라짐 (드래그로 '훑고 지나가는' 느낌)
         //  gem = 잔상 1,  shards[0] = 빛무리,  shards[1] = 잔상 2,  zip = 빛 칼날
@@ -131,23 +174,38 @@ public class SimpleGameSkin : MonoBehaviour
         public readonly SpriteRenderer[] shards = new SpriteRenderer[DragShards];
         public readonly Vector2[] shardVel = new Vector2[DragShards];
         public readonly float[] shardSpin = new float[DragShards];
+        // 화려한 빛 (입자 없이 빛만):
+        //  halo     : 레인 밖까지 넓게 번지는 노트 색 빛무리
+        //  streak   : 판정선을 따라 아주 길고 가늘게 뻗는 흰 빛줄기 (렌즈 플레어 느낌)
+        public SpriteRenderer halo, streak;
     }
     private const int DragShards = 3;
+    private float burstLW = 0.8f;                                            // 지금 그리는 이펙트의 기준 폭 (레인 폭 × 폭 배율)
     private readonly List<Burst> bursts = new List<Burst>();
-    private const float BurstSeconds = 0.34f;
+    private const float BurstSeconds = 0.40f;
 
     // 판정선의 키 자리(리셉터): 둥근 테두리, 누르면 레인 색으로 밝아짐
-    private readonly SpriteRenderer[] receptors = new SpriteRenderer[4];
-    private readonly float[] receptorPop = new float[4];
+    private readonly SpriteRenderer[] receptors = new SpriteRenderer[Lanes.Max];
+    private readonly float[] receptorPop = new float[Lanes.Max];
     private readonly List<SpriteRenderer> laneLines = new List<SpriteRenderer>();   // 레인 구분선 3개
     private string lastJudge = "";                     // 바로 전 판정 (히트 이펙트가 PERFECT 인지 알기 위해)
-    private readonly float[] holdPulseTimer = new float[4];
+    private readonly float[] holdPulseTimer = new float[Lanes.Max];
 
 
     // 롱노트 홀드 효과: 판정선 위에서 맥박처럼 빛나는 막대 + 위로 올라가는 작은 입자
-    private readonly SpriteRenderer[] holdFlares = new SpriteRenderer[4];
-    private readonly float[] holdLevel = new float[4];
-    private readonly float[] holdSparkTimer = new float[4];
+    private readonly SpriteRenderer[] holdFlares = new SpriteRenderer[Lanes.Max];
+    private readonly float[] holdLevel = new float[Lanes.Max];
+    // 판정선 노트 모양을 롱노트 폭에 맞춤: 그 레인의 처음 x · 지금 x 차이 · 폭 (놓은 뒤 사라지는 동안에도 마지막 값 유지)
+    private readonly float[] holdBaseX = new float[Lanes.Max];
+    private readonly bool[] holdBaseSet = new bool[Lanes.Max];
+    private readonly float[] holdOffX = new float[Lanes.Max];
+    private readonly float[] holdSpan = new float[Lanes.Max];          // 그릴 폭 (월드)
+    private readonly float[] holdWidthLanes = new float[Lanes.Max];    // 덮는 폭 (레인 단위, 1 = 한 칸)
+    private readonly float[] holdCenterX = new float[Lanes.Max];       // 가운데 x (월드)
+    private readonly float[] holdL = new float[Lanes.Max], holdR = new float[Lanes.Max];
+    private readonly object[] holdKey = new object[Lanes.Max];         // 같은 롱노트를 여러 레인이 겹쳐 그리지 않게
+    private readonly bool[] holdHidden = new bool[Lanes.Max];    // 넓은 롱노트의 첫 칸이 아닌 레인 (첫 칸 레인 하나로 전체 폭을 그림)
+    private readonly float[] holdSparkTimer = new float[Lanes.Max];
     private class HoldSpark { public SpriteRenderer sr; public float t = 1f; public float life; public Vector3 start; public float rise; public float size; public int lane; }
     private readonly List<HoldSpark> holdSparks = new List<HoldSpark>();
     private float holdClock;
@@ -161,8 +219,8 @@ public class SimpleGameSkin : MonoBehaviour
     private bool shieldShown;                     // 지난 프레임에 ONE+ 타이머를 그렸는지
     private float shieldStartLife;                // ONE+ 발동 순간 보이던 LIFE (여기서 100 까지 차오름)
     private const float ShieldRiseSeconds = 0.35f;
-    private Image lifeClearLine;                  // EASY · NORMAL 게이지: 클리어 선 (70)
-    private static readonly Color ClearLineColor = new Color(1f, 1f, 1f, 0.85f);
+    // (게이지 70% 클리어 선은 없앰 — 모든 게이지가 100 → 0 으로 내려가는 HARD 방식)
+    private Image lifeOutline, lifeGlowImg, lifeHeadLine;   // SIMPLE · CIRCLE LIFE 막대 꾸밈 (가는 테두리 · 뒤쪽 빛 · 끝선)
     private static readonly Color StrictShade = new Color(1f, 0.30f, 0.38f, 0.85f);   // 빨간 사선 (그림의 진한 줄 · 옅은 바탕에 곱해짐)
     private static readonly Color StrictLine = new Color(1f, 0.42f, 0.50f, 0.95f);
 
@@ -229,6 +287,7 @@ public class SimpleGameSkin : MonoBehaviour
     }
     private Sprite uiRoundSprite;
     private Sprite pillSprite;   // LIFE 바: 원 텍스처를 9-slice 로 늘려 양 끝이 반원인 알약 모양
+    private Sprite pillShadeSprite, pillRingSprite, pillGlowSprite;   // LIFE 바: 원통 유리 질감 채움 / 가는 테두리 / 부드러운 빛
 
     // 고급 RED 노트: 진홍 그라데이션 + 위쪽 광택 + 안쪽 밝은 테두리 + 바깥 은은한 빛 (빛 여백만큼 크게 그림)
     public Sprite RedNoteSprite { get; private set; }
@@ -237,30 +296,36 @@ public class SimpleGameSkin : MonoBehaviour
     public Sprite RedBodySprite { get; private set; }
 
     // 레인 펼침 (게임 시작 시 좌우로 펼쳐짐)
-    private struct LanePart { public Transform t; public Vector3 scale; public Vector3 pos; }
+    // kind: 0 = 레인 전체 판(배경 · 판정선 등, 폭이 레인 수를 따라감) / 1 = 양쪽 벽(위치만 따라감, 두께 그대로) / 2 = 레인별(위치 그대로)
+    private struct LanePart { public Transform t; public Vector3 scale; public Vector3 pos; public int kind; }
+
+    // ---- 6키 확장 (채보의 LANES): 4키 구간에서는 바깥 레인 0 · 5 번을 숨기고 가운데 4레인만 ----
+    //  레인은 처음부터 6개 자리에 만들어 두고, 레인 전체 판은 가운데 기준으로 4/6 ~ 1 배로 줄였다 늘림
+    private float sixRatio = 1f;          // 보이는 레인 폭 / 6레인 폭 (6키 채보가 아니면 1)
+    private float sixExpand = 1f;         // 0 = 4키 · 1 = 6키
+    private int lastKeyMode = -1;         // 키 이름을 다시 쓸지 (4키 ↔ 6키)
+    private readonly List<SpriteRenderer> outerDivs = new List<SpriteRenderer>();   // 바깥 레인 구분선 (4키 구간에서 숨김)
+    private readonly List<Color> outerDivColors = new List<Color>();
+    private float VisLeft { get { return laneCenterX + (laneLeft - laneCenterX) * sixRatio; } }
+    private float VisRight { get { return laneCenterX + (laneRight - laneCenterX) * sixRatio; } }
+    // 레인 i 가 지금 보이는 정도 (6키 채보의 바깥 레인만 0 ~ 1)
+    private float LaneShow(int i)
+    {
+        if (!gm.SixLane) return 1f;
+        return (i == 0 || i == Lanes.Max - 1) ? sixExpand : 1f;
+    }
     private readonly List<LanePart> laneParts = new List<LanePart>();
     private float laneCenterX;
     private float laneExpand = 0f, laneExpandApplied = -1f;
     private const float LaneExpandSeconds = 0.6f;
-
-    // SPEED UP / SPEED DOWN
-    private TextMeshProUGUI speedChangeText;
-    private Image speedUnderline;
-    private bool speedUp;
-    private int speedNoticeIndex = -1;
-    private const float SpeedChangeY = 130f;   // 화면 맨 위에서 아래로 떨어진 거리 (곡 정보 줄보다 아래)
-    private CanvasGroup speedChangeGroup;
-    private float speedChangeTimer = 99f;
-    private readonly double[] lastLayerSpeed = { 0, -1, -1 };
-    private double lastCheckTime = double.MinValue;
 
     // RED 노트 예고
     private const double RedWarnLead = 1.5;    // 빨간 노트 판정 시각 몇 초 전에 예고할지
     private const double RedSectionGap = 2.5;  // 이 시간 이상 빨간 노트가 없다가 다시 나올 때만 예고
     private const float RedWarnDuration = 1.2f;
     private static readonly Color RedWarnColor = new Color(1f, 0.22f, 0.32f, 1f);
-    private readonly SpriteRenderer[] redWarnGlows = new SpriteRenderer[4];
-    private readonly float[] redWarnTime = { 99f, 99f, 99f, 99f };
+    private readonly SpriteRenderer[] redWarnGlows = new SpriteRenderer[Lanes.Max];
+    private readonly float[] redWarnTime = { 99f, 99f, 99f, 99f, 99f, 99f };
     private float redEdgeTime = 99f;
     private Image redEdgeLeft, redEdgeRight;
     private Sprite hGradientSprite;
@@ -272,7 +337,14 @@ public class SimpleGameSkin : MonoBehaviour
     private float shownLife = 100f;
 
     // LIFE 바 모양
-    public const float LifeBarWidth = 16f;        // 바 두께 (UI 픽셀)
+    public const float LifeBarWidth = 12f;        // 바 두께 (UI 픽셀)
+    private const float LifeFillInset = 2.5f;     // 트랙 안쪽 채움 여백
+    private const float LifeGlowPad = 7f;         // 채움 뒤쪽 빛이 번지는 거리
+    private static readonly Color LifeTrackColor = new Color(0.02f, 0.03f, 0.05f, 0.62f);
+    private static readonly Color LifeOutlineColor = new Color(1f, 1f, 1f, 0.26f);
+    private static readonly Color LifeHigh = new Color(0.95f, 0.97f, 1f);
+    private static readonly Color LifeMid = new Color(1f, 0.84f, 0.42f);
+    private static readonly Color LifeLow = new Color(1f, 0.38f, 0.45f);
     public const float LifeBarGap = 0.3f;         // 레인 오른쪽 끝에서 떨어진 거리 (월드 유닛)
     private const float LifeBarTopMargin = 1.4f;  // 화면 맨 위에서 띄울 거리 (월드 유닛, 곡 정보와 겹치지 않게)
 
@@ -293,7 +365,7 @@ public class SimpleGameSkin : MonoBehaviour
     private CanvasGroup hudGroup;      // 곡 정보 / 시간 / 점수
     private CanvasGroup laneHudGroup;  // 콤보 / 판정 / 키 이름 (프리키 구간에서 숨김)
     private TextMeshProUGUI comboText, comboLabel, judgeText, fastSlowText;
-    private readonly TextMeshProUGUI[] keyTexts = new TextMeshProUGUI[4];
+    private readonly TextMeshProUGUI[] keyTexts = new TextMeshProUGUI[Lanes.Max];
     private float judgeTimer, comboPunch;
     // ONE+ 발동 알림: 콤보 자리에 잠깐 뜨는 ONE+ 아이콘 + 퍼지는 빛 고리 2개 + 뒤쪽 은은한 빛
     private RectTransform onePlusRoot, onePlusBadge;
@@ -307,7 +379,7 @@ public class SimpleGameSkin : MonoBehaviour
     // =====================================================================
     //  생성
     // =====================================================================
-    public static SimpleGameSkin Create(GameManager manager, bool diverse = false)
+    public static SimpleGameSkin Create(GameManager manager, bool diverse = false, bool circle = false)
     {
         GameObject go = new GameObject("SimpleGameSkin");
         SceneManager.MoveGameObjectToScene(go, manager.gameObject.scene); // 게임 씬과 함께 정리되도록
@@ -315,6 +387,16 @@ public class SimpleGameSkin : MonoBehaviour
         skin.gm = manager;
         // 원근 셰이더가 없으면 평면 SIMPLE 로 대신 그림
         skin.IsDiverse = diverse && DiversePlayfield.IsSupported();
+        skin.IsCircle = circle && !skin.IsDiverse;
+        if (skin.IsCircle)
+        {
+            WidenLanes(manager, CircleLaneWidth);   // 노트 · 판정 · 이펙트가 모두 이 레인 위치를 씀
+            manager.hitLineY -= CircleHitLineDrop;  // 판정선을 조금 아래로 (실행 중에만 — 씬에 저장된 값은 그대로)
+        }
+        else if (!skin.IsDiverse)
+        {
+            WidenLanes(manager, SimpleLaneWidth);   // SIMPLE: 레인 폭을 살짝 넓힘 (두툼한 노트)
+        }
         Active = skin;
         skin.MakeSprites();
         skin.HideDefaultVisuals();
@@ -346,6 +428,352 @@ public class SimpleGameSkin : MonoBehaviour
     public void AdoptToPlayfield(GameObject go, bool clipBelow = true)
     {
         if (playfield != null && go != null) playfield.ApplyAll(go.transform, clipBelow);
+    }
+
+    // =====================================================================
+    //  CIRCLE (원 모양 노트 · 넓은 레인)
+    //   · 레인 한 칸 폭 = CircleLaneWidth (SIMPLE 0.8 → 1.25, 레인 전체 5.0), 레인 위치(gm.laneXPositions)를 가운데 기준으로 넓힘
+    //   · 판정선은 실선 없이 원 모양 키 자리만, 높이는 CircleHitLineDrop 만큼 아래로
+    //   · 노트 색: 바깥 레인 흰색 · 안쪽 레인 회색
+    //   · 1칸 노트 = 원 (지름 CircleSize), 여러 칸(RED · 영역) 노트 = 양 끝이 반원인 알약
+    //   · RED 노트 = 진홍 원 + 안쪽 고리 + 진한 붉은 빛 (전용 그림)
+    //   · 드래그 노트 = SIMPLE 과 같은 얇은 막대 + 보석 + 꼬리빛 (폭만 원 지름에 맞춤)
+    //   · 롱노트: 몸통 폭 = 노트 폭, 무늬 없는 반투명 단색 띠 / 끝 = 같은 크기의 원
+    // =====================================================================
+    public const float CircleLaneWidth = 1.25f;
+    public const float CircleHitLineDrop = 0.35f;     // 판정선을 이만큼 아래로 (월드 유닛)
+    private const float CircleNoteRatio = 0.78f;      // 원 지름 = 레인 폭의 78%
+    public const float CircleSize = CircleLaneWidth * CircleNoteRatio;
+    public const float CircleRelayRatio = 0.6f;       // 슬라이드 중계점 원 = 머리의 60%
+    public const float CircleDragRatio = 0.86f;       // 드래그 빛 고리 = 원 지름의 86%
+    public const float CircleDragGemScale = 1.45f;    // 드래그 고리 가운데 보석 크기 배율 (SIMPLE 보석 대비)
+    public const float CirclePillRatio = 0.56f;       // 여러 칸 노트(알약) 두께 = 원 지름의 56%
+    public const float CircleRedRatio = 0.44f;        // RED 노트(알약) 두께 = 원 지름의 44% (1칸 RED 도 납작한 알약)
+    public float CircleRedPillDrawHeight { get; private set; }
+    public const float CircleBodyAlpha = 0.34f;       // 롱노트 몸통 투명도
+    private const int CircleTex = 128, CircleGlowPx = 12;
+    // 원 그림은 바깥 빛 여백까지 포함 → 그릴 크기 = 원 지름 × 이 값
+    public const float CirclePad = CircleTex / (CircleTex - 2f * CircleGlowPx);
+
+    public bool IsCircle { get; private set; }
+    public static bool CircleActive { get { return Active != null && Active.IsCircle; } }
+    public Sprite CircleNoteSprite { get; private set; }      // 입체 원 (흰색 → 색 입힘, 바깥 빛 포함)
+    public Sprite CircleRedSprite { get; private set; }       // RED 원 (색이 그림에 들어 있음)
+    public Sprite CircleRingSprite { get; private set; }      // 원 테두리 (키 자리 · 충격파)
+    public Sprite CirclePillSprite { get; private set; }      // 알약 (여러 칸 노트, Sliced 로 가로만 늘어남)
+    public Sprite CircleRedPillSprite { get; private set; }   // RED 알약
+    public Sprite CircleBodySprite { get; private set; }      // 롱노트 몸통 (무늬 없는 반투명 흰색)
+    public float CirclePillDrawHeight { get; private set; }
+
+    // 지금 게임 화면의 레인 한 칸 폭 (스킨이 없으면 기본 0.8)
+    public static float GameLaneWidth { get { return Active != null ? Active.laneWidth : 0.8f; } }
+    // width 칸 노트의 폭 (기존 규칙: 마지막 칸만 95%)
+    public static float NoteSpan(int width) { float lw = GameLaneWidth; return (Mathf.Max(1, width) - 1) * lw + lw * 0.95f; }
+    // 1/4 칸 노트의 폭 (subW 칸, 레인 전체 노트처럼 끝에 작은 틈)
+    public static float QuarterSpan(int subW) { float lw = GameLaneWidth; return Mathf.Max(lw * 0.04f, lw * Mathf.Clamp(subW, 0, Lanes.Max * Lanes.Quarters) * 0.25f - lw * 0.04f); }   // 폭 0 점 = 아주 가는 노트
+    // 노트 하나의 가로 폭 (1/4 칸이면 그 폭, 아니면 Width 칸)
+    public static float SpanOf(NoteData n) { return n.IsQuarter ? QuarterSpan(n.SubW) : NoteSpan(n.Width); }
+    // 노트 가운데 x (laneX = 레인 가운데 x 들) — 1/4 칸이면 그 칸들의 가운데, 넓은 노트면 덮는 레인들의 가운데
+    public static float CenterXOf(NoteData n, float[] laneX)
+    {
+        int last = laneX.Length - 1;
+        int lane = Mathf.Clamp(n.Lane, 0, last);
+        if (n.IsQuarter) return laneX[lane] + ((n.Sub + n.SubW * 0.5f) * 0.25f - 0.5f) * GameLaneWidth;
+        int end = Mathf.Clamp(n.Lane + Mathf.Max(1, n.Width) - 1, 0, last);
+        return (laneX[lane] + laneX[end]) * 0.5f;
+    }
+
+    // CIRCLE 노트의 가로 폭: 1칸 = 원 지름, 여러 칸 = 알약 폭
+    public static float CircleNoteWidth(int width) { return width <= 1 ? CircleSize : NoteSpan(width); }
+    // 롱노트 몸통 폭 = 노트 폭 (CIRCLE 도 머리 원과 같은 폭)
+    public static float BodySpan(int width) { return CircleActive ? CircleNoteWidth(width) : NoteSpan(width); }
+    public static float BodySpanOf(NoteData n) { return n.IsQuarter ? QuarterSpan(n.SubW) : BodySpan(n.Width); }
+    // 노트를 판정선 아래 얼마까지 보여 줄지 (원은 판정선에 중심이 닿을 때 아래 절반이 잘리지 않도록)
+    //  CIRCLE: 노트가 판정선을 지나 화면 바닥까지 그대로 내려감 (자르지 않음)
+    public float NoteClipExtra { get { return IsCircle ? 30f : 0f; } }
+
+    // 레인 위치를 가운데 기준으로 넓힘 (새 배열 — 씬에 저장된 값은 그대로)
+    private static void WidenLanes(GameManager manager, float laneW)
+    {
+        float[] xs = manager.laneXPositions;
+        if (xs == null || xs.Length < 2) return;
+        float old = Mathf.Abs(xs[1] - xs[0]);
+        if (old < 0.0001f) return;
+        float center = (xs[0] + xs[xs.Length - 1]) * 0.5f;
+        float k = laneW / old;
+        float[] nx = new float[xs.Length];
+        for (int i = 0; i < xs.Length; i++) nx[i] = center + (xs[i] - center) * k;
+        manager.laneXPositions = nx;
+    }
+
+    // 입체 원 · 알약 한 점의 색 (흰색 — 색은 SpriteRenderer.color 로)
+    //  sdf: 모양 테두리까지 거리 px (안쪽 음수) / v: 0 아래 ~ 1 위
+    //  SIMPLE · SIMPLE-DIVERSE 노트 앞면(NoteArt.NoteFaceSprite)과 같은 규칙 — 모양만 원
+    //   · 세로 그라데이션 0.66 → 0.97 + 위쪽(v 0.72) 광택 띠
+    //   · 밝은 테두리 2.2px + 바로 안쪽 어두운 선(×0.72) → 입체감
+    //   · 바깥 은은한 빛 exp(-d / 3.2) × 0.42
+    private static Color32 CircleShade(float sdf, float v)
+    {
+        float inside = Mathf.Clamp01(0.5f - sdf);
+        float bright = Mathf.Lerp(0.66f, 0.97f, Mathf.Clamp01(v));                    // 세로 그라데이션
+        float gloss = Mathf.Clamp01(1f - Mathf.Abs(v - 0.72f) / 0.17f);                // 광택 띠 (위아래 부드럽게)
+        bright = Mathf.Lerp(bright, 1f, gloss * gloss * (3f - 2f * gloss));
+        float edge = -sdf;
+        if (edge < 2.2f) bright = 1f;                                                  // 밝은 테두리
+        else if (edge < 3.6f) bright *= 0.72f;                                         // 안쪽 어두운 선
+        float glowA = sdf > 0f ? Mathf.Exp(-sdf / 3.2f) * 0.42f : 0f;                  // 바깥 빛
+        float a = Mathf.Max(inside, glowA);
+        byte c = (byte)(Mathf.Clamp01(inside > 0.001f ? bright : 1f) * 255f);
+        return new Color32(c, c, c, (byte)(Mathf.Clamp01(a) * 255f));
+    }
+
+    // RED 원 · 알약 한 점의 색 (색이 그림에 들어 있음)
+    //  · 진홍 → 짙은 와인 세로 그라데이션 + 위쪽 유리 광택
+    //  · 밝은 분홍 바깥 테두리 + 안쪽 가는 밝은 고리 (과녁 느낌) + 넓고 진한 붉은 바깥 빛
+    //  depth: 테두리에서 안쪽으로 들어온 비율 (0 테두리 ~ 1 가운데)
+    private static Color32 CircleShadeRed(float sdf, float v, float depth)
+    {
+        Color top = new Color(1.00f, 0.32f, 0.42f), bottom = new Color(0.86f, 0.12f, 0.24f);   // 그라데이션 약하게
+        Color rim = new Color(1.00f, 0.80f, 0.86f), glow = new Color(1.00f, 0.16f, 0.30f);
+        float inside = Mathf.Clamp01(0.5f - sdf);
+        Color body = Color.Lerp(bottom, top, Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(v)));
+        float gloss = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.5f, 0.95f, v));
+        body = Color.Lerp(body, new Color(1f, 0.74f, 0.80f), 0.15f * gloss);
+        float rimT = Mathf.Clamp01(1f - Mathf.Abs(sdf + 1.8f) / 1.8f);                // 바깥 밝은 테두리
+        float darkT = Mathf.Clamp01(1f - Mathf.Abs(sdf + 5f) / 1.4f);                 // 그 안쪽 어두운 선
+        float ringT = Mathf.Clamp01(1f - Mathf.Abs(depth - 0.42f) / 0.05f);           // 안쪽 밝은 고리
+        body = Color.Lerp(body, new Color(0.28f, 0f, 0.06f), 0.3f * darkT);
+        body = Color.Lerp(body, rim, 0.6f * ringT);
+        body = Color.Lerp(body, rim, 0.9f * rimT);
+        float glowA = Mathf.Exp(-Mathf.Max(sdf, 0f) / 1.8f) * 0.25f * (1f - inside);   // 바깥 빛 (짧고 옅게)
+        float a = inside + glowA;
+        Color c = a > 0.0001f ? (body * inside + glow * glowA) / a : glow;
+        return new Color32((byte)(Mathf.Clamp01(c.r) * 255), (byte)(Mathf.Clamp01(c.g) * 255), (byte)(Mathf.Clamp01(c.b) * 255), (byte)(Mathf.Clamp01(a) * 255));
+    }
+
+    private static Sprite CircleTexture(string name, bool red)
+    {
+        const int S = CircleTex, G = CircleGlowPx;
+        float R = S * 0.5f - G;
+        Texture2D t = new Texture2D(S, S, TextureFormat.RGBA32, false);
+        t.wrapMode = TextureWrapMode.Clamp;
+        Color32[] px = new Color32[S * S];
+        for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+            {
+                float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(S * 0.5f, S * 0.5f)) - R;
+                float v = (y + 0.5f - G) / (2f * R);
+                px[y * S + x] = red ? CircleShadeRed(d, v, Mathf.Clamp01(-d / R)) : CircleShade(d, v);
+            }
+        t.SetPixels32(px); t.Apply();
+        // 테두리 0 · FullRect: Sliced 로 그려도 size 대로 그대로 늘어남 (노트 코드가 size 로 크기를 정함)
+        Sprite s = Sprite.Create(t, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), S, 0, SpriteMeshType.FullRect, Vector4.zero);
+        s.name = name;
+        return s;
+    }
+
+    // 알약 (여러 칸 노트): 높이 S, 폭 2S, 양 끝 반원 — 좌우 S/2 는 고정, 가운데만 가로로 늘어남
+    private Sprite PillTexture(string name, bool red, float drawHeight)
+    {
+        const int S = CircleTex, G = CircleGlowPx, PW = S * 2, PH = S;
+        float R = S * 0.5f - G;
+        Texture2D pt = new Texture2D(PW, PH, TextureFormat.RGBA32, false);
+        pt.wrapMode = TextureWrapMode.Clamp;
+        Color32[] pp = new Color32[PW * PH];
+        for (int y = 0; y < PH; y++)
+            for (int x = 0; x < PW; x++)
+            {
+                float cx = Mathf.Clamp(x + 0.5f, PH * 0.5f, PW - PH * 0.5f);
+                float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(cx, PH * 0.5f)) - R;
+                float v = (y + 0.5f - G) / (2f * R);
+                pp[y * PW + x] = red ? CircleShadeRed(d, v, Mathf.Clamp01(-d / R)) : CircleShade(d, v);
+            }
+        pt.SetPixels32(pp); pt.Apply();
+        Sprite s = Sprite.Create(pt, new Rect(0, 0, PW, PH), new Vector2(0.5f, 0.5f), PH / drawHeight, 0,
+                                 SpriteMeshType.FullRect, new Vector4(PH / 2, 0, PH / 2, 0));
+        s.name = name;
+        return s;
+    }
+
+    private void MakeCircleSprites()
+    {
+        const int S = CircleTex;
+        CircleNoteSprite = CircleTexture("CircleNote", false);
+        CircleRedSprite = CircleTexture("CircleRed", true);
+
+        // 원 테두리 (바깥 가장자리에 붙은 선 + 안쪽 아주 옅게)
+        Texture2D rt = new Texture2D(S, S, TextureFormat.RGBA32, false);
+        rt.wrapMode = TextureWrapMode.Clamp;
+        Color32[] rp = new Color32[S * S];
+        float RR = S * 0.5f - 1.5f;
+        for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+            {
+                float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(S * 0.5f, S * 0.5f)) - RR;
+                float ring = Mathf.Clamp01(1f - Mathf.Abs(d + 2.5f) / 3f);                // 두께 약 5px
+                float fill = d < 0f ? 0.08f : 0f;
+                rp[y * S + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(Mathf.Max(ring, fill)) * 255f));
+            }
+        rt.SetPixels32(rp); rt.Apply();
+        CircleRingSprite = Sprite.Create(rt, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), S, 0, SpriteMeshType.FullRect, Vector4.zero);
+        CircleRingSprite.name = "CircleRing";
+
+        CirclePillDrawHeight = CircleSize * CirclePillRatio * CirclePad;
+        CircleRedPillDrawHeight = CircleSize * CircleRedRatio * CirclePad;
+        CirclePillSprite = PillTexture("CirclePill", false, CirclePillDrawHeight);
+        CircleRedPillSprite = PillTexture("CircleRedPill", true, CircleRedPillDrawHeight);
+
+        // 롱노트 몸통: 무늬 없는 반투명 흰색 (색 · 길이는 노트 코드가 정함)
+        Texture2D bt = new Texture2D(4, 4, TextureFormat.RGBA32, false);
+        bt.wrapMode = TextureWrapMode.Clamp;
+        Color32[] bp = new Color32[16];
+        for (int i = 0; i < 16; i++) bp[i] = new Color32(255, 255, 255, (byte)(CircleBodyAlpha * 255f));
+        bt.SetPixels32(bp); bt.Apply();
+        CircleBodySprite = Sprite.Create(bt, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 4f, 0, SpriteMeshType.FullRect, Vector4.zero);
+        CircleBodySprite.name = "CircleBody";
+
+        CircleDragSprite = MakeCircleDragSprite();
+        CircleBeamSprite = MakeCircleBeamSprite();
+    }
+
+    // 롱노트 끝 마감: 아래 변이 평평하고 위가 둥근 판 (1칸 = 정확한 반원)
+    //  · 몸통 그림(NoteArt.LongBodySprite / RED 는 RedBodySprite)과 같은 단면을 둥근 가장자리를 따라 그림
+    //    → 몸통 양옆의 빛나는 선이 끝에서 둥글게 이어져 매끄럽게 닫힘
+    //  · 몸통과 같은 픽셀 밀도(160 px/유닛)로 폭 · 높이에 딱 맞게 만들어 둠 (늘이지 않음, 폭 · RED 별로 한 번만)
+    //  · 피벗 = 아래 변 가운데 (롱노트 끝 판정 위치에서 위로 둥글게)
+    private const float CapPPU = 160f;                // 몸통 스프라이트와 같은 밀도 (선 두께가 같아 보이게)
+    private readonly Dictionary<int, Sprite> capCache = new Dictionary<int, Sprite>();
+
+    // width 칸 롱노트 끝 (red: RED 몸통 무늬). 크기 = (CircleNoteWidth, CapHeight)
+    public Sprite CapSprite(int width, bool red)
+    {
+        width = Mathf.Clamp(width, 1, 4);
+        int key = width * 2 + (red ? 1 : 0);
+        Sprite s;
+        if (capCache.TryGetValue(key, out s) && s != null) return s;
+        s = MakeCapSprite(CircleNoteWidth(width), CapHeight(width, red), red);
+        capCache[key] = s;
+        return s;
+    }
+
+    // 롱노트 끝 둥근 부분 높이: 1칸 = 원 반지름(반원) / 여러 칸 = 알약 두께의 절반 / RED = RED 알약 두께의 절반
+    public static float CapHeight(int width, bool red)
+    {
+        if (red) return CircleSize * CircleRedRatio * 0.5f;
+        return width > 1 ? CircleSize * CirclePillRatio * 0.5f : CircleSize * 0.5f;
+    }
+
+    private static Sprite MakeCapSprite(float w, float capH, bool red)
+    {
+        const float k = CapPPU;
+        int W = Mathf.Max(4, Mathf.CeilToInt(w * k)), H = Mathf.Max(4, Mathf.CeilToInt(capH * k));
+        float bodyW = W;                                  // 몸통 폭 (px)
+        Texture2D t = new Texture2D(W, H, TextureFormat.RGBA32, false);
+        t.wrapMode = TextureWrapMode.Clamp;
+        Color32[] px = new Color32[W * H];
+        float R = H;                                      // 둥근 모서리 반지름 (px) = 높이
+        Color edgeC = new Color(1.00f, 0.45f, 0.55f), baseC = new Color(0.36f, 0.02f, 0.09f), stripeC = new Color(0.88f, 0.12f, 0.27f);
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                float fx = x + 0.5f, fy = y + 0.5f;
+                float cx = Mathf.Clamp(fx, R, W - R);
+                float fe = R - Vector2.Distance(new Vector2(fx, fy), new Vector2(cx, 0f));   // 둥근 가장자리에서 안쪽으로 몇 px
+                float inside = Mathf.Clamp01(fe + 0.5f);
+                if (inside <= 0f) { px[y * W + x] = new Color32(255, 255, 255, 0); continue; }
+                Color c; float a;
+                if (!red)
+                {
+                    // NoteArt.LongBodySprite 단면: [밝은 바깥선][틈][가는 안쪽선][안으로 번지는 빛] + 가운데 빛 기둥
+                    if (fe < 2.2f) a = 1f;
+                    else if (fe < 3.6f) a = 0.30f;
+                    else if (fe < 5.0f) a = 0.75f;
+                    else a = 0.14f + 0.34f * Mathf.Exp(-(fe - 5f) / 4f);
+                    // 가운데 빛 기둥: 몸통(Sliced, 테두리 14px · 가운데 36px 가 늘어남)의 같은 가로 위치 값
+                    float u = fx < 14f ? fx : (fx > bodyW - 14f ? 64f - (bodyW - fx) : 14f + (fx - 14f) / Mathf.Max(1f, bodyW - 28f) * 36f);
+                    float center = Mathf.Abs(u - 32f) / 7f;
+                    a = Mathf.Max(a, 0.14f + 0.30f * Mathf.Exp(-center * center));
+                    c = Color.white;
+                }
+                else
+                {
+                    // RedBodySprite 단면: 바깥 밝은 진홍 선 + 안으로 번지는 빛, 안쪽은 어두운 반투명 와인색
+                    if (fe < 10f)
+                    {
+                        float line = Mathf.Clamp01(1f - Mathf.Abs(fe - 2.2f) / 1.6f);
+                        float bleed = Mathf.Exp(-(fe - 2.2f) / 3.0f);
+                        c = Color.Lerp(baseC, edgeC, Mathf.Clamp01(Mathf.Max(line, bleed * 0.75f)));
+                        a = Mathf.Lerp(0.42f, 0.95f, Mathf.Max(line, bleed * 0.6f));
+                        if (fe < 1f) a *= 0.7f;
+                    }
+                    else { c = Color.Lerp(baseC, stripeC, 0.3f); a = 0.45f; }
+                }
+                a *= inside;
+                px[y * W + x] = new Color32((byte)(Mathf.Clamp01(c.r) * 255), (byte)(Mathf.Clamp01(c.g) * 255), (byte)(Mathf.Clamp01(c.b) * 255), (byte)(Mathf.Clamp01(a) * 255f));
+            }
+        t.SetPixels32(px); t.Apply();
+        Sprite s = Sprite.Create(t, new Rect(0, 0, W, H), new Vector2(0.5f, 0f), k, 0, SpriteMeshType.FullRect, Vector4.zero);
+        s.name = red ? "CircleRedCap" : "CircleCap";
+        return s;
+    }
+
+    // CIRCLE 드래그 노트: 굵은 빛 고리 (가운데는 비어 보이게 아주 옅게) — 색은 SpriteRenderer.color (연노랑)
+    //  · 고리 바깥 · 안쪽 가장자리가 밝고 고리 가운데는 조금 어두움 → 입체적인 링
+    //  · 고리 안쪽 공간에 은은한 빛 (가운데 보석이 떠 보이게) + 바깥 빛
+    public Sprite CircleDragSprite { get; private set; }
+    private static Sprite MakeCircleDragSprite()
+    {
+        const int S = CircleTex, G = CircleGlowPx;
+        float R = S * 0.5f - G;           // 바깥 반지름
+        float T = R * 0.26f;              // 고리 두께
+        Texture2D t = new Texture2D(S, S, TextureFormat.RGBA32, false);
+        t.wrapMode = TextureWrapMode.Clamp;
+        Color32[] px = new Color32[S * S];
+        for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++)
+            {
+                float r = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(S * 0.5f, S * 0.5f));
+                float outer = r - R;                       // 바깥 테두리까지 (안쪽 음수)
+                float inner = (R - T) - r;                 // 안쪽 테두리까지 (고리 안쪽 공간은 양수)
+                float ring = Mathf.Clamp01(0.5f - Mathf.Max(outer, inner));   // 고리 안 = 1
+                float edgeD = Mathf.Min(-outer, -inner);   // 고리 안에서 가장자리까지 px
+                float bright = edgeD < 2.6f ? 1f : Mathf.Lerp(0.9f, 0.78f, Mathf.Clamp01((edgeD - 2.6f) / (T * 0.5f)));
+                float glowOut = outer > 0f ? Mathf.Exp(-outer / 4.5f) * 0.5f : 0f;
+                float glowIn = inner > 0f ? 0.16f + 0.22f * Mathf.Exp(-inner / 5f) : 0f;   // 안쪽 공간 은은한 빛
+                float a = Mathf.Max(ring, Mathf.Max(glowOut, glowIn));
+                byte c = (byte)(Mathf.Clamp01(ring > 0.001f ? bright : 1f) * 255f);
+                px[y * S + x] = new Color32(c, c, c, (byte)(Mathf.Clamp01(a) * 255f));
+            }
+        t.SetPixels32(px); t.Apply();
+        Sprite s = Sprite.Create(t, new Rect(0, 0, S, S), new Vector2(0.5f, 0.5f), S, 0, SpriteMeshType.FullRect, Vector4.zero);
+        s.name = "CircleDrag";
+        return s;
+    }
+
+    // CIRCLE 키 빔: 아래 끝이 원 모양(키 자리 원을 감쌈)이고 위로 갈수록 사라지는 빛기둥, 좌우 가장자리는 부드럽게
+    //  피벗 = 아래 원의 중심 (판정선 높이에 두면 키 자리 원과 겹침). 크기 1 x 4 유닛 (PPU 64)
+    public Sprite CircleBeamSprite { get; private set; }
+    private static Sprite MakeCircleBeamSprite()
+    {
+        const int W = 64, H = 256, C = 32;   // C: 아래 원 반지름 (= 폭의 절반)
+        Texture2D t = new Texture2D(W, H, TextureFormat.RGBA32, false);
+        t.wrapMode = TextureWrapMode.Clamp;
+        Color32[] px = new Color32[W * H];
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                float fx = x + 0.5f, fy = y + 0.5f;
+                float dist = fy < C ? Vector2.Distance(new Vector2(fx, fy), new Vector2(C, C)) / C   // 아래: 원
+                                    : Mathf.Abs(fx - C) / C;                                          // 위: 기둥
+                float edge = Mathf.Clamp01((1f - dist) / 0.35f);
+                float prof = edge * edge * (3f - 2f * edge) * 0.6f + Mathf.Pow(Mathf.Clamp01(1f - dist), 2f) * 0.4f;   // 가운데가 밝음
+                float up = fy < C ? 1f : Mathf.Pow(1f - (fy - C) / (H - C), 1.7f);                    // 위로 사라짐
+                px[y * W + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(prof * up) * 255f));
+            }
+        t.SetPixels32(px); t.Apply();
+        Sprite s = Sprite.Create(t, new Rect(0, 0, W, H), new Vector2(0.5f, (float)C / H), 64f, 0, SpriteMeshType.FullRect);
+        s.name = "CircleBeam";
+        return s;
     }
 
     void OnDestroy()
@@ -433,7 +861,7 @@ public class SimpleGameSkin : MonoBehaviour
         hGradientSprite = Sprite.Create(hg, new Rect(0, 0, 64, 4), new Vector2(0f, 0.5f), 100f);
 
         // 3-2) 고급 RED 노트 / 롱노트 몸통
-        RedNoteSprite = CreateRedNoteSprite();
+        RedNoteSprite = CreateRedNoteSprite(IsThick ? ThickRedNoteHeight : RedNoteHeight);
         RedBodySprite = CreateRedBodySprite();
 
         // 4) UI 용 둥근 사각형 (LIFE 게이지)
@@ -455,7 +883,53 @@ public class SimpleGameSkin : MonoBehaviour
         circle.SetPixels32(cp); circle.Apply();
         pillSprite = Sprite.Create(circle, new Rect(0, 0, C, C), new Vector2(0.5f, 0.5f), 100f, 0,
                                    SpriteMeshType.FullRect, new Vector4(C / 2, C / 2, C / 2, C / 2));
+        pillShadeSprite = MakePillSprite(C, (d, u) =>
+        {
+            // 원통 유리: 왼쪽 1/3 쯤이 가장 밝은 세로 광택, 가장자리로 갈수록 살짝 어두움 + 바깥 밝은 테두리
+            float a = Mathf.Clamp01(-d + 0.5f);
+            float sheen = Mathf.Exp(-Mathf.Pow((u - 0.34f) / 0.13f, 2f));
+            float b = Mathf.Lerp(0.80f, 0.93f, Mathf.Clamp01(1f - Mathf.Abs(u - 0.45f) * 1.4f));
+            b = Mathf.Lerp(b, 1f, sheen * 0.85f);
+            if (-d < 1.6f) b = Mathf.Max(b, 0.97f);
+            return new Color(b, b, b, a);
+        });
+        pillRingSprite = MakePillSprite(C, (d, u) =>
+        {
+            float ring = Mathf.Clamp01(1.3f - Mathf.Abs(d + 1.6f));   // 바깥 가장자리 안쪽 약 2px 선
+            return new Color(1f, 1f, 1f, ring);
+        });
+        pillGlowSprite = MakePillSprite(C, (d, u) =>
+        {
+            // 가운데(채움 자리)는 진하고 바깥쪽(반지름 32px 중 바깥 14px)으로 부드럽게 사라지는 빛
+            float g = 1f - Mathf.Clamp01((d + 14f) / 14f);
+            return new Color(1f, 1f, 1f, g * g * (3f - 2f * g));
+        });
+
+        // 6) CIRCLE: 원 노트 · 원 테두리 · 알약
+        if (IsCircle) MakeCircleSprites();
     }
+
+    // 알약용 원 텍스처 (지름 C, 테두리 C/2 → 어떤 길이로 늘려도 양 끝이 반원)
+    //  shade(d, u): d = 원 테두리까지 거리 px (안쪽 음수), u = 가로 위치 0 ~ 1
+    private static Sprite MakePillSprite(int C, Func<float, float, Color> shade)
+    {
+        Texture2D t = new Texture2D(C, C, TextureFormat.RGBA32, false);
+        t.wrapMode = TextureWrapMode.Clamp;
+        Color32[] p = new Color32[C * C];
+        for (int y = 0; y < C; y++)
+            for (int x = 0; x < C; x++)
+            {
+                float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(C * 0.5f, C * 0.5f)) - C * 0.5f;
+                p[y * C + x] = shade(d, (x + 0.5f) / C);
+            }
+        t.SetPixels32(p); t.Apply();
+        return Sprite.Create(t, new Rect(0, 0, C, C), new Vector2(0.5f, 0.5f), 100f, 0,
+                             SpriteMeshType.FullRect, new Vector4(C / 2, C / 2, C / 2, C / 2));
+    }
+
+    // CIRCLE 이면 원 그림, 아니면 원래 그림
+    private Sprite ShapeSprite(Sprite normal) { return IsCircle ? CircleNoteSprite : normal; }
+    private Sprite OutlineSprite(Sprite normal) { return IsCircle ? CircleRingSprite : normal; }
 
     // =====================================================================
     //  RED 노트 (4차 디자인) — 무늬 없이 '빛나는 붉은 유리판'
@@ -465,10 +939,12 @@ public class SimpleGameSkin : MonoBehaviour
     //   · 넓고 진한 붉은 바깥 빛 (일반 노트와는 색 · 빛으로만 구분)
     //   · 9-slice: 빛 여백·테두리는 늘어나지 않고 가운데만 늘어남 (가로로 무늬가 없어 어떤 폭이든 같은 모양)
     // =====================================================================
-    public static Sprite CreateRedNoteSprite()
+    //  noteHeight: 노트 두께 (월드 유닛) — 그림 높이를 여기에 맞춰 세로로 늘어나지 않게 함 (SIMPLE 두툼한 노트는 더 두껍게)
+    public static Sprite CreateRedNoteSprite(float noteHeight = RedNoteHeight)
     {
-        const int W = 160, H = 68, G = 10, R = 10;   // G: 빛 여백(px) = RedGlowPad * PPU
+        const int W = 160, G = 10, R = 10;   // G: 빛 여백(px) = RedGlowPad * PPU
         const float PPU = 200f;
+        int H = Mathf.RoundToInt(noteHeight * PPU) + 2 * G;   // 기본 0.24 → 68px
         Color top = new Color(1.00f, 0.30f, 0.40f);
         Color bottom = new Color(0.58f, 0.02f, 0.13f);
         Color rim = new Color(1.00f, 0.78f, 0.84f);
@@ -617,11 +1093,14 @@ public class SimpleGameSkin : MonoBehaviour
         float centerX = (laneLeft + laneRight) * 0.5f;
         float fullW = laneRight - laneLeft;
         float y = gm.hitLineY;
+        // 레인이 판정선 아래로 내려가는 길이 (CIRCLE: 화면 바닥까지 넉넉히 — 노트도 바닥까지 내려감)
+        float under = IsCircle ? 7f : 3f;
+        float laneMidY = y + (30f - under) * 0.5f, laneSpanH = 30f + under;
 
-        // 배경 (판정선 아래 3, 위로 30 유닛). 불투명도는 설정 > GAMEPLAY > LANE OPACITY
+        // 배경 (판정선 아래 under, 위로 30 유닛). 불투명도는 설정 > GAMEPLAY > LANE OPACITY
         float opacity = Mathf.Clamp01(SettingsStore.Current.LaneOpacity);
         Color bgc = IsDiverse ? new Color(0.03f, 0.04f, 0.075f, opacity) : new Color(0.035f, 0.045f, 0.07f, opacity);
-        SpriteRenderer laneBg = AddRect(worldRoot, "LaneBg", centerX, y + 13.5f, fullW + 0.06f, 33f, bgc, -20);
+        SpriteRenderer laneBg = AddRect(worldRoot, "LaneBg", centerX, laneMidY, fullW + 0.06f, laneSpanH, bgc, -20);
         LaneBgRenderer = laneBg;
 
         // MV 레인 블러: 레인 어두운 판 바로 아래에 '흐리게 만든 MV' 를 깐다 (MV 가 나올 때만 보임)
@@ -630,31 +1109,31 @@ public class SimpleGameSkin : MonoBehaviour
             int blurOrder = -21;
             if (gm.bgRenderer != null && gm.bgRenderer.sortingLayerID == laneBg.sortingLayerID && gm.bgRenderer.sortingOrder >= blurOrder)
                 blurOrder = gm.bgRenderer.sortingOrder; // 배경과 같은 순서면 배경보다 카메라에 가까운 블러가 위에 그려짐
-            laneBlur = SimpleLaneBlur.Create(worldRoot, gm, laneLeft - 0.03f, laneRight + 0.03f, y - 3f, y + 30f,
+            laneBlur = SimpleLaneBlur.Create(worldRoot, gm, laneLeft - 0.03f, laneRight + 0.03f, y - under, y + 30f,
                                              laneBg.sortingLayerID, blurOrder, gm.simpleLaneBlurStrength);
             if (laneBlur != null) laneBlur.Diverse = IsDiverse;
         }
 
         // 판정선 아래쪽을 조금 더 어둡게 (레인 불투명도에 비례)
-        AddRect(worldRoot, "UnderLine", centerX, y - 1.5f, fullW + 0.06f, 3f, new Color(0f, 0f, 0f, 0.4f * opacity), -19);
+        AddRect(worldRoot, "UnderLine", centerX, y - under * 0.5f, fullW + 0.06f, under, new Color(0f, 0f, 0f, 0.4f * opacity), -19);
 
         // 양쪽 벽 (흰 선). 레인 사이 구분선은 없음.
         //  LANE OPACITY 와 관계없이 항상 같은 진하기 (등장·곡 종료 페이드만 따라감)
         float edgeW = IsDiverse ? 0.04f : EdgeWidth;
-        AddSuckLine(AddRect(worldRoot, "EdgeL", laneLeft, y + 13.5f, edgeW, 33f, EdgeColor, -19));
-        AddSuckLine(AddRect(worldRoot, "EdgeR", laneRight, y + 13.5f, edgeW, 33f, EdgeColor, -19));
+        AddSuckLine(AddRect(worldRoot, "EdgeL", laneLeft, laneMidY, edgeW, laneSpanH, EdgeColor, -19));
+        AddSuckLine(AddRect(worldRoot, "EdgeR", laneRight, laneMidY, edgeW, laneSpanH, EdgeColor, -19));
         if (IsDiverse)
         {
             // 벽 안쪽으로 은은하게 번지는 빛 (빛나는 레일 느낌, 폭 좁게)
-            AddSuckLine(AddSprite(worldRoot, "EdgeGlowL", hGradientSprite, laneLeft, y + 13.5f, 0.22f, 33f, new Color(0.75f, 0.9f, 1f, 0.08f), -19, false));
-            AddSuckLine(AddSprite(worldRoot, "EdgeGlowR", hGradientSprite, laneRight, y + 13.5f, 0.22f, 33f, new Color(0.75f, 0.9f, 1f, 0.08f), -19, true));
+            AddSuckLine(AddSprite(worldRoot, "EdgeGlowL", hGradientSprite, laneLeft, y + 13.5f, 0.22f, 33f, EdgeGlowC, -19, false));
+            AddSuckLine(AddSprite(worldRoot, "EdgeGlowR", hGradientSprite, laneRight, y + 13.5f, 0.22f, 33f, EdgeGlowC, -19, true));
 
             // 레일 바깥쪽 가는 보조선 (이중 레일)
             AddSuckLine(AddRect(worldRoot, "RailL", laneLeft - 0.08f, y + 13.5f, 0.012f, 33f, new Color(1f, 1f, 1f, 0.28f), -19));
             AddSuckLine(AddRect(worldRoot, "RailR", laneRight + 0.08f, y + 13.5f, 0.012f, 33f, new Color(1f, 1f, 1f, 0.28f), -19));
 
             // 판정선 근처 바닥이 은은하게 밝음 (위로 갈수록 사라짐)
-            floorGlow = AddSprite(worldRoot, "FloorGlow", glowSprite, centerX, y, fullW, 2.2f, FloorGlowColor, -19, false);
+            floorGlow = AddSprite(worldRoot, "FloorGlow", glowSprite, centerX, y, fullW, 2.2f, FloorGlowC, -19, false);
 
         }
 
@@ -667,38 +1146,52 @@ public class SimpleGameSkin : MonoBehaviour
 
         // 레인 구분선: 판정선에서 위로 갈수록 사라지는 아주 옅은 선 (레인이 또렷하게, 화면은 깔끔하게)
         //  설정 > GAMEPLAY > LANE LINES 로 켜고 끔 (게임 중 설정을 바꿔도 바로 반영)
-        for (int i = 1; i < 4 && i < xs.Length; i++)
+        //  CIRCLE: 화면 바닥부터 맨 위까지 같은 진하기의 가는 실선
+        for (int i = 1; i < xs.Length; i++)
         {
-            SpriteRenderer div = AddSprite(worldRoot, "LaneDiv" + i, glowSprite, laneLeft + i * laneWidth, y, IsDiverse ? 0.018f : 0.012f, IsDiverse ? 10f : 7f,
+            SpriteRenderer div = IsCircle
+                ? AddRect(worldRoot, "LaneDiv" + i, laneLeft + i * laneWidth, laneMidY, 0.012f, laneSpanH, new Color(1f, 1f, 1f, 0.10f), -19)
+                : AddSprite(worldRoot, "LaneDiv" + i, glowSprite, laneLeft + i * laneWidth, y, IsDiverse ? 0.018f : 0.012f, IsDiverse ? 10f : 7f,
                       new Color(1f, 1f, 1f, IsDiverse ? 0.11f : 0.09f), -19, false);
             laneLines.Add(div);
             AddSuckLine(div);
+            if (gm.SixLane && (i == 1 || i == xs.Length - 1)) { outerDivs.Add(div); outerDivColors.Add(div.color); }
         }
 
         // 키 누름 빛
-        for (int i = 0; i < 4 && i < xs.Length; i++)
+        for (int i = 0; i < xs.Length; i++)
         {
             GameObject go = new GameObject("Glow" + i);
             go.transform.SetParent(worldRoot, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = glowSprite;
             sr.sortingOrder = -18;
             Color c = LaneColor(i);
             sr.color = new Color(c.r, c.g, c.b, 0f);
             go.transform.position = new Vector3(xs[i], y, 0f);
-            go.transform.localScale = new Vector3(laneWidth / glowSprite.bounds.size.x, IsDiverse ? 3f : 3.2f, 1f);
+            if (IsCircle)
+            {
+                // CIRCLE: 키 자리 원을 감싸는 둥근 아래 끝 + 원 폭의 빛기둥 (스프라이트 1 x 4 유닛)
+                float bw = CircleSize * 1.12f;
+                sr.sprite = CircleBeamSprite;
+                go.transform.localScale = new Vector3(bw / CircleBeamSprite.bounds.size.x, 3.4f / (CircleBeamSprite.bounds.size.y - 0.5f), 1f);
+            }
+            else
+            {
+                sr.sprite = glowSprite;
+                go.transform.localScale = new Vector3(laneWidth / glowSprite.bounds.size.x, IsDiverse ? 3f : 3.2f, 1f);
+            }
             glows[i] = sr;
         }
 
         // 판정선의 키 자리(리셉터)
-        for (int i = 0; i < 4 && i < xs.Length; i++)
+        for (int i = 0; i < xs.Length; i++)
         {
             GameObject go = new GameObject("Receptor" + i);
             go.transform.SetParent(worldRoot, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = NoteArt.NoteOutlineSprite;
+            sr.sprite = OutlineSprite(NoteArt.NoteOutlineSprite);
             sr.drawMode = SpriteDrawMode.Sliced;
-            sr.size = new Vector2(laneWidth * 0.90f, NoteHeight * 1.15f);
+            sr.size = ReceptorSize(1f);
             sr.sortingOrder = -16;
             sr.color = new Color(1f, 1f, 1f, 0f);
             go.transform.position = new Vector3(xs[i], y, 0f);
@@ -706,21 +1199,23 @@ public class SimpleGameSkin : MonoBehaviour
             receptors[i] = sr;
         }
 
-        // 판정선 (노트 아래에 그려짐)
-        AddRect(worldRoot, "JudgeLine", centerX, y, fullW, IsDiverse ? 0.06f : 0.035f, new Color(1f, 1f, 1f, 0.95f), 0);
-        if (IsDiverse)
+        // 판정선 (노트 아래에 그려짐) — CIRCLE 은 실선 없이 원 모양 키 자리가 판정선 역할
+        if (!IsCircle)
+            AddRect(worldRoot, "JudgeLine", centerX, y, fullW, IsDiverse ? 0.06f : 0.035f, new Color(1f, 1f, 1f, 0.95f), 0);
+        if (IsCircle) { }
+        else if (IsDiverse)
             // 판정선 빛: 판정선이 가장 밝고 위아래(바깥쪽)로 갈수록 옅어짐
             AddSprite(worldRoot, "JudgeGlow", vBellSprite, centerX, y, fullW, 0.42f, new Color(1f, 1f, 1f, 0.20f), -17, false);
         else
             AddRect(worldRoot, "JudgeGlow", centerX, y, fullW, 0.16f, new Color(1f, 1f, 1f, 0.08f), -17);
 
         // 롱노트 홀드: 판정선 위 빛나는 막대 + 입자
-        for (int i = 0; i < 4 && i < xs.Length; i++)
+        for (int i = 0; i < xs.Length; i++)
         {
             GameObject go = new GameObject("HoldFlare" + i);
             go.transform.SetParent(worldRoot, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = NoteArt.NoteFaceSprite;       // 입체 노트 앞면 + 바깥 빛
+            sr.sprite = ShapeSprite(NoteArt.NoteFaceSprite);       // 입체 노트 앞면 + 바깥 빛 (CIRCLE: 원)
             sr.drawMode = SpriteDrawMode.Sliced;
             sr.size = new Vector2(laneWidth * 0.98f + NoteArt.NoteGlowPad * 2f, 0.22f + NoteArt.NoteGlowPad * 2f);
             sr.sortingOrder = 8 + NoteLayer.EffectLift;   // 모든 층 노트 위
@@ -743,26 +1238,27 @@ public class SimpleGameSkin : MonoBehaviour
         for (int i = 0; i < 32; i++)
         {
             Burst b = new Burst();
-            b.beam = EffectRenderer("HitBeam" + i, NoteArt.BeamSprite, -15);
             // (순서 6 이상은 EffectRenderer 가 NoteLayer.EffectLift 만큼 올림 → 5층 노트보다 위)
             b.ring = EffectRenderer("HitRing" + i, NoteArt.GlowSprite, 6);
-            b.core = EffectRenderer("HitCore" + i, NoteSprite, 7);
+            b.core = EffectRenderer("HitCore" + i, ShapeSprite(NoteSprite), 7);
             b.core.drawMode = SpriteDrawMode.Sliced;
-            b.wave = EffectRenderer("HitWave" + i, NoteArt.NoteOutlineSprite, 8);
+            b.wave = EffectRenderer("HitWave" + i, OutlineSprite(NoteArt.NoteOutlineSprite), 8);
             b.wave.drawMode = SpriteDrawMode.Sliced;
-            b.wave2 = EffectRenderer("HitWave2_" + i, NoteArt.NoteOutlineSprite, 8);
+            b.wave2 = EffectRenderer("HitWave2_" + i, OutlineSprite(NoteArt.NoteOutlineSprite), 8);
             b.wave2.drawMode = SpriteDrawMode.Sliced;
             b.flare = EffectRenderer("HitFlare" + i, NoteArt.HBellSprite, 10);
             b.star = EffectRenderer("HitStar" + i, NoteArt.StarSprite, 11);
             b.hot = EffectRenderer("HitHot" + i, NoteArt.GlowSprite, 10);
             b.hotCore = EffectRenderer("HitHotCore" + i, NoteArt.HBellSprite, 12);
-            b.gem = EffectRenderer("HitDragGhost" + i, NoteArt.NoteFaceSprite, 13);
+            b.gem = EffectRenderer("HitDragGhost" + i, IsCircle ? CircleDragSprite : NoteArt.NoteFaceSprite, 13);   // 드래그 잔상 (CIRCLE: 빛 고리)
             b.gem.drawMode = SpriteDrawMode.Sliced;
             b.zip = EffectRenderer("HitDragZip" + i, NoteArt.HBellSprite, 12);
             b.shards[0] = EffectRenderer("HitDragHalo" + i, NoteArt.GlowSprite, 11);
-            b.shards[1] = EffectRenderer("HitDragGhostB" + i, NoteArt.NoteFaceSprite, 12);
+            b.shards[1] = EffectRenderer("HitDragGhostB" + i, IsCircle ? CircleDragSprite : NoteArt.NoteFaceSprite, 12);
             b.shards[1].drawMode = SpriteDrawMode.Sliced;
             b.shards[2] = EffectRenderer("HitDragUnused" + i, NoteArt.GlowSprite, 11);
+            b.halo = EffectRenderer("HitHalo" + i, NoteArt.GlowSprite, 6);
+            b.streak = EffectRenderer("HitStreak" + i, NoteArt.HBellSprite, 12);
             bursts.Add(b);
         }
 
@@ -770,7 +1266,7 @@ public class SimpleGameSkin : MonoBehaviour
         Camera cam = gm.SceneCamera;
         float topY = (cam != null && cam.orthographic) ? cam.transform.position.y + cam.orthographicSize : y + 8f;
         if (IsDiverse) topY -= 0.3f; // 먼 쪽 끝 페이드 구간 바로 아래부터
-        for (int i = 0; i < 4 && i < xs.Length; i++)
+        for (int i = 0; i < xs.Length; i++)
         {
             GameObject go = new GameObject("RedWarn" + i);
             go.transform.SetParent(worldRoot, false);
@@ -787,9 +1283,14 @@ public class SimpleGameSkin : MonoBehaviour
         // 레인 펼침용: 배경·구분선·판정선·키 자리의 원래 크기/위치 기억
         laneCenterX = centerX;
         foreach (var kv in worldSprites)
-            laneParts.Add(new LanePart { t = kv.Key.transform, scale = kv.Key.transform.localScale, pos = kv.Key.transform.position });
+        {
+            string nm = kv.Key.name;
+            int kind = nm.StartsWith("LaneDiv") ? 2
+                     : (nm.StartsWith("Edge") || nm.StartsWith("Rail") || nm.StartsWith("Sweep")) ? 1 : 0;
+            laneParts.Add(new LanePart { t = kv.Key.transform, scale = kv.Key.transform.localScale, pos = kv.Key.transform.position, kind = kind });
+        }
         foreach (var r in receptors)
-            if (r != null) laneParts.Add(new LanePart { t = r.transform, scale = r.transform.localScale, pos = r.transform.position });
+            if (r != null) laneParts.Add(new LanePart { t = r.transform, scale = r.transform.localScale, pos = r.transform.position, kind = 2 });
         ApplyLaneExpand(0f);
 
         SetWorldAlpha(0f);
@@ -799,7 +1300,10 @@ public class SimpleGameSkin : MonoBehaviour
 
         if (IsDiverse)
         {
-            playfield = DiversePlayfield.Create(transform, gm, laneLeft, laneRight);
+            // 6키 확장 채보: 원근 카메라는 가운데 4레인 폭에 맞춤 (4키 구간은 보통 4키 채보와 같은 크기, 6키로 펼치면 바깥으로 넓어지기만)
+            float pfHalf = (laneRight - laneLeft) * 0.5f * (gm.SixLane ? 4f / Lanes.Max : 1f);
+            float pfCenter = (laneLeft + laneRight) * 0.5f;
+            playfield = DiversePlayfield.Create(transform, gm, pfCenter - pfHalf, pfCenter + pfHalf);
             if (playfield == null) IsDiverse = false;
             else
             {
@@ -807,7 +1311,7 @@ public class SimpleGameSkin : MonoBehaviour
                 PrewarmNoteMaterials();
                 if (laneBlur != null) playfield.Register(laneBlur.ShowMaterial);
                 // LIFE 바는 레인 접기(FOLD)의 영향을 받지 않음
-                foreach (var sr in new[] { wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot, wLifeTop, wLifeFlow, wLifeCapShade, wLifeCapLine, wLifeFloorShade, wLifeFloorLine, wLifeClearLine })
+                foreach (var sr in new[] { wLifeTrack, wLifeFrameL, wLifeFrameR, wLifeFill, wLifeGlow, wLifeHead, wLifeFoot, wLifeTop, wLifeFlow, wLifeCapShade, wLifeCapLine, wLifeFloorShade, wLifeFloorLine })
                     if (sr != null) playfield.Apply(sr, false, false);
                 // 레인 사라짐/드러남: 양쪽 실선 · 구분선은 투명해지지 않고 '위로 빨려 올라감 / 아래에서 올라옴' 으로 움직임 (UpdateLaneHide)
                 foreach (var ln in suckLines) if (ln.sr != null) playfield.Apply(ln.sr, false, false);
@@ -837,6 +1341,8 @@ public class SimpleGameSkin : MonoBehaviour
     public static readonly Color SaveFlashColor = new Color(0.45f, 1f, 0.55f, 1f);     // MERCY · LAZY 발동 (초록)
     public static readonly Color OnePlusColor = new Color(1f, 0.90f, 0.50f, 1f);       // ONE+ 부활 · 보호 (연한 노랑)
     private static readonly Color FloorGlowColor = new Color(0.55f, 0.80f, 1f, 0.07f);
+    private Color FloorGlowC { get { return FloorGlowColor; } }
+    private static readonly Color EdgeGlowC = new Color(0.75f, 0.9f, 1f, 0.08f);
     private SpriteRenderer floorGlow, accentGlow, sweepL, sweepR;
     private Color flashColor;
     private float flashLevel;                 // 1 → 0 (MERCY · LAZY 번쩍)
@@ -871,7 +1377,8 @@ public class SimpleGameSkin : MonoBehaviour
         if (floorGlow != null)
         {
             float k = 1f - Mathf.Clamp01(Mathf.Max(flashLevel, shieldTint));
-            floorGlow.color = new Color(FloorGlowColor.r, FloorGlowColor.g, FloorGlowColor.b, FloorGlowColor.a * k);
+            Color fg = FloorGlowC;
+            floorGlow.color = new Color(fg.r, fg.g, fg.b, fg.a * k);
         }
 
         // ONE+ 테두리 훑기: 판정선 아래에서 위로 0.8초 동안 올라가며 사라짐
@@ -886,8 +1393,8 @@ public class SimpleGameSkin : MonoBehaviour
                 float yy = gm.hitLineY - 1f + e * 16f;
                 float al = Mathf.Sin(Mathf.Clamp01(sweepT) * Mathf.PI) * 0.95f * vis;
                 Color sc = new Color(OnePlusColor.r, OnePlusColor.g, OnePlusColor.b, al);
-                sweepL.transform.position = new Vector3(laneLeft, yy, 0f);
-                sweepR.transform.position = new Vector3(laneRight, yy, 0f);
+                sweepL.transform.position = new Vector3(VisLeft, yy, 0f);
+                sweepR.transform.position = new Vector3(VisRight, yy, 0f);
                 sweepL.color = sweepR.color = sc;
                 if (sweepT >= 1f) sweepT = -1f;
             }
@@ -921,7 +1428,6 @@ public class SimpleGameSkin : MonoBehaviour
     }
     private static Sprite StripeUi { get { if (stripeUi == null) stripeUi = Sprite.Create(StripeTex, new Rect(0, 0, 32, 32), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect); return stripeUi; } }
     private static Sprite StripeWorld { get { if (stripeWorld == null) stripeWorld = Sprite.Create(StripeTex, new Rect(0, 0, 32, 32), new Vector2(0.5f, 0.5f), 260f, 0, SpriteMeshType.FullRect); return stripeWorld; } }
-    private SpriteRenderer wLifeClearLine;               // EASY · NORMAL 게이지 클리어 선
     private readonly List<SpriteRenderer> wLifeTicks = new List<SpriteRenderer>();
     private float lastLaneVis;
 
@@ -943,7 +1449,22 @@ public class SimpleGameSkin : MonoBehaviour
         wLifeFloorShade = WorldPiece("LifeFloorShade", StripeWorld, x, y, WLifeW, 0.01f, -15);    // STRICT+: 막힌 아래쪽 (빨간 사선)
         wLifeFloorShade.drawMode = SpriteDrawMode.Tiled; wLifeFloorShade.transform.localScale = Vector3.one;
         wLifeFloorLine = WorldPiece("LifeFloorLine", PixelSprite, x, y, WLifeW + 0.05f, 0.03f, -14); // STRICT+: 하한선
-        wLifeClearLine = WorldPiece("LifeClearLine", PixelSprite, x, y + WLifeLen * 0.7f, WLifeW + 0.10f, 0.025f, -14); // 클리어 선
+    }
+
+    // SIMPLE-DIVERSE LIFE 바 조각들을 가로로 옮김 (만들 때의 위치 기준)
+    private readonly List<KeyValuePair<Transform, float>> wLifeBaseX = new List<KeyValuePair<Transform, float>>();
+    private float wLifeShift = 0f;
+    private void ShiftWorldLife(float x)
+    {
+        float dx = x - (laneRight + WLifeGap);
+        if (Mathf.Abs(dx - wLifeShift) < 0.0001f) return;
+        wLifeShift = dx;
+        foreach (var kv in wLifeBaseX)
+        {
+            if (kv.Key == null) continue;
+            Vector3 p = kv.Key.position;
+            kv.Key.position = new Vector3(kv.Value + dx, p.y, p.z);
+        }
     }
 
     private SpriteRenderer WorldPiece(string name, Sprite sprite, float x, float y, float w, float h, int order)
@@ -957,6 +1478,7 @@ public class SimpleGameSkin : MonoBehaviour
         sr.sprite = sprite;
         sr.sortingOrder = order;
         sr.enabled = false;
+        wLifeBaseX.Add(new KeyValuePair<Transform, float>(go.transform, x));
         return sr;
     }
 
@@ -965,7 +1487,8 @@ public class SimpleGameSkin : MonoBehaviour
         if (wLifeFill == null) return;
         float vis = lastLaneVis;
         bool on = vis > 0.001f && !gm.HideAllUi;     // UNKNOWN UI: LIFE 막대도 숨김
-        float y = gm.hitLineY, x = laneRight + WLifeGap;
+        float y = gm.hitLineY, x = VisRight + WLifeGap;
+        ShiftWorldLife(x);   // 6키 확장: 레인 끝을 따라 옮김
         float f = Mathf.Clamp01(shown / 100f);
         float h = Mathf.Max(0.0001f, WLifeLen * f);
         bool has = on && f > 0.001f;
@@ -1006,18 +1529,6 @@ public class SimpleGameSkin : MonoBehaviour
         wLifeHead.enabled = has;
         wLifeHead.transform.position = new Vector3(x, y + h, 0f);
         wLifeHead.color = new Color(1f, 1f, 1f, 0.95f * vis);
-
-        // EASY · NORMAL 게이지: 클리어 선 (70)
-        if (wLifeClearLine != null)
-        {
-            bool cl = on && gm.IsFillGauge;
-            wLifeClearLine.enabled = cl;
-            if (cl)
-            {
-                wLifeClearLine.transform.position = new Vector3(x, y + WLifeLen * (float)(GameModes.ClearLine / 100.0), 0f);
-                wLifeClearLine.color = new Color(ClearLineColor.r, ClearLineColor.g, ClearLineColor.b, ClearLineColor.a * vis);
-            }
-        }
 
         // STRICT · STRICT+: LIFE 최대 상한 위쪽을 빨간 사선으로 막고 상한 위치에 빨간 선
         float cap = Mathf.Clamp01((float)gm.LifeCap / 100f);
@@ -1138,16 +1649,21 @@ public class SimpleGameSkin : MonoBehaviour
         }
     }
 
+    private float sixRatioApplied = -1f;
     private void ApplyLaneExpand(float w)
     {
-        if (Mathf.Abs(w - laneExpandApplied) < 0.0001f) return;
+        if (Mathf.Abs(w - laneExpandApplied) < 0.0001f && Mathf.Abs(sixRatio - sixRatioApplied) < 0.0001f) return;
         laneExpandApplied = w;
+        sixRatioApplied = sixRatio;
         float k = Mathf.Max(0.001f, w);
         foreach (var p in laneParts)
         {
             if (p.t == null) continue;
-            p.t.localScale = new Vector3(p.scale.x * k, p.scale.y, p.scale.z);
-            p.t.position = new Vector3(laneCenterX + (p.pos.x - laneCenterX) * k, p.pos.y, p.pos.z);
+            float kp = p.kind == 2 ? k : k * sixRatio;            // 위치: 레인별은 그대로, 판 · 벽은 보이는 폭을 따라감
+            float ks = p.kind == 0 ? k * sixRatio : k;           // 폭: 레인 전체 판만 보이는 폭을 따라감
+            Vector3 cs = p.t.localScale, cp = p.t.position;
+            p.t.localScale = new Vector3(p.scale.x * ks, cs.y, cs.z);
+            p.t.position = new Vector3(laneCenterX + (p.pos.x - laneCenterX) * kp, cp.y, cp.z);
         }
     }
 
@@ -1287,24 +1803,6 @@ public class SimpleGameSkin : MonoBehaviour
         fastSlowText.rectTransform.sizeDelta = new Vector2(400f, 26f);
         BuildOnePlusIcon(laneHud, IsDiverse ? 82f : 96f);
 
-        // ---- SPEED UP / SPEED DOWN (화면 위 가운데) ----
-        RectTransform speedRt = SettingsUIKit.Rect("SpeedChange", hudRoot);
-        speedRt.anchorMin = speedRt.anchorMax = new Vector2(0.5f, 1f);
-        speedRt.pivot = new Vector2(0.5f, 1f);
-        speedRt.anchoredPosition = new Vector2(0f, -SpeedChangeY);
-        speedRt.sizeDelta = new Vector2(600f, 50f);
-        speedChangeGroup = speedRt.gameObject.AddComponent<CanvasGroup>();
-        speedChangeGroup.alpha = 0f;
-        speedChangeGroup.blocksRaycasts = false;
-        // 글자 아래 가는 밑줄 (가운데에서 양쪽으로 그어짐)
-        speedUnderline = SettingsUIKit.Img("Underline", speedRt, Color.clear);
-        speedUnderline.rectTransform.anchorMin = speedUnderline.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
-        speedUnderline.rectTransform.pivot = new Vector2(0.5f, 0.5f);
-        speedUnderline.rectTransform.anchoredPosition = new Vector2(0f, -19f);
-        speedChangeText = Text(speedRt, "", 26, TextAlignmentOptions.Center, Color.white, FontStyles.Bold, F.judgement);
-        speedChangeText.characterSpacing = 8f;
-        SettingsUIKit.Stretch(speedChangeText.rectTransform);
-
         // ---- RED 노트 예고: 화면 양쪽 가장자리 붉은 빛 ----
         redEdgeLeft = SettingsUIKit.Img("RedEdgeL", hudRoot, new Color(RedWarnColor.r, RedWarnColor.g, RedWarnColor.b, 0f));
         redEdgeLeft.sprite = hGradientSprite;
@@ -1316,20 +1814,37 @@ public class SimpleGameSkin : MonoBehaviour
         redEdgeLeft.enabled = redEdgeRight.enabled = false;
 
         // ---- LIFE 게이지 (레인 오른쪽 둥근 막대, 숫자 없음) ----
+        //  · 어두운 반투명 트랙 + 가는 밝은 테두리 → MV 위에서도 빈 부분이 또렷함
+        //  · 채움: 원통처럼 왼쪽이 밝은 유리 질감 (색은 Image.color) + 뒤쪽 은은한 빛
+        //  · 채움 맨 위에 밝은 끝선 (지금 LIFE 위치)
+        //  · 양 끝 반지름 = 바 두께의 절반이 되도록 9-slice 배율 조정 (테두리 32px)
         lifeRoot = SettingsUIKit.Rect("LifeGauge", laneHud);
-        lifeBg = SettingsUIKit.Img("Bg", lifeRoot, new Color(1f, 1f, 1f, 0.12f));
-        // 양 끝 반지름 = 바 두께의 절반이 되도록 9-slice 배율 조정 (테두리 32px)
+        lifeBg = SettingsUIKit.Img("Track", lifeRoot, LifeTrackColor);
         lifeBg.sprite = pillSprite; lifeBg.type = Image.Type.Sliced; lifeBg.fillCenter = true;
         lifeBg.pixelsPerUnitMultiplier = 32f / (LifeBarWidth * 0.5f);
         SettingsUIKit.Stretch(lifeBg.rectTransform);
+        lifeGlowImg = SettingsUIKit.Img("Glow", lifeRoot, new Color(1f, 1f, 1f, 0f));
+        lifeGlowImg.sprite = pillGlowSprite; lifeGlowImg.type = Image.Type.Sliced; lifeGlowImg.fillCenter = true;
+        lifeGlowImg.pixelsPerUnitMultiplier = 32f / ((LifeBarWidth - 2f * LifeFillInset) * 0.5f + LifeGlowPad);
+        lifeGlowImg.rectTransform.anchorMin = Vector2.zero;
+        lifeGlowImg.rectTransform.anchorMax = Vector2.one;
+        lifeGlowImg.rectTransform.offsetMin = new Vector2(LifeFillInset - LifeGlowPad, LifeFillInset - LifeGlowPad);
+        lifeGlowImg.rectTransform.offsetMax = new Vector2(-LifeFillInset + LifeGlowPad, -LifeFillInset + LifeGlowPad);
         lifeFill = SettingsUIKit.Img("Fill", lifeRoot, Color.white);
-        lifeFill.sprite = pillSprite; lifeFill.type = Image.Type.Sliced; lifeFill.fillCenter = true;
-        lifeFill.pixelsPerUnitMultiplier = 32f / Mathf.Max(1f, (LifeBarWidth - 6f) * 0.5f);
+        lifeFill.sprite = pillShadeSprite; lifeFill.type = Image.Type.Sliced; lifeFill.fillCenter = true;
+        lifeFill.pixelsPerUnitMultiplier = 32f / Mathf.Max(1f, (LifeBarWidth - 2f * LifeFillInset) * 0.5f);
         lifeFillRt = lifeFill.rectTransform;
         lifeFillRt.anchorMin = Vector2.zero;
         lifeFillRt.anchorMax = Vector2.one;
-        lifeFillRt.offsetMin = new Vector2(3f, 3f);
-        lifeFillRt.offsetMax = new Vector2(-3f, -3f);
+        lifeFillRt.offsetMin = new Vector2(LifeFillInset, LifeFillInset);
+        lifeFillRt.offsetMax = new Vector2(-LifeFillInset, -LifeFillInset);
+        lifeOutline = SettingsUIKit.Img("Outline", lifeRoot, LifeOutlineColor);
+        lifeOutline.sprite = pillRingSprite; lifeOutline.type = Image.Type.Sliced; lifeOutline.fillCenter = true;
+        lifeOutline.pixelsPerUnitMultiplier = 32f / (LifeBarWidth * 0.5f);
+        SettingsUIKit.Stretch(lifeOutline.rectTransform);
+        lifeHeadLine = SettingsUIKit.Img("Head", lifeRoot, Color.white);
+        lifeHeadLine.sprite = NoteArt.HBellSprite;
+        lifeHeadLine.enabled = false;
         // GAME SETTING 무한 LIFE: 채움 위를 아래 → 위로 흐르는 밝은 빛 (가득 찬 막대 안에서만 보이게 마스크)
         lifeFill.gameObject.AddComponent<RectMask2D>();
         lifeGrad = SettingsUIKit.Img("InfiniteGradient", lifeFillRt, Color.white);   // 아래 진한 파랑 → 위 밝은 하늘색
@@ -1358,20 +1873,14 @@ public class SimpleGameSkin : MonoBehaviour
         lifeShieldGrad.sprite = OnePlusGradient;
         SettingsUIKit.Stretch(lifeShieldGrad.rectTransform);
         lifeShieldGrad.enabled = false;
-        // EASY · NORMAL 게이지: 클리어 선 (70) — 막대 양옆으로 살짝 튀어나온 흰 선
-        lifeClearLine = SettingsUIKit.Img("ClearLine", lifeRoot, ClearLineColor);
-        lifeClearLine.rectTransform.anchorMin = new Vector2(0f, (float)(GameModes.ClearLine / 100.0));
-        lifeClearLine.rectTransform.anchorMax = new Vector2(1f, (float)(GameModes.ClearLine / 100.0));
-        lifeClearLine.rectTransform.offsetMin = new Vector2(-4f, -1f);
-        lifeClearLine.rectTransform.offsetMax = new Vector2(4f, 1f);
-        lifeClearLine.enabled = false;
         // SIMPLE 스킨이면 항상 LIFE 사용 (이 시점엔 아직 GameManager 에 스킨이 등록되기 전이라 gm.LifeEnabled 로 판단하면 안 됨)
         lifeRoot.gameObject.SetActive(!IsDiverse); // DIVERSE 는 레인 옆 원근 LIFE 바(UpdateWorldLife)를 씀
 
-        Key[] keys = gm.LaneKeys != null ? gm.LaneKeys : SettingsStore.GetLaneKeys();   // REVERSE 면 거꾸로 된 키
-        for (int i = 0; i < 4; i++)
+        // 키 이름: 레인마다 (6키 확장 채보는 그때그때 4키 / 6키 키 — UpdateKeyTexts)
+        int laneN = gm.laneXPositions != null ? Mathf.Min(Lanes.Max, gm.laneXPositions.Length) : 4;
+        for (int i = 0; i < laneN; i++)
         {
-            keyTexts[i] = Text(laneHud, SettingsStore.KeyDisplayName(keys[i]), 20, TextAlignmentOptions.Center, new Color(1f, 1f, 1f, 0.35f), FontStyles.Bold, F.label);
+            keyTexts[i] = Text(laneHud, SettingsStore.KeyDisplayName(gm.DisplayKeyForLane(i)), 20, TextAlignmentOptions.Center, new Color(1f, 1f, 1f, 0.35f), FontStyles.Bold, F.label);
             keyTexts[i].rectTransform.sizeDelta = new Vector2(120f, 30f);
         }
     }
@@ -1381,14 +1890,14 @@ public class SimpleGameSkin : MonoBehaviour
     // =====================================================================
     public void SetPressed(int lane, bool on)
     {
-        if (lane < 0 || lane > 3) return;
+        if (lane < 0 || lane >= Lanes.Max) return;
         pressed[lane] = on;
         if (on) glowLevel[lane] = 1f;
     }
 
     public void SetHold(int lane, bool on)
     {
-        if (lane < 0 || lane > 3) return;
+        if (lane < 0 || lane >= Lanes.Max) return;
         held[lane] = on;
     }
 
@@ -1401,32 +1910,34 @@ public class SimpleGameSkin : MonoBehaviour
         bool tail = n.Type == 3 || n.Type == 13 || NoteTypes.IsSlideRelay(n.Type);
         // 드래그 노트: 일반 노트와 똑같은 이펙트, 색만 연한 노란색 (NoteColor 가 드래그 색을 줌)
         //  슬라이드의 중계점 · 끝은 머리(몸통)와 같은 색
-        Hit(lane, NoteColor(n.SlideHead != null ? n.SlideHead : n), tail ? 0.7f : 1f, false, false);
+        float x = n.IsQuarter && gm.laneXPositions != null ? CenterXOf(n, gm.laneXPositions) : float.NaN;
+        Hit(lane, NoteColor(n.SlideHead != null ? n.SlideHead : n), tail ? 0.7f : 1f, false, false, x, n.IsQuarter ? n.SubW * 0.25f : 1f);
     }
 
     public void Hit(int lane, Color c, float power) { Hit(lane, c, power, false); }
 
-    private void Hit(int lane, Color c, float power, bool mini, bool drag = false)
+    private void Hit(int lane, Color c, float power, bool mini, bool drag = false, float atX = float.NaN, float widthFrac = 1f)
     {
-        if (lane < 0 || lane > 3 || lane >= gm.laneXPositions.Length) return;
+        if (lane < 0 || lane >= gm.laneXPositions.Length) return;
         Burst b = bursts.Find(x => x.t >= 1f);
         if (b == null) { b = bursts[0]; foreach (var o in bursts) if (o.t > b.t) b = o; }   // 다 쓰는 중이면 가장 오래된 것
         b.t = 0f;
         b.lane = lane;
         b.c = c;
         b.power = power;
-        b.x = gm.laneXPositions[lane];
+        b.x = float.IsNaN(atX) ? gm.laneXPositions[lane] : atX;
+        b.wf = Mathf.Clamp(widthFrac, 0.25f, Lanes.Max);   // 홀드 맥박은 넓은 롱노트 폭까지
         b.mini = mini;
         b.perfect = !mini && (lastJudge == "EXCELLENT" || lastJudge == "JUST");
         b.ring.enabled = b.wave.enabled = true;
         // 설정 > 게임플레이 > 히트 이펙트 = 낮음 이면 두 번째 충격파 · 가로 섬광 · 광원 · 반짝임은 생략 (가벼움)
         bool full = !mini && SettingsStore.Current.EffectQuality > 0;
-        b.core.enabled = b.beam.enabled = !mini;
+        b.core.enabled = !mini;
         b.wave2.enabled = b.flare.enabled = b.hot.enabled = b.hotCore.enabled = full;
         if (!full) b.perfect = false;
         b.star.enabled = b.perfect;
         Vector3 at = new Vector3(b.x, gm.hitLineY, 0f);
-        b.beam.transform.position = at; b.ring.transform.position = at; b.core.transform.position = at;     // (배열을 만들지 않음 — 칠 때마다 쓰레기 생김 방지)
+        b.ring.transform.position = at; b.core.transform.position = at;     // (배열을 만들지 않음 — 칠 때마다 쓰레기 생김 방지)
         b.wave.transform.position = at; b.wave2.transform.position = at; b.flare.transform.position = at;
         b.star.transform.position = at; b.hot.transform.position = at; b.hotCore.transform.position = at;
         b.star.transform.rotation = Quaternion.identity;
@@ -1435,8 +1946,8 @@ public class SimpleGameSkin : MonoBehaviour
         b.gem.enabled = b.zip.enabled = b.drag;
         if (b.drag)
         {
-            // 심플하게: 빛기둥 · 두 번째 충격파 · 가로 섬광 · 반짝임은 끄고 드래그 전용 효과로
-            b.beam.enabled = b.wave2.enabled = b.flare.enabled = b.star.enabled = false;
+            // 심플하게: 두 번째 충격파 · 가로 섬광 · 반짝임은 끄고 드래그 전용 효과로
+            b.wave2.enabled = b.flare.enabled = b.star.enabled = false;
             b.gem.transform.position = at; b.zip.transform.position = at;
             b.shards[0].enabled = true;                                      // 빛무리
             b.shards[1].enabled = full;                                      // 두 번째 잔상 (히트 이펙트 '낮음'이면 생략)
@@ -1444,6 +1955,11 @@ public class SimpleGameSkin : MonoBehaviour
             for (int k = 0; k < DragShards; k++) { b.shards[k].transform.position = at; b.shards[k].transform.rotation = Quaternion.identity; }
         }
         else for (int k = 0; k < DragShards; k++) b.shards[k].enabled = false;
+
+        // 화려한 빛: 빛무리 · 긴 빛줄기 (드래그 · 홀드 맥박 · 히트 이펙트 '낮음'은 제외)
+        bool fancy = !mini && !b.drag;
+        b.halo.enabled = b.streak.enabled = fancy && full;
+        b.halo.transform.position = at; b.streak.transform.position = at;
         if (!mini) receptorPop[lane] = 1f;
     }
 
@@ -1523,6 +2039,9 @@ public class SimpleGameSkin : MonoBehaviour
         bool show = gm.LaneIntroStarted || gm.currentState == GameState.Playing;
         fadeIn = Mathf.MoveTowards(fadeIn, show ? 1f : 0f, dt / 0.35f);
         if (show) laneExpand = Mathf.MoveTowards(laneExpand, 1f, dt / LaneExpandSeconds);
+        // 6키 확장 채보: 4키 구간은 가운데 4레인 폭, 펼쳐지면 6레인 폭
+        sixExpand = gm.SixLane ? gm.LaneExpand : 1f;
+        sixRatio = gm.SixLane ? (4f + 2f * sixExpand) / Lanes.Max : 1f;
         ApplyLaneExpand(1f - Mathf.Pow(1f - laneExpand, 3f));
 
         // 프리키 구간: 기본 UI(BasicUI)가 숨겨지는 만큼 레인과 레인 HUD 도 숨김
@@ -1544,13 +2063,21 @@ public class SimpleGameSkin : MonoBehaviour
         float endA = gm.EndUiAlpha;
         float laneVis = fadeIn * basicVis * endA;
         SetWorldAlpha(laneVis);
-        bool lines = SettingsStore.Current.LaneLines && laneVis > 0.001f;
+        bool lines = SettingsStore.Current.LaneLines && !IsCircle && laneVis > 0.001f;   // CIRCLE: 설정과 관계없이 레인 구분선 없음
         foreach (var l in laneLines) if (l != null && l.enabled != lines) l.enabled = lines;
-        hudGroup.alpha = gm.HideAllUi ? 0f : fadeIn * endA;   // UNKNOWN UI: 레인을 뺀 HUD (점수 · 콤보 · 판정 · LIFE · 키 이름 …) 숨김
+        hudGroup.alpha = gm.HideAllUi ? 0f : fadeIn * endA * gm.LaneUiAlpha;   // 레인 테두리가 사라질 때 함께 사라짐   // UNKNOWN UI: 레인을 뺀 HUD (점수 · 콤보 · 판정 · LIFE · 키 이름 …) 숨김
         laneHudGroup.alpha = basicVis;
 
         lastLaneVis = laneVis;
-        if (laneBlur != null) laneBlur.Tick(laneVis, laneExpandApplied);
+        if (laneBlur != null) laneBlur.Tick(laneVis, laneExpandApplied * sixRatio);
+        // 바깥 레인 구분선: 4키 구간에서는 숨김 (펼쳐지는 만큼 보임)
+        for (int i = 0; i < outerDivs.Count; i++)
+        {
+            SpriteRenderer d = outerDivs[i];
+            if (d == null) continue;
+            Color oc = outerDivColors[i];
+            d.color = new Color(oc.r, oc.g, oc.b, IsCircle ? 0f : oc.a * laneVis * sixExpand);   // CIRCLE: 바깥 구분선도 없음
+        }
 
         // 레인 사라짐 / 드러남 (채보의 FOLD · UNFOLD = HIDE · SHOW 줄)
         //  · 양쪽 흰 실선 · 레일 · 레인 구분선: 사라질 때 위쪽으로 빨려 들어가고, 드러날 때 아래(판정선)에서 다시 올라옴
@@ -1567,7 +2094,6 @@ public class SimpleGameSkin : MonoBehaviour
         UpdateHold(dt, laneVis);
         UpdateBursts(dt, laneVis);
         UpdateLife(dt);
-        UpdateSpeedChange(dt);
         UpdateRedWarning(dt, laneVis);
         UpdateHudValues(dt);
         PlaceLaneHud();
@@ -1657,13 +2183,13 @@ public class SimpleGameSkin : MonoBehaviour
 
     private void UpdateGlows(float dt, float vis)
     {
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < Lanes.Max; i++)
         {
             if (glows[i] == null) continue;
             float target = held[i] ? 0.85f : (pressed[i] ? 0.6f : 0f);
             glowLevel[i] = target > glowLevel[i] ? target : Mathf.MoveTowards(glowLevel[i], target, dt / 0.15f);
             Color c = LaneColor(i);
-            glows[i].color = new Color(c.r, c.g, c.b, 0.28f * glowLevel[i] * vis);
+            glows[i].color = new Color(c.r, c.g, c.b, (IsCircle ? 0.42f : 0.28f) * glowLevel[i] * vis);
             glows[i].enabled = glowLevel[i] > 0.001f && vis > 0.001f;
 
             // 키 자리: 평소엔 옅은 흰 테두리, 누르면 레인 색으로 밝아지고 칠 때 살짝 커졌다 돌아옴
@@ -1671,33 +2197,51 @@ public class SimpleGameSkin : MonoBehaviour
             if (r == null) continue;
             receptorPop[i] = Mathf.MoveTowards(receptorPop[i], 0f, dt / 0.12f);
             float lit = Mathf.Max(glowLevel[i], receptorPop[i]);
-            Color rc = Color.Lerp(new Color(1f, 1f, 1f, 0.16f), new Color(c.r, c.g, c.b, 0.85f), lit);
-            r.color = new Color(rc.r, rc.g, rc.b, rc.a * vis);
+            Color rc = Color.Lerp(new Color(1f, 1f, 1f, IsCircle ? 0.5f : 0.16f), new Color(c.r, c.g, c.b, 0.85f), lit);   // CIRCLE: 판정선 대신이라 더 또렷하게
+            r.color = new Color(rc.r, rc.g, rc.b, rc.a * vis * LaneShow(i));
             float pop = 1f + 0.06f * receptorPop[i];
-            Vector2 want = new Vector2(laneWidth * 0.90f * pop, NoteHeight * 1.15f * pop);
+            Vector2 want = ReceptorSize(pop);
             if (r.size != want) r.size = want;                                        // 바뀔 때만 (메시 다시 만들기 줄임)
-            r.enabled = vis > 0.001f && SettingsStore.Current.ShowKeyMarkers;     // 설정 > GAMEPLAY > KEY MARKERS
+            // 설정 > GAMEPLAY > KEY MARKERS (CIRCLE 은 키 자리가 곧 판정선이라 항상 보임, SIMPLE 은 설정과 관계없이 숨김)
+            bool simpleOnly = !IsCircle && !IsDiverse;
+            r.enabled = vis > 0.001f && (IsCircle || (!simpleOnly && SettingsStore.Current.ShowKeyMarkers));
         }
+    }
+
+    // 판정선의 키 자리 크기 (CIRCLE: 원 노트보다 살짝 큰 원)
+    private Vector2 ReceptorSize(float pop)
+    {
+        if (IsCircle) { float d = CircleSize * 1.04f * pop; return new Vector2(d, d); }
+        return new Vector2(laneWidth * 0.90f * pop, CurNoteHeight * 1.15f * pop);
+    }
+
+    // 노트 모양 이펙트 크기: 보통은 (레인 폭 × wMul, 노트 두께 × hMul), CIRCLE 은 원 지름 × cMul 의 정사각형
+    private Vector2 Shape(float wMul, float hMul, float cMul)
+    {
+        if (IsCircle) { float d = CircleSize * cMul; return new Vector2(d, d); }
+        return new Vector2(burstLW * wMul, CurNoteHeight * hMul);
     }
 
     private void UpdateBursts(float dt, float vis)
     {
         float sy = NoteScaleY;
+        float flat = IsCircle ? 2.0f : 1f;   // 둥근 빛 세로 배율 (CIRCLE: 납작하지 않고 둥글게)
         foreach (var b in bursts)
         {
             if (b.t >= 1f) continue;
+            burstLW = laneWidth * b.wf;   // 1/4 칸 노트는 그 폭만큼 작은 이펙트
             b.t = Mathf.Min(1f, b.t + dt / (b.mini ? 0.28f : BurstSeconds));
             if (b.mini)
             {
                 // 홀드 맥박: 노트 테두리 모양이 살짝 퍼지고 둥근 빛이 옅게
                 float tm = b.t, em = 1f - (1f - tm) * (1f - tm);
                 Color mc = Color.Lerp(Color.white, b.c, 0.5f);
-                b.wave.size = new Vector2(laneWidth * Mathf.Lerp(0.95f, 1.05f, em), NoteHeight * Mathf.Lerp(1.2f, 1.9f, em));
+                b.wave.size = Shape(Mathf.Lerp(0.95f, 1.05f, em), Mathf.Lerp(1.2f, 1.9f, em), Mathf.Lerp(1.0f, 1.3f, em));
                 b.wave.transform.localScale = new Vector3(1f, sy, 1f);
                 b.wave.color = new Color(mc.r, mc.g, mc.b, 0.55f * (1f - tm) * vis);
                 Vector2 gsm = NoteArt.GlowSprite.bounds.size;
-                float rwm = laneWidth * Mathf.Lerp(0.6f, 0.95f, em);
-                b.ring.transform.localScale = new Vector3(rwm / gsm.x, rwm * 0.4f * sy / gsm.y, 1f);
+                float rwm = burstLW * Mathf.Lerp(0.6f, 0.95f, em);
+                b.ring.transform.localScale = new Vector3(rwm / gsm.x, rwm * 0.4f * flat * sy / gsm.y, 1f);
                 b.ring.color = new Color(b.c.r, b.c.g, b.c.b, 0.35f * (1f - tm) * vis);
                 if (b.t >= 1f) b.ring.enabled = b.wave.enabled = false;
                 continue;
@@ -1708,51 +2252,66 @@ public class SimpleGameSkin : MonoBehaviour
 
             // 노트 모양 섬광 (앞쪽 55% 동안)
             float tc = Mathf.Clamp01(t / 0.55f), ec = 1f - (1f - tc) * (1f - tc);
-            b.core.size = new Vector2(laneWidth * Mathf.Lerp(0.95f, 1.03f, ec), NoteHeight * Mathf.Lerp(1.0f, 2.1f, ec) * b.power);
+            b.core.size = IsCircle ? Shape(0f, 0f, CirclePad * Mathf.Lerp(1.0f, 1.25f, ec) * (0.75f + 0.25f * b.power))
+                                   : new Vector2(burstLW * Mathf.Lerp(0.95f, 1.03f, ec), CurNoteHeight * Mathf.Lerp(1.0f, 2.1f, ec) * b.power);
             b.core.transform.localScale = new Vector3(1f, sy, 1f);
             b.core.color = new Color(w2c.r, w2c.g, w2c.b, 0.95f * (1f - tc) * vis);
 
             // 둥근 빛
             Vector2 gs = NoteArt.GlowSprite.bounds.size;
-            float rw = laneWidth * Mathf.Lerp(0.55f, 1.12f, e) * (0.8f + 0.2f * b.power);
-            b.ring.transform.localScale = new Vector3(rw / gs.x, rw * 0.42f * sy / gs.y, 1f);
+            float rw = burstLW * Mathf.Lerp(0.55f, 1.12f, e) * (0.8f + 0.2f * b.power);
+            b.ring.transform.localScale = new Vector3(rw / gs.x, rw * 0.42f * flat * sy / gs.y, 1f);
             Color rc2 = Color.Lerp(Color.white, c, Mathf.Clamp01(t * 1.5f));
             b.ring.color = new Color(rc2.r, rc2.g, rc2.b, 0.95f * (1f - t) * (1f - t) * vis);
 
-            // 빛기둥
-            Vector2 bs = NoteArt.BeamSprite.bounds.size;
-            float bw = laneWidth * Mathf.Lerp(0.92f, 0.62f, e);
-            float bh = Mathf.Lerp(0.9f, 2.1f, e) * b.power * (IsDiverse ? 1.6f : 1f);   // 이전보다 조금 짧게
-            b.beam.transform.localScale = new Vector3(bw / bs.x, bh / bs.y, 1f);
-            b.beam.color = new Color(w2c.r, w2c.g, w2c.b, 0.32f * Mathf.Pow(1f - t, 1.6f) * vis);   // 이전보다 조금 약하게 (0.42 → 0.32)
+            // 긴 빛줄기: 판정선을 따라 레인 여러 칸 너비로 아주 가늘게 뻗음 (렌즈 플레어)
+            if (b.streak.enabled)
+            {
+                Vector2 ksz = NoteArt.HBellSprite.bounds.size;
+                float tk = Mathf.Clamp01(t / 0.55f), ek = 1f - Mathf.Pow(1f - tk, 3f);
+                float kw = burstLW * Mathf.Lerp(1.4f, b.perfect ? 5.0f : 4.0f, ek) * b.power;
+                b.streak.transform.localScale = new Vector3(kw / ksz.x, 0.05f * sy * (1f - 0.5f * tk) / ksz.y, 1f);
+                Color kc = Color.Lerp(Color.white, c, tk * 0.6f);
+                b.streak.color = new Color(kc.r, kc.g, kc.b, 0.9f * Mathf.Pow(1f - tk, 1.4f) * vis);
+            }
+
+            // 넓은 빛무리: 레인 밖까지 크게 번쩍 번졌다가 빠르게 사라짐
+            if (b.halo.enabled)
+            {
+                float hw2 = burstLW * Mathf.Lerp(1.2f, b.perfect ? 3.2f : 2.6f, e) * (0.8f + 0.2f * b.power);
+                b.halo.transform.localScale = new Vector3(hw2 / gs.x, hw2 * (IsCircle ? 0.85f : 0.55f) * sy / gs.y, 1f);
+                b.halo.color = new Color(c.r, c.g, c.b, 0.65f * (1f - t) * (1f - t) * vis);
+            }
 
             // 판정선 위 광원 (강화): 레인 폭 안에서 강하게 번쩍하고 조금 오래 남음
             float th = Mathf.Clamp01(t / 0.65f);
-            float hw = laneWidth * Mathf.Lerp(1.15f, 0.9f, th);
-            b.hot.transform.localScale = new Vector3(hw / gs.x, hw * 0.62f * sy / gs.y, 1f);
+            float hw = burstLW * Mathf.Lerp(1.15f, 0.9f, th);
+            b.hot.transform.localScale = new Vector3(hw / gs.x, hw * (IsCircle ? 0.95f : 0.62f) * sy / gs.y, 1f);
             Color hc = Color.Lerp(Color.white, c, th * 0.55f);
             b.hot.color = new Color(hc.r, hc.g, hc.b, Mathf.Pow(1f - th, 1.4f) * vis);
             //  가운데 흰 심: 판정선 위에 아주 밝은 가로 빛 (레인 폭 정도)
             Vector2 hsz = NoteArt.HBellSprite.bounds.size;
             float tcw = Mathf.Clamp01(t / 0.5f);
-            b.hotCore.transform.localScale = new Vector3(laneWidth * Mathf.Lerp(1.25f, 1.0f, tcw) / hsz.x, 0.16f * sy * (1f - 0.4f * tcw) / hsz.y, 1f);
+            b.hotCore.transform.localScale = new Vector3(burstLW * Mathf.Lerp(1.25f, 1.0f, tcw) / hsz.x, 0.16f * sy * (1f - 0.4f * tcw) / hsz.y, 1f);
             b.hotCore.color = new Color(1f, 1f, 1f, (1f - tcw) * (1f - tcw) * vis);
 
             // 충격파: 노트 테두리 모양이 바깥으로 퍼짐
-            b.wave.size = new Vector2(laneWidth * Mathf.Lerp(0.92f, 1.10f, e), NoteHeight * Mathf.Lerp(1.1f, 2.4f, e) * b.power);
+            b.wave.size = IsCircle ? Shape(0f, 0f, Mathf.Lerp(1.0f, 1.6f, e) * (0.8f + 0.2f * b.power))
+                                   : new Vector2(burstLW * Mathf.Lerp(0.92f, 1.10f, e), CurNoteHeight * Mathf.Lerp(1.1f, 2.4f, e) * b.power);
             b.wave.transform.localScale = new Vector3(1f, sy, 1f);
             b.wave.color = new Color(w2c.r, w2c.g, w2c.b, 0.85f * Mathf.Pow(1f - t, 1.5f) * vis);
 
             // 두 번째 충격파: 조금 늦게, 더 크게 퍼짐
             float t2 = Mathf.Clamp01((t - 0.18f) / 0.82f), e2 = 1f - (1f - t2) * (1f - t2);
-            b.wave2.size = new Vector2(laneWidth * Mathf.Lerp(0.95f, 1.20f, e2), NoteHeight * Mathf.Lerp(1.2f, 3.0f, e2) * b.power);
+            b.wave2.size = IsCircle ? Shape(0f, 0f, Mathf.Lerp(1.0f, 2.1f, e2) * (0.8f + 0.2f * b.power))
+                                    : new Vector2(burstLW * Mathf.Lerp(0.95f, 1.20f, e2), CurNoteHeight * Mathf.Lerp(1.2f, 3.0f, e2) * b.power);
             b.wave2.transform.localScale = new Vector3(1f, sy, 1f);
             b.wave2.color = new Color(c.r, c.g, c.b, (t < 0.18f ? 0f : 0.55f * (1f - t2)) * vis);
 
             // 가로 섬광 줄기: 판정선을 따라 좌우로 길게 번쩍 (빠르게 사라짐)
             Vector2 fsz = NoteArt.HBellSprite.bounds.size;
             float tf = Mathf.Clamp01(t / 0.75f);
-            float fw = laneWidth * Mathf.Lerp(1.1f, 1.7f, 1f - (1f - tf) * (1f - tf)) * b.power;
+            float fw = burstLW * Mathf.Lerp(1.1f, 1.7f, 1f - (1f - tf) * (1f - tf)) * b.power;
             b.flare.transform.localScale = new Vector3(fw / fsz.x, 0.13f * sy * (1f - 0.4f * tf) / fsz.y, 1f);
             b.flare.color = new Color(w2c.r, w2c.g, w2c.b, Mathf.Pow(1f - tf, 1.5f) * vis);
 
@@ -1762,7 +2321,7 @@ public class SimpleGameSkin : MonoBehaviour
                 Vector2 ssz = NoteArt.StarSprite.bounds.size;
                 float ts = Mathf.Clamp01(t / 0.7f);
                 float grow = Mathf.Sin(ts * Mathf.PI);                       // 0 → 1 → 0
-                float sw = laneWidth * (0.45f + 0.55f * grow);
+                float sw = burstLW * (0.55f + 0.85f * grow);                // 더 크게 빛남
                 b.star.transform.localScale = new Vector3(sw / ssz.x, sw * sy / ssz.y, 1f);
                 b.star.transform.rotation = Quaternion.Euler(0f, 0f, 45f * ts);
                 b.star.color = new Color(1f, 1f, 1f, 0.95f * (1f - ts) * vis);
@@ -1772,9 +2331,9 @@ public class SimpleGameSkin : MonoBehaviour
 
             if (b.t >= 1f)
             {
-                b.core.enabled = b.ring.enabled = b.beam.enabled = b.wave.enabled = false;
+                b.core.enabled = b.ring.enabled = b.wave.enabled = false;
                 b.wave2.enabled = b.flare.enabled = b.star.enabled = b.hot.enabled = b.hotCore.enabled = false;
-                b.gem.enabled = b.zip.enabled = false;
+                b.gem.enabled = b.zip.enabled = b.halo.enabled = b.streak.enabled = false;
                 for (int k = 0; k < DragShards; k++) b.shards[k].enabled = false;
                 b.drag = false;
             }
@@ -1794,7 +2353,7 @@ public class SimpleGameSkin : MonoBehaviour
         float tz = Mathf.Clamp01(t / 0.4f), ez = 1f - Mathf.Pow(1f - tz, 4f);
         Vector2 zsz = NoteArt.HBellSprite.bounds.size;
         b.zip.transform.position = new Vector3(b.x, y0, 0f);
-        b.zip.transform.localScale = new Vector3(laneWidth * Mathf.Lerp(0.7f, 2.3f, ez) / zsz.x, 0.034f * sy * (1f - 0.6f * tz) / zsz.y, 1f);
+        b.zip.transform.localScale = new Vector3(burstLW * Mathf.Lerp(0.7f, 2.3f, ez) / zsz.x, 0.034f * sy * (1f - 0.6f * tz) / zsz.y, 1f);
         Color zc = Color.Lerp(Color.white, c, tz);
         b.zip.color = new Color(zc.r, zc.g, zc.b, Mathf.Pow(1f - tz, 1.3f) * vis);
 
@@ -1804,7 +2363,7 @@ public class SimpleGameSkin : MonoBehaviour
         {
             Vector2 gsz = NoteArt.GlowSprite.bounds.size;
             float th = t, eh = 1f - (1f - th) * (1f - th);
-            float hw = laneWidth * Mathf.Lerp(0.9f, 1.7f, eh);
+            float hw = burstLW * Mathf.Lerp(0.9f, 1.7f, eh);
             halo.transform.position = new Vector3(b.x, y0, 0f);
             halo.transform.localScale = new Vector3(hw / gsz.x, hw * 0.28f * sy / gsz.y, 1f);
             halo.color = new Color(c.r, c.g, c.b, 0.55f * (1f - th) * (1f - th) * vis);
@@ -1824,7 +2383,13 @@ public class SimpleGameSkin : MonoBehaviour
         float pad = NoteArt.NoteGlowPad * 2f;
         sr.transform.position = new Vector3(x, y0 + 0.55f * ek * sy, 0f);
         sr.transform.localScale = new Vector3(1f, sy, 1f);
-        sr.size = new Vector2(laneWidth * 0.95f * Mathf.Lerp(1f, 0.82f, ek) + pad, h * Mathf.Lerp(1f, 1.9f, ek) + pad);
+        if (IsCircle)
+        {
+            // CIRCLE: 빛 고리가 위로 미끄러지며 커지고 옅어짐
+            float dd = CircleSize * CircleDragRatio * CirclePad * Mathf.Lerp(1f, 1.45f, ek);
+            sr.size = new Vector2(dd, dd);
+        }
+        else sr.size = new Vector2(burstLW * 0.95f * Mathf.Lerp(1f, 0.82f, ek) + pad, h * Mathf.Lerp(1f, 1.9f, ek) + pad);
         Color gc = Color.Lerp(Color.white, c, 0.35f + 0.65f * tk);
         sr.color = new Color(gc.r, gc.g, gc.b, (t < delay ? 0f : 0.85f * strength) * Mathf.Pow(1f - tk, 1.8f) * vis);
     }
@@ -1875,14 +2440,24 @@ public class SimpleGameSkin : MonoBehaviour
             SetAtWorld(judgeText.rectTransform, cam, new Vector3(cx, y + 1.7f, 0f));
             SetAtWorld(fastSlowText.rectTransform, cam, new Vector3(cx, y + 1.7f, 0f), new Vector2(0f, -38f));
         }
-        for (int i = 0; i < 4 && i < gm.laneXPositions.Length; i++)
-            SetAtWorld(keyTexts[i].rectTransform, cam, new Vector3(gm.laneXPositions[i], y - 0.45f, 0f));
+        int keyMode = gm.KeysAt(gm.currentPlayTime);
+        bool rewrite = keyMode != lastKeyMode;
+        lastKeyMode = keyMode;
+        for (int i = 0; i < gm.laneXPositions.Length && i < Lanes.Max; i++)
+        {
+            if (keyTexts[i] == null) continue;
+            if (rewrite) keyTexts[i].text = SettingsStore.KeyDisplayName(gm.DisplayKeyForLane(i));
+            keyTexts[i].alpha = 0.35f * LaneShow(i);
+        }
+        for (int i = 0; i < gm.laneXPositions.Length && i < Lanes.Max; i++)
+            if (keyTexts[i] != null)
+            SetAtWorld(keyTexts[i].rectTransform, cam, new Vector3(gm.laneXPositions[i], y - (IsCircle ? CircleSize * 0.5f + 0.3f : 0.45f), 0f));
 
 
         // LIFE 바: 판정선 높이부터 화면 위쪽(여백 LifeBarTopMargin)까지 길게, 레인 오른쪽 바깥
         if (lifeRoot != null && lifeRoot.gameObject.activeSelf)
         {
-            float gx = laneRight + LifeBarGap;
+            float gx = VisRight + LifeBarGap;   // 6키 확장: 보이는 레인 끝
             float topY = cam.orthographic ? cam.transform.position.y + cam.orthographicSize - LifeBarTopMargin : y + 7f;
             if (IsDiverse) topY = y + 3.2f; // 원근: 먼 쪽은 화면에서 짧아지므로 가까운 구간까지만
             topY = Mathf.Max(y + 1f, topY);
@@ -1912,15 +2487,52 @@ public class SimpleGameSkin : MonoBehaviour
     // =====================================================================
     //  롱노트 홀드 효과
     // =====================================================================
+    // 레인 단위 위치 (0 = 0번 레인 왼쪽 끝, 1칸 = 1) → 월드 x
+    private float LaneUnitToX(float u)
+    {
+        float[] xs = gm.laneXPositions;
+        int k = Mathf.Clamp(Mathf.FloorToInt(u), 0, xs.Length - 1);
+        return xs[k] + (u - k - 0.5f) * laneWidth;
+    }
+
     private void UpdateHold(float dt, float vis)
     {
         holdClock += dt;
-        for (int i = 0; i < 4; i++)
+
+        // [개선] 진행 중인 롱노트 · 슬라이드의 '지금' 폭과 가운데에 맞춤 (1/4 칸 ~ 4칸)
+        //  여러 레인을 덮으면 맨 왼쪽 눌린 레인 하나가 전체 폭으로 그림 (겹쳐 그리지 않게)
+        for (int i = 0; i < Lanes.Max; i++)
+        {
+            holdKey[i] = null;
+            if (!held[i] || gm.laneXPositions == null || i >= gm.laneXPositions.Length) continue;
+            holdKey[i] = gm.HoldSpanOnLane(i, out float l, out float r);
+            if (holdKey[i] == null) { l = i; r = i + 1f; }     // 못 찾으면 레인 한 칸
+            holdL[i] = l; holdR[i] = r;
+        }
+        for (int i = 0; i < Lanes.Max; i++)
+        {
+            if (!held[i]) continue;
+            bool dup = false;
+            if (holdKey[i] != null) for (int j = 0; j < i; j++) if (held[j] && holdKey[j] == holdKey[i]) { dup = true; break; }
+            holdHidden[i] = dup;
+            if (dup || gm.laneXPositions == null || i >= gm.laneXPositions.Length) continue;
+            float w = Mathf.Max(0.02f, holdR[i] - holdL[i]);   // 끝이 한 점으로 모이는 롱노트도 그대로 줄어듦
+            holdWidthLanes[i] = w;
+            holdCenterX[i] = LaneUnitToX((holdL[i] + holdR[i]) * 0.5f);
+            holdOffX[i] = holdCenterX[i] - gm.laneXPositions[i];
+            // 몸통 폭과 같게 (Slidebody 의 안쪽 여백 규칙과 같음)
+            float ins = w < 0.99f ? laneWidth * 0.02f : (IsCircle ? (laneWidth - BodySpan(1)) * 0.5f : laneWidth * 0.02f);
+            holdSpan[i] = Mathf.Max(laneWidth * 0.02f, w * laneWidth - 2f * Mathf.Min(ins, w * laneWidth * 0.5f));
+        }
+
+        for (int i = 0; i < Lanes.Max; i++)
         {
             SpriteRenderer f = holdFlares[i];
             if (f == null) continue;
+            if (!holdBaseSet[i]) { holdBaseX[i] = f.transform.position.x; holdBaseSet[i] = true; }
             holdLevel[i] = Mathf.MoveTowards(holdLevel[i], held[i] ? 1f : 0f, dt / 0.08f);
-            bool on = holdLevel[i] > 0.001f && vis > 0.001f;
+
+            bool on = holdLevel[i] > 0.001f && vis > 0.001f && !holdHidden[i];
             f.enabled = on;
             if (on)
             {
@@ -1928,18 +2540,27 @@ public class SimpleGameSkin : MonoBehaviour
                 Color c = Color.Lerp(LaneColor(i), Color.white, 0.45f);
                 f.color = new Color(c.r, c.g, c.b, 0.75f * holdLevel[i] * pulse * vis);
                 float pad = NoteArt.NoteGlowPad * 2f;
-                f.size = new Vector2(laneWidth * 0.98f + pad, 0.16f + 0.08f * pulse + pad);
+                float span = holdSpan[i];
+                bool oneLane = Mathf.Abs(holdWidthLanes[i] - 1f) < 0.01f;
+                if (IsCircle)
+                {
+                    float d = CircleSize * CirclePad * (1.02f + 0.08f * pulse);
+                    f.size = oneLane ? new Vector2(d, d) : new Vector2(Mathf.Max(d * 0.5f, span + (d - CircleSize)), d);
+                }
+                else f.size = new Vector2((oneLane ? laneWidth * 0.98f : span + laneWidth * 0.02f) + pad, 0.16f + 0.08f * pulse + pad);
                 f.transform.localScale = new Vector3(1f, NoteScaleY, 1f);
+                Vector3 p = f.transform.position;
+                f.transform.position = new Vector3(holdBaseX[i] + holdOffX[i], p.y, p.z);
             }
 
-            // 누르고 있는 동안 일정 간격으로 노트 테두리 모양 맥박이 퍼짐 (빛 조각 대신)
-            if (held[i] && vis > 0.001f && SettingsStore.Current.EffectQuality > 0)
+            // 누르고 있는 동안 일정 간격으로 노트 테두리 모양 맥박이 퍼짐 — 판정선 노트 모양과 같은 폭 · 위치
+            if (held[i] && !holdHidden[i] && vis > 0.001f && SettingsStore.Current.EffectQuality > 0)
             {
                 holdPulseTimer[i] -= dt;
                 if (holdPulseTimer[i] <= 0f)
                 {
                     holdPulseTimer[i] = 0.16f;
-                    Hit(i, LaneColor(i), 0.5f, true);
+                    Hit(i, LaneColor(i), 0.5f, true, false, holdCenterX[i], holdWidthLanes[i]);
                 }
             }
             else holdPulseTimer[i] = 0f;
@@ -1971,72 +2592,6 @@ public class SimpleGameSkin : MonoBehaviour
         s.start = new Vector3(gm.laneXPositions[lane] + UnityEngine.Random.Range(-laneWidth * 0.4f, laneWidth * 0.4f), gm.hitLineY, 0f);
         s.sr.transform.position = s.start;
         s.sr.enabled = true;
-    }
-
-    // =====================================================================
-    //  SPEED UP / SPEED DOWN: 스크롤 배속이 바뀌는 순간 화면 위에 표시
-    //   (STOP / START 처럼 0 이 끼는 변화는 표시하지 않음, 일시정지 후 되감기 때도 표시하지 않음)
-    // =====================================================================
-    private void UpdateSpeedChange(float dt)
-    {
-        // 채보에서 SHOW 표시된 변속만 (에디터에서 SPEED 표시를 우클릭해서 켠 것). 일반 변속은 표시하지 않음
-        var list = gm.SpeedNotices;
-        double now = gm.currentPlayTime;
-        bool playing = gm.currentState == GameState.Playing && !gm.IsFailed;
-        bool jumped = now < lastCheckTime - 0.05; // 일시정지 후 되감기
-        if (list != null)
-        {
-            if (jumped || speedNoticeIndex < 0)
-            {
-                speedNoticeIndex = 0;
-                while (speedNoticeIndex < list.Count && list[speedNoticeIndex].Time <= now) speedNoticeIndex++;
-            }
-            while (speedNoticeIndex < list.Count && list[speedNoticeIndex].Time <= now)
-            {
-                SpeedNotice n = list[speedNoticeIndex++];
-                if (!playing) continue;
-                int L = n.Layer >= NoteLayer.Min && n.Layer <= NoteLayer.Max ? n.Layer : NoteLayer.Top;   // 0(모든 층)은 2층 기준
-                double from = gm.GetSpeedMultiplier(L, n.Time - 0.0005);
-                double to = gm.GetSpeedMultiplier(L, n.Time + 0.0005);
-                if (from > 0 && to > 0 && Math.Abs(to - from) > 1e-6) ShowSpeedChange(from, to);
-            }
-        }
-        lastCheckTime = now;
-
-        AnimateSpeedChange(dt);
-    }
-
-    // ----- SPEED UP / DOWN 연출 (차분하게) -----
-    //  · 글자가 SPEED UP 은 아래에서 위로, SPEED DOWN 은 위에서 아래로 살짝 미끄러지며 나타남
-    //  · 글자 아래 가는 밑줄이 가운데에서 양쪽으로 그어짐
-    //  · 잠깐 머문 뒤 조용히 사라짐
-    private void AnimateSpeedChange(float dt)
-    {
-        speedChangeTimer += dt;
-        float t = speedChangeTimer;
-        const float In = 0.22f, Hold = 1.1f, Out = 0.3f;
-        float a = t < In ? t / In : t < Hold ? 1f : Mathf.Clamp01(1f - (t - Hold) / Out);
-        speedChangeGroup.alpha = a;
-
-        float slide = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / In), 3f);
-        float dir = speedUp ? -1f : 1f;   // UP: 아래(-)에서 올라옴 / DOWN: 위(+)에서 내려옴
-        speedChangeText.rectTransform.anchoredPosition = new Vector2(0f, dir * 10f * (1f - slide));
-        ((RectTransform)speedChangeGroup.transform).anchoredPosition = new Vector2(0f, -SpeedChangeY);
-
-        float lineP = 1f - Mathf.Pow(1f - Mathf.Clamp01((t - 0.08f) / 0.35f), 3f);
-        float w = (speedChangeText.preferredWidth + 24f) * lineP;
-        speedUnderline.rectTransform.sizeDelta = new Vector2(w, 1.5f);
-    }
-
-    private void ShowSpeedChange(double from, double to)
-    {
-        speedUp = to > from;
-        Color c = speedUp ? new Color(1f, 0.74f, 0.38f) : new Color(0.48f, 0.80f, 1f);
-        speedChangeText.text = speedUp ? "SPEED UP" : "SPEED DOWN";
-        speedChangeText.color = c;
-        speedChangeText.characterSpacing = 10f;
-        speedUnderline.color = new Color(c.r, c.g, c.b, 0.6f);
-        speedChangeTimer = 0f;
     }
 
     // =====================================================================
@@ -2073,12 +2628,12 @@ public class SimpleGameSkin : MonoBehaviour
 
         lastRedCheckTime = now;
 
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < Lanes.Max; i++)
         {
             SpriteRenderer sr = redWarnGlows[i];
             if (sr == null) continue;
             redWarnTime[i] += dt;
-            float a = WarnPulse(redWarnTime[i]) * vis;
+            float a = WarnPulse(redWarnTime[i]) * vis * LaneShow(i);
             sr.enabled = a > 0.001f;
             sr.color = new Color(RedWarnColor.r, RedWarnColor.g, RedWarnColor.b, 0.5f * a);
         }
@@ -2091,7 +2646,7 @@ public class SimpleGameSkin : MonoBehaviour
     // 레인 4개 전체 + 화면 양쪽 가장자리
     private void TriggerRedWarning()
     {
-        for (int l = 0; l < 4; l++) redWarnTime[l] = 0f;
+        for (int l = 0; l < Lanes.Max; l++) redWarnTime[l] = 0f;
         redEdgeTime = 0f;
     }
 
@@ -2117,27 +2672,19 @@ public class SimpleGameSkin : MonoBehaviour
         shieldShown = shieldLife >= 0f;
         if (shieldShown) shownLife = shieldLife;
         else shownLife = Mathf.MoveTowards(shownLife, target, dt * 120f);
-        lifeFillRt.anchorMax = new Vector2(1f, Mathf.Clamp01(shownLife / 100f));
+        float frac = Mathf.Clamp01(shownLife / 100f);
+        lifeFillRt.anchorMax = new Vector2(1f, frac);
 
-        // 게이지 색
-        //  EASY · NORMAL (채워 나감): 클리어 선(70) 아래는 파랑, 넘으면 흰색 — 낮아도 깜빡이지 않음 (처음엔 0 이 정상)
-        //  HARD · HARD+ : 흰색 → 50 아래 노랑 → 25 아래 빨강, 20 아래 깜빡임 (예전 LIFE 와 같음)
-        //  TEMPEST      : 보라 → 25 아래 빨강, 20 아래 깜빡임
+        // 게이지 색 (모든 스킨 공통 HARD 게이지: 100 에서 시작해 0 으로 내려감)
+        //  흰색 → 50 아래 노랑 → 25 아래 빨강 (경계에서 부드럽게 섞임), 20 아래 깜빡임
+        //  TEMPEST: 보라 → 25 아래 빨강
         Color c; float a = 1f;
-        bool fillGauge = gm.IsFillGauge;
-        if (fillGauge)
-            c = target >= (float)GameModes.ClearLine ? new Color(0.95f, 0.97f, 1f) : new Color(0.42f, 0.70f, 1f);
+        if (gm.Gauge == GaugeKind.Tempest)
+            c = target > 25f ? new Color(0.80f, 0.62f, 1f) : LifeLow;
         else
-        {
-            if (gm.Gauge == GaugeKind.Tempest)
-                c = target > 25f ? new Color(0.80f, 0.62f, 1f) : new Color(1f, 0.38f, 0.45f);
-            else
-                c = target > 50f ? new Color(0.95f, 0.97f, 1f)
-                  : target > 25f ? new Color(1f, 0.84f, 0.42f)
-                  : new Color(1f, 0.38f, 0.45f);
-            if (target <= 20f && target > 0f) a = 0.55f + 0.45f * Mathf.Abs(Mathf.Sin(Time.unscaledTime * 6f)); // 위험할 때 깜빡임
-        }
-        if (lifeClearLine != null) lifeClearLine.enabled = fillGauge;
+            c = target > 50f ? Color.Lerp(LifeMid, LifeHigh, Mathf.Clamp01((target - 50f) / 6f))
+              : Color.Lerp(LifeLow, LifeMid, Mathf.Clamp01((target - 25f) / 6f));
+        if (target <= 20f && target > 0f) a = 0.55f + 0.45f * Mathf.Abs(Mathf.Sin(Time.unscaledTime * 6f)); // 위험할 때 깜빡임
         // GAME SETTING 무한 LIFE: 밝은 푸른색 계열이 천천히 오가는 색 + 흐르는 빛
         bool infinite = gm.LifeInfinite;   // GAME SETTING · IMMORTAL
         if (infinite)
@@ -2181,6 +2728,24 @@ public class SimpleGameSkin : MonoBehaviour
         if (shieldShown) { c = OnePlusColor; a = 1f; lifeFill.color = c; }   // 바깥 빛 · 끝선도 노랑
         if (lifeShieldGrad != null) lifeShieldGrad.enabled = shieldShown && lifeFill.enabled;
         if (lifeGrad != null) lifeGrad.enabled = infinite && lifeFill.enabled;
+        // 뒤쪽 빛 · 끝선: 채움 높이를 따라감 (색은 채움과 같은 계열)
+        if (lifeGlowImg != null)
+        {
+            lifeGlowImg.rectTransform.anchorMax = new Vector2(1f, frac);
+            lifeGlowImg.enabled = lifeFill.enabled;
+            lifeGlowImg.color = new Color(c.r, c.g, c.b, 0.38f * a);
+        }
+        if (lifeHeadLine != null)
+        {
+            RectTransform hr = lifeHeadLine.rectTransform;
+            float inner = Mathf.Max(0f, lifeRoot.rect.height - 2f * LifeFillInset);
+            hr.anchorMin = hr.anchorMax = new Vector2(0.5f, 0f);
+            hr.pivot = new Vector2(0.5f, 0.5f);
+            hr.sizeDelta = new Vector2(LifeBarWidth + 8f, 2f);
+            hr.anchoredPosition = new Vector2(0f, LifeFillInset + inner * frac - 1f);
+            lifeHeadLine.enabled = lifeFill.enabled && frac < 0.995f;   // 가득 찼을 때는 끝선 없음
+            lifeHeadLine.color = new Color(1f, 1f, 1f, 0.9f * a);
+        }
         if (lifeFlow != null)
         {
             lifeFlow.enabled = false;   // (흐르는 빛 없음)

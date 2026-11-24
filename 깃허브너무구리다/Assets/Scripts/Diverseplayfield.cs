@@ -28,6 +28,7 @@ public class DiversePlayfield : MonoBehaviour
     public static float Fov = 40f;
     public static float HitScreenY = 0.15f;
     public static float LaneWidthAtHit = 0.36f;   // 0.46 → 0.36 (좌우 폭 좁게)
+    public static float SixScreenScale = 1.3f;    // 6키로 펼쳤을 때 레인 전체 폭 = 4키 폭의 몇 배 (1.5 = 줄이지 않음)
     public const float FadeScreenLength = 0.05f;  // 먼 쪽 끝에서 사라지는 구간 (화면 높이 비율, 0.10 → 0.05)
 
     public float FarY { get; private set; }       // 레인이 보이는 먼 쪽 끝 (월드 y)
@@ -169,7 +170,10 @@ public class DiversePlayfield : MonoBehaviour
         camF = new Vector3(0f, Mathf.Sin(a), Mathf.Cos(a));   // 앞 (위쪽 + 화면 안쪽)
         camU = new Vector3(0f, Mathf.Cos(a), -Mathf.Sin(a));  // 위
         camR = Vector3.right;
-        float zh = laneWidth / (Mathf.Max(0.05f, LaneWidthAtHit) * 2f * t * Mathf.Max(0.1f, aspect)); // 판정선까지 깊이
+        // 6키 확장 채보: laneWidth 는 가운데 4레인 폭. 6키로 펼쳐지는 만큼 카메라를 살짝 뒤로 → 6레인은 4키 화면 폭의 SixScreenScale 배
+        float fitW = laneWidth;
+        if (gm.SixLane) fitW *= Mathf.Lerp(1f, (Lanes.Max / 4f) / Mathf.Max(1f, SixScreenScale), Mathf.Clamp01(gm.LaneExpand));
+        float zh = fitW / (Mathf.Max(0.05f, LaneWidthAtHit) * 2f * t * Mathf.Max(0.1f, aspect)); // 판정선까지 깊이
         float vh = (HitScreenY - 0.5f) * zh * 2f * t;                                                // 판정선의 화면 세로 위치
         Vector3 hit = new Vector3(laneCenterX, gm.hitLineY, 0f);
         camPos = hit - (camF * zh + camU * vh);

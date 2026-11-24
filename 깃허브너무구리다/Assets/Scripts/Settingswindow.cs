@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using TMPro;
@@ -110,6 +110,13 @@ public class SettingsWindow : MonoBehaviour
     private readonly Dictionary<Transform, Image> rowBgs = new Dictionary<Transform, Image>();
     private readonly Dictionary<Transform, Image> rowMarks = new Dictionary<Transform, Image>();
     private Transform highlightedRow;
+    private readonly Dictionary<Transform, float> rowLevel = new Dictionary<Transform, float>();   // 줄 강조 진행 (0 ~ 1)
+    // 연출 (탭 · 스위치 · 탭 내용 전환). 창을 열 때는 바로 최종 상태로 (snapAnims)
+    private float[] tabK;
+    private float pageK = 1f;
+    private bool snapAnims;
+    private class SwitchVis { public Func<bool> get; public Image track, knob; public RectTransform kr; public float k = -1f; }
+    private readonly List<SwitchVis> switches = new List<SwitchVis>();
     private readonly List<GameObject> pages = new List<GameObject>();
     private readonly List<ScrollRect> pageScrolls = new List<ScrollRect>();      // 탭마다 스크롤
     private readonly List<RectTransform> pageContents = new List<RectTransform>();
@@ -134,7 +141,11 @@ public class SettingsWindow : MonoBehaviour
 
     private int rebindLane = -1;
     private int rebindArmFrame;
-    private readonly Button[] laneButtons = new Button[4];
+    // 바꾸는 중인 레인: 0 ~ 3 = 4키, Six + 0 ~ 5 = 6키
+    private const int Six = 10;
+    private readonly Button[] laneButtons = new Button[Six + 6];
+    private static bool IsSix(int code) { return code >= Six; }
+    private static Key[] KeysFor(int code) { return IsSix(code) ? SettingsStore.GetLaneKeys6() : SettingsStore.GetLaneKeys(); }
 
     private List<Vector2Int> resolutions;
 
@@ -159,6 +170,15 @@ public class SettingsWindow : MonoBehaviour
         RefreshAll();
         SelectTab(currentTab);
         Select(tabButtons[currentTab].gameObject);
+
+        // 열자마자 보이는 상태는 연출 없이 바로 (탭 · 스위치 · 줄 강조 · 탭 내용)
+        snapAnims = true;
+        pageK = 1f;
+        UpdateTabAnim();
+        UpdateSwitches();
+        UpdatePageAnim();
+        ResetRowHighlight();
+        snapAnims = false;
     }
 
     private void Hide()
@@ -218,6 +238,10 @@ public class SettingsWindow : MonoBehaviour
         if (kb == null) return;
 
         if (pendingSelect != null && Time.frameCount >= pendingSelectFrame) Select(pendingSelect);
+
+        UpdateTabAnim();
+        UpdateSwitches();
+        UpdatePageAnim();
 
         if (resetArmedUntil > 0f && Time.unscaledTime > resetArmedUntil)
         {
@@ -397,7 +421,9 @@ public class SettingsWindow : MonoBehaviour
         bar.direction = Scrollbar.Direction.BottomToTop;
         RectTransform slide = K.Rect("Sliding Area", barRt);
         K.Stretch(slide);
+        K.Rounded(barBg, 3f);
         Image handle = K.Img("Handle", slide, new Color(1f, 1f, 1f, 0.55f), true);
+        K.Rounded(handle, 3f);
         handle.rectTransform.sizeDelta = Vector2.zero;
         bar.handleRect = handle.rectTransform;
         bar.targetGraphic = handle;
@@ -458,15 +484,15 @@ public class SettingsWindow : MonoBehaviour
     {
         if (calibrator != null && calibrator.IsActive) return;
         CancelRebind();
+        int prev = currentTab;
         currentTab = Mathf.Clamp(index, 0, TabNames.Length - 1);
+        if (prev != currentTab) pageK = 0f;   // 탭 내용이 살짝 떠오르며 나타남 (UpdatePageAnim)
         for (int i = 0; i < pages.Count; i++)
         {
             bool on = i == currentTab;
             pages[i].SetActive(on);
             K.SetButtonColor(tabButtons[i], on ? new Color(1f, 1f, 1f, 0.11f) : new Color(1f, 1f, 1f, 0f));
-            tabLabels[i].color = on ? K.TextMain : K.TextSub;
-            if (i < tabSubLabels.Count) tabSubLabels[i].color = on ? new Color(1f, 1f, 1f, 0.62f) : K.TextDim;
-            if (i < tabBars.Count) tabBars[i].enabled = on;
+            // 글자색 · 왼쪽 흰 막대는 UpdateTabAnim 에서 부드럽게
         }
         resetArmedUntil = -1f;
         if (resetText != null) resetText.text = "탭 초기화";
@@ -501,6 +527,11 @@ public class SettingsWindow : MonoBehaviour
         SliderRow(page, "음악 볼륨", "게임 음악 · 곡 선택 미리듣기",
             () => S.MusicVolume * 100f,
             v => { S.MusicVolume = v / 100f; SettingsStore.MarkDirty(); },
+            v => Mathf.RoundToInt(v) + "%");
+
+        SliderRow(page, "효과음 볼륨", "곡 넘김 · 곡 진입 · FULL COMBO 등 (바꾸면 미리 들려줌)",
+            () => S.SfxVolume * 100f,
+            v => { S.SfxVolume = v / 100f; SettingsStore.MarkDirty(); Sfx.Play(Sfx.Id.Move); },
             v => Mathf.RoundToInt(v) + "%");
 
         Section(page, "탭음");
@@ -626,8 +657,8 @@ public class SettingsWindow : MonoBehaviour
     {
         Section(page, "디자인");
         ChoiceRow(page, "게임 화면", "레인 · 노트 · HUD 디자인",
-            () => GameSkins.Names[Mathf.Clamp(S.GameSkin, 0, GameSkins.Names.Length - 1)],
-            d => { S.GameSkin = (S.GameSkin + d + GameSkins.Names.Length) % GameSkins.Names.Length; Changed(); });
+            () => GameSkins.Names[GameSkins.Normalize(S.GameSkin)],
+            d => { S.GameSkin = GameSkins.Step(S.GameSkin, d); Changed(); });   // DEFAULT 는 고를 수 없음
 
         ChoiceRow(page, "히트 이펙트", "낮음 = 가벼운 이펙트 (렉이 있으면 낮음으로)",
             () => S.EffectQuality > 0 ? "높음" : "낮음",
@@ -710,40 +741,50 @@ public class SettingsWindow : MonoBehaviour
     private void BuildControlsPage(Transform page)
     {
         Section(page, "레인 키");
-        RectTransform area = Row(page, "레인 키", "누르고 바꿀 키 입력 (1 · 2 · 3 · 4 번 레인)", 104f);
-        for (int i = 0; i < 4; i++)
+        KeyRow(page, "4키", "누르고 바꿀 키 입력 (1 ~ 4 번 레인)", 0, 4);
+        KeyRow(page, "6키", "레인 확장(6키) 구간에서 쓰는 키 (1 ~ 6 번 레인)", Six, 6);
+
+        RectTransform resetArea = Row(page, "기본 키", null, 76f);
+        TextMeshProUGUI t;
+        Button reset = K.Btn(resetArea, "DFJK · SDFJKL 로 되돌리기", 20, () =>
         {
-            int lane = i;
+            CancelRebind();
+            S.LaneKeys = (string[])SettingsStore.DefaultLaneKeys.Clone();
+            S.LaneKeys6 = (string[])SettingsStore.DefaultLaneKeys6.Clone();
+            Changed();
+            SetStatus("레인 키를 D F J K / S D F J K L 로 되돌렸습니다.");
+        }, out t);
+        K.Rounded((Image)reset.targetGraphic, 8f);
+        K.Place((RectTransform)reset.transform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(-300f, 0f), Vector2.zero);
+
+        InfoText(page, "SPACE 와 ESC(일시정지)는 고정 키라 레인 키로 쓸 수 없습니다.\n" +
+                       "같은 줄의 다른 레인이 이미 쓰는 키를 고르면 두 레인의 키가 서로 바뀝니다.\n" +
+                       "4키 · 6키 키는 따로 정합니다 (같은 키를 써도 됨).", 104f);
+    }
+
+    // 레인 키 한 줄 (code0 = 0 이면 4키, Six 면 6키)
+    private void KeyRow(Transform page, string title, string desc, int code0, int count)
+    {
+        RectTransform area = Row(page, title, desc, 104f);
+        for (int i = 0; i < count; i++)
+        {
+            int lane = i, code = code0 + i;
+            float fs = count > 4 ? 28f : 34f;
             TextMeshProUGUI label;
-            Button b = K.Btn(area, "", 34, () => BeginRebind(lane), out label);
+            Button b = K.Btn(area, "", fs, () => BeginRebind(code), out label);
             K.Rounded((Image)b.targetGraphic, 10f);
-            K.Place((RectTransform)b.transform, new Vector2(i / 4f, 0f), new Vector2((i + 1) / 4f, 1f), new Vector2(5f, 0f), new Vector2(-5f, 0f));
-            laneButtons[i] = b;
+            K.Place((RectTransform)b.transform, new Vector2(i / (float)count, 0f), new Vector2((i + 1) / (float)count, 1f), new Vector2(5f, 0f), new Vector2(-5f, 0f));
+            laneButtons[code] = b;
             refreshers.Add(() =>
             {
-                Key[] keys = SettingsStore.GetLaneKeys();
-                bool waiting = rebindLane == lane;
+                Key[] keys = KeysFor(code);
+                bool waiting = rebindLane == code;
                 label.text = waiting ? "키 입력..." : SettingsStore.KeyDisplayName(keys[lane]);
-                label.fontSize = waiting ? 22 : 34;
+                label.fontSize = waiting ? 20 : fs;
                 label.color = waiting ? K.TextOnAccent : K.TextMain;
                 K.SetButtonColor(b, waiting ? K.Accent : K.ButtonColor);
             });
         }
-
-        RectTransform resetArea = Row(page, "기본 키", null, 76f);
-        TextMeshProUGUI t;
-        Button reset = K.Btn(resetArea, "D  F  J  K 로 되돌리기", 20, () =>
-        {
-            CancelRebind();
-            S.LaneKeys = (string[])SettingsStore.DefaultLaneKeys.Clone();
-            Changed();
-            SetStatus("레인 키를 D F J K 로 되돌렸습니다.");
-        }, out t);
-        K.Rounded((Image)reset.targetGraphic, 8f);
-        K.Place((RectTransform)reset.transform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(-260f, 0f), Vector2.zero);
-
-        InfoText(page, "SPACE 와 ESC(일시정지)는 고정 키라 레인 키로 쓸 수 없습니다.\n" +
-                       "다른 레인이 이미 쓰는 키를 고르면 두 레인의 키가 서로 바뀝니다.", 80f);
     }
 
     // =====================================================================
@@ -752,7 +793,8 @@ public class SettingsWindow : MonoBehaviour
     // 왼쪽: 이름 + 설명, 오른쪽: 조작 영역(반환)
     private RectTransform Row(Transform page, string label, string desc, float height = 76f, Action<TextMeshProUGUI> descOut = null)
     {
-        Image bg = K.Img("Row_" + label, page, K.RowColor);
+        Image bg = K.Img("Row_" + label, page, K.RowColor, true);   // 마우스를 올리면 줄이 밝아지도록 (UiRowHover)
+        bg.gameObject.AddComponent<UiRowHover>();
         K.Rounded(bg, 10f);
         K.Fixed(bg.gameObject, height);
         RectTransform r = bg.rectTransform;
@@ -826,11 +868,69 @@ public class SettingsWindow : MonoBehaviour
             bool on = get();
             t.text = on ? "켬" : "끔";
             t.color = on ? K.TextMain : K.TextSub;
-            track.color = on ? Color.white : new Color(1f, 1f, 1f, 0.16f);
-            knob.color = on ? new Color(0.06f, 0.06f, 0.06f, 1f) : new Color(0.62f, 0.62f, 0.62f, 1f);
-            float pad = (TH - KN) * 0.5f;
-            kr.anchoredPosition = new Vector2(on ? TW - pad - KN * 0.5f : pad + KN * 0.5f, 0f);
         });
+        // 트랙 색 · 손잡이 위치는 UpdateSwitches 에서 부드럽게 (손잡이가 움직이는 동안 살짝 길어짐)
+        switches.Add(new SwitchVis { get = get, track = track, knob = knob, kr = kr });
+    }
+
+    private const float SwTW = 64f, SwTH = 32f, SwKN = 24f;
+
+    private void UpdateSwitches()
+    {
+        float dt = UiTime.Delta;
+        foreach (var sw in switches)
+        {
+            float to = sw.get() ? 1f : 0f;
+            if (sw.k < 0f || snapAnims) sw.k = to;
+            else if (sw.k == to) continue;
+            else sw.k = Mathf.MoveTowards(sw.k, to, dt / 0.18f);
+            float e = sw.k * sw.k * (3f - 2f * sw.k);
+            float stretch = 8f * Mathf.Sin(sw.k * Mathf.PI);                         // 움직이는 중간에 가장 길게
+            float pad = (SwTH - SwKN) * 0.5f;
+            float x0 = pad + SwKN * 0.5f, x1 = SwTW - pad - SwKN * 0.5f;
+            sw.kr.sizeDelta = new Vector2(SwKN + stretch, SwKN);
+            sw.kr.anchoredPosition = new Vector2(Mathf.Lerp(x0, x1, e), 0f);
+            sw.track.color = Color.Lerp(new Color(1f, 1f, 1f, 0.16f), Color.white, e);
+            sw.knob.color = Color.Lerp(new Color(0.62f, 0.62f, 0.62f, 1f), new Color(0.06f, 0.06f, 0.06f, 1f), e);
+        }
+    }
+
+    // 고른 탭: 글자가 밝아지고 왼쪽 흰 막대가 가운데에서 위아래로 자라남
+    private void UpdateTabAnim()
+    {
+        if (tabK == null) tabK = new float[tabLabels.Count];
+        float dt = UiTime.Delta;
+        for (int i = 0; i < tabLabels.Count; i++)
+        {
+            float to = i == currentTab ? 1f : 0f;
+            if (snapAnims) tabK[i] = to;
+            else if (tabK[i] == to) continue;
+            else tabK[i] = Mathf.MoveTowards(tabK[i], to, dt / (to > tabK[i] ? 0.14f : 0.2f));
+            float e = tabK[i] * tabK[i] * (3f - 2f * tabK[i]);
+            tabLabels[i].color = Color.Lerp(K.TextSub, K.TextMain, e);
+            if (i < tabSubLabels.Count) tabSubLabels[i].color = Color.Lerp(K.TextDim, new Color(1f, 1f, 1f, 0.62f), e);
+            if (i < tabBars.Count)
+            {
+                tabBars[i].enabled = e > 0.01f;
+                tabBars[i].rectTransform.localScale = new Vector3(1f, e, 1f);
+                tabBars[i].color = new Color(1f, 1f, 1f, e);
+            }
+        }
+    }
+
+    // 탭을 바꾸면 내용이 아래에서 10px 떠오르며 나타남
+    private void UpdatePageAnim()
+    {
+        if (currentTab >= pages.Count) return;
+        if (snapAnims) pageK = 1f;
+        else if (pageK >= 1f) return;
+        else pageK = Mathf.Min(1f, pageK + UiTime.Delta / 0.18f);
+        GameObject page = pages[currentTab];
+        CanvasGroup g = page.GetComponent<CanvasGroup>();
+        if (g == null) g = page.AddComponent<CanvasGroup>();
+        float e = 1f - Mathf.Pow(1f - pageK, 3f);
+        g.alpha = Mathf.Lerp(0f, 1f, e);
+        ((RectTransform)page.transform).anchoredPosition = new Vector2(0f, -10f * (1f - e));
     }
 
     // [-10][-1]  값  [+1][+10]
@@ -890,21 +990,58 @@ public class SettingsWindow : MonoBehaviour
         K.Place(line.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(w + 22f, 12f), new Vector2(0f, 13f));
     }
 
-    // 고른 버튼 · 슬라이더가 들어 있는 줄을 밝게 + 왼쪽 흰 막대 (어디를 고르고 있는지 한눈에)
+    // 줄 강조: 밝아지고 왼쪽 흰 막대가 가운데에서 자라남 (부드럽게 켜지고 꺼짐)
+    //  · 키보드로 움직일 때 : 고른 버튼 · 슬라이더가 들어 있는 줄
+    //  · 마우스를 쓸 때     : 마우스가 올라가 있는 줄 (클릭한 뒤 마우스를 치워도 강조가 남지 않음)
     private void UpdateRowHighlight()
     {
         Transform row = null;
-        GameObject sel = EventSystem.current != null ? EventSystem.current.currentSelectedGameObject : null;
-        if (sel != null && currentTab < pageContents.Count && sel.transform.IsChildOf(pageContents[currentTab]))
+        RectTransform inner = currentTab < pageContents.Count ? pageContents[currentTab] : null;
+        if (UiPress.KeyboardMode)
         {
-            Transform x = sel.transform;
-            while (x != null && !rowBgs.ContainsKey(x)) x = x.parent;
-            row = x;
+            GameObject sel = EventSystem.current != null ? EventSystem.current.currentSelectedGameObject : null;
+            if (sel != null && inner != null && sel.transform.IsChildOf(inner))
+            {
+                Transform x = sel.transform;
+                while (x != null && !rowBgs.ContainsKey(x)) x = x.parent;
+                row = x;
+            }
         }
-        if (row == highlightedRow) return;
-        if (highlightedRow != null) { rowBgs[highlightedRow].color = K.RowColor; rowMarks[highlightedRow].enabled = false; }
+        else
+        {
+            Transform h = UiRowHover.Current;
+            if (h != null && inner != null && rowBgs.ContainsKey(h) && h.IsChildOf(inner)) row = h;
+        }
         highlightedRow = row;
-        if (row != null) { rowBgs[row].color = K.RowSelected; rowMarks[row].enabled = true; }
+
+        float dt = UiTime.Delta;
+        foreach (var kv in rowBgs)
+        {
+            float lv;
+            rowLevel.TryGetValue(kv.Key, out lv);
+            float to = kv.Key == row ? 1f : 0f;
+            if (lv == to) continue;
+            lv = Mathf.MoveTowards(lv, to, dt / (to > lv ? 0.08f : 0.2f));
+            rowLevel[kv.Key] = lv;
+            SetRowVisual(kv.Key, lv);
+        }
+    }
+
+    private void SetRowVisual(Transform row, float lv)
+    {
+        float e = lv * lv * (3f - 2f * lv);
+        rowBgs[row].color = Color.Lerp(K.RowColor, K.RowSelected, e);
+        Image m = rowMarks[row];
+        m.enabled = e > 0.01f;
+        m.rectTransform.localScale = new Vector3(1f, e, 1f);
+        m.color = new Color(1f, 1f, 1f, e);
+    }
+
+    private void ResetRowHighlight()
+    {
+        highlightedRow = null;
+        rowLevel.Clear();
+        foreach (var kv in rowBgs) SetRowVisual(kv.Key, 0f);
     }
 
     private void InfoText(Transform page, string text, float height)
@@ -922,7 +1059,7 @@ public class SettingsWindow : MonoBehaviour
         if (hitClip == null || sfxPreview == null) return;
         if (!force && Time.unscaledTime - lastHitPreview < 0.12f) return;
         lastHitPreview = Time.unscaledTime;
-        sfxPreview.PlayOneShot(hitClip, S.HitSoundVolume);
+        sfxPreview.PlayOneShot(hitClip, S.HitSoundVolume * HitSound.Gain);   // 게임과 같은 크기
     }
 
     // =====================================================================
@@ -1026,7 +1163,7 @@ public class SettingsWindow : MonoBehaviour
         rebindArmFrame = Time.frameCount; // 버튼을 누른 그 프레임의 키 입력은 무시
         Select(null);                      // Enter/Space 가 버튼을 다시 누르지 않도록 선택 해제
         RefreshAll();
-        SetStatus((lane + 1) + "번 레인에 쓸 키를 누르세요.  ESC = 취소");
+        SetStatus((IsSix(lane) ? "6키 " : "4키 ") + (lane % Six + 1) + "번 레인에 쓸 키를 누르세요.  ESC = 취소");
     }
 
     private void CancelRebind()
@@ -1059,18 +1196,21 @@ public class SettingsWindow : MonoBehaviour
                 return;
             }
 
-            int lane = rebindLane;
-            Key[] keys = SettingsStore.GetLaneKeys();
+            int code = rebindLane;
+            int lane = code % Six;
+            bool six = IsSix(code);
+            Key[] keys = KeysFor(code);
             int other = Array.IndexOf(keys, key);
-            if (other >= 0 && other != lane) keys[other] = keys[lane]; // 이미 쓰는 키면 서로 바꾼다
+            if (other >= 0 && other != lane) keys[other] = keys[lane]; // 같은 줄에서 이미 쓰는 키면 서로 바꾼다
             keys[lane] = key;
-            S.LaneKeys = SettingsStore.ToKeyNames(keys);
+            if (six) S.LaneKeys6 = SettingsStore.ToKeyNames(keys);
+            else S.LaneKeys = SettingsStore.ToKeyNames(keys);
 
             rebindLane = -1;
             Changed();
-            SetStatus((lane + 1) + "번 레인 = " + SettingsStore.KeyDisplayName(key) +
+            SetStatus((six ? "6키 " : "4키 ") + (lane + 1) + "번 레인 = " + SettingsStore.KeyDisplayName(key) +
                       (other >= 0 && other != lane ? "  (" + (other + 1) + "번 레인과 서로 바뀜)" : ""));
-            SelectNextFrame(laneButtons[lane].gameObject);
+            SelectNextFrame(laneButtons[code].gameObject);
             return;
         }
     }
@@ -1095,7 +1235,7 @@ public class SettingsWindow : MonoBehaviour
         {
             case TabSound:
                 S.MasterVolume = d.MasterVolume; S.MusicVolume = d.MusicVolume;
-                S.HitSoundOn = d.HitSoundOn; S.HitSoundVolume = d.HitSoundVolume;
+                S.HitSoundOn = d.HitSoundOn; S.HitSoundVolume = d.HitSoundVolume; S.SfxVolume = d.SfxVolume;
                 SettingsStore.ApplyAudio();
                 break;
             case TabTiming:
@@ -1121,6 +1261,7 @@ public class SettingsWindow : MonoBehaviour
             case TabControls:
                 CancelRebind();
                 S.LaneKeys = (string[])SettingsStore.DefaultLaneKeys.Clone();
+                S.LaneKeys6 = (string[])SettingsStore.DefaultLaneKeys6.Clone();
                 break;
         }
         Changed();

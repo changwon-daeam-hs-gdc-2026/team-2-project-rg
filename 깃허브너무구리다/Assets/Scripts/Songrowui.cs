@@ -343,15 +343,21 @@ public class SongRowUI : MonoBehaviour
     // ===== 난이도 표기 공용 함수 =====
     public static bool IsDifficultyAvailable(string raw)
     {
-        return !string.IsNullOrWhiteSpace(raw) && raw.Trim() != "00";
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        string t = raw.Trim();
+        return t != "00" && t != "-";   // "-" = 새 songs.json 형식의 '난이도 없음'
     }
 
     // "03" → "3", "00"/빈 값 → "" (사진의 I Wanna HD 칸처럼 비워 둠)
+    public const string PlusMark = "<size=72%><voffset=0.42em>+</voffset></size>";
     public static string FormatDifficulty(string raw)
     {
         if (!IsDifficultyAvailable(raw)) return "";
         string t = raw.Trim();
-        return int.TryParse(t, out int v) ? v.ToString() : t;
+        if (int.TryParse(t, out int v)) return v.ToString();
+        // "9+" → 9 오른쪽 위에 조금 작은 + (기본 위 첨자 <sup> 는 너무 작아서 크기 · 높이를 직접 지정)
+        if (t.Length > 1 && t.EndsWith("+")) return t.Substring(0, t.Length - 1).TrimEnd() + PlusMark;
+        return t;
     }
 
     // =====================================================================

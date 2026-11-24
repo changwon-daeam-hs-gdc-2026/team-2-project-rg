@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using TMPro;
 using UnityEngine;
@@ -37,6 +37,7 @@ public class GameInfoHud : MonoBehaviour
     private RectTransform hudRoot;
     private CanvasGroup group;
     private Image progressFill;
+    private Image progressHead;   // SIMPLE · CIRCLE: 진행 막대 끝의 빛나는 점
     private TextMeshProUGUI titleText, composerText, diffText, remainText, timeText, scoreText, accText;
     private float laneLeft, laneRight;
     private float leftW = -1f, rightW = -1f;
@@ -95,13 +96,13 @@ public class GameInfoHud : MonoBehaviour
             if (diffShuffleTimer <= 0f)
             {
                 diffShuffleTimer = 0.045f;
-                diffText.text = DifficultyLabel(hudLevel, "<alpha=#AA>" + UnityEngine.Random.Range(1, 21));
+                diffText.text = HudDifficultyLabel(hudLevel, "<alpha=#AA>" + UnityEngine.Random.Range(1, 21));
             }
             diffText.rectTransform.localScale = Vector3.one * (1f + 0.04f * Mathf.Sin(diffRevealT * 60f));
             return;
         }
         float k = Mathf.Clamp01((diffRevealT - RevealShuffle) / RevealSettle);
-        if (diffText.text.Contains("<alpha")) diffText.text = DifficultyLabel(hudLevel, real);   // 돌던 숫자 → 실제 값
+        if (diffText.text.Contains("<alpha")) diffText.text = HudDifficultyLabel(hudLevel, real);   // 돌던 숫자 → 실제 값
         diffText.rectTransform.localScale = Vector3.one * (1f + 0.32f * (1f - k) * (1f - k));
         if (k >= 1f) { diffText.rectTransform.localScale = Vector3.one; diffRevealT = -1f; }
     }
@@ -182,6 +183,22 @@ public class GameInfoHud : MonoBehaviour
         progressFill.rectTransform.offsetMin = Vector2.zero;
         progressFill.rectTransform.offsetMax = Vector2.zero;
 
+        // SIMPLE · CIRCLE: 더 가늘고 세련된 진행 막대
+        //  3px 두께 · 옅은 트랙 / 채움은 왼쪽이 옅고 끝으로 갈수록 밝아지는 그라데이션 / 끝에 은은하게 빛나는 점
+        if (SimpleGameSkin.Active != null)
+        {
+            barBg.color = new Color(1f, 1f, 1f, 0.08f);
+            barBg.rectTransform.offsetMin = new Vector2(0f, -3f);
+            progressFill.sprite = MakeProgressGradient();
+            progressHead = SettingsUIKit.Img("ProgressHead", barBg.rectTransform, new Color(1f, 1f, 1f, 0.9f));
+            progressHead.sprite = NoteArt.GlowSprite;
+            RectTransform hr = progressHead.rectTransform;
+            hr.anchorMin = hr.anchorMax = new Vector2(0f, 0.5f);
+            hr.pivot = new Vector2(0.5f, 0.5f);
+            hr.sizeDelta = new Vector2(22f, 22f);
+        }
+
+        // SIMPLE · CIRCLE 스킨도 DEFAULT 와 같은 배치 (곡 정보 · 난이도 · 남은 시간 · 점수)
         // ---- 왼쪽 위: 곡 정보 ----
         titleText = Text(song != null ? (song.Name ?? "") : "",   /* 게임 화면은 곡명만 (부제 없음) */ 34, TextAlignmentOptions.TopLeft, Color.white, FontStyles.Bold, F.title);
         Place(titleText.rectTransform, new Vector2(0f, 1f), Margin, 28f, 760f, 46f);
@@ -189,8 +206,6 @@ public class GameInfoHud : MonoBehaviour
         composerText = Text(song != null ? song.Composer ?? "" : "", 19, TextAlignmentOptions.TopLeft, TextSub, FontStyles.Normal, F.info);
         Place(composerText.rectTransform, new Vector2(0f, 1f), Margin, 76f, 760f, 28f);
         AutoShrink(composerText, 0.75f);
-        // 곡 정보 바로 아래: COMBO BREAK 로 점수를 못 얻는 동안 [아이콘] + 남은 시간 막대
-        BuildScoreLockRow(new Vector2(0f, 1f), Margin - 6f, 112f, F.label);
 
         // ---- 오른쪽 위: 난이도 + 남은 시간 ----
         diffText = Text(DifficultyLabel(song, level), 26, TextAlignmentOptions.TopRight, Color.white, FontStyles.Bold, F.info);
@@ -222,109 +237,11 @@ public class GameInfoHud : MonoBehaviour
         TextMeshProUGUI autoText = Text("AUTO", 20, TextAlignmentOptions.BottomLeft, new Color(1f, 0.85f, 0.4f), FontStyles.Bold, F.info);
         Place(autoText.rectTransform, new Vector2(0f, 0f), Margin, 62f, 200f, 30f);
         autoText.gameObject.SetActive(CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay);
-
-        // ---- 왼쪽 아래 (SPEED 위): 이번 판의 게임 모드 ----
-        BuildModeRow(new Vector2(0f, 0f), Margin, 66f, F.info);
     }
 
-    // =====================================================================
-    //  COMBO BREAK: 콤보가 끊겨 점수를 못 얻는 동안 [아이콘] COMBO BREAK ━━━━━━━  2.4s
-    //   막대는 남은 시간만큼 (3초 → 0), 끝나면 사라짐. 결과창과 같은 모드 아이콘
-    // =====================================================================
-    private RectTransform lockRow;
-    private CanvasGroup lockGroup;
-    private Image lockFill;
-    private TextMeshProUGUI lockTime;
-    private float lockVis;
-
-    private void BuildScoreLockRow(Vector2 corner, float x, float y, TMP_FontAsset font)
+    private string HudDifficultyLabel(int level, string value)
     {
-        if (!GameModes.Play.ComboBreak || gm.IsTestMode) return;
-        const float W = 320f, H = 44f, Icon = 30f;
-        GameModeInfo info = GameModes.Info(GameMode.ComboBreak);
-        Image box = SettingsUIKit.Img("ScoreLock", hudRoot, new Color(0.02f, 0.025f, 0.04f, 0.78f));
-        box.sprite = GameModes.BadgeSprite; box.type = Image.Type.Sliced; box.pixelsPerUnitMultiplier = 16f / 10f;
-        lockRow = box.rectTransform;
-        Place(lockRow, corner, x, y, W, H);
-        lockGroup = box.gameObject.AddComponent<CanvasGroup>();
-        lockGroup.alpha = 0f;
-
-        RectTransform b = GameModes.CreateBadge(lockRow, GameMode.ComboBreak, Icon);
-        b.anchorMin = b.anchorMax = b.pivot = new Vector2(0f, 0.5f);
-        b.anchoredPosition = new Vector2(8f, 0f);
-
-        TextMeshProUGUI label = Text("COMBO BREAK", 12, TextAlignmentOptions.BottomLeft, info.Color, FontStyles.Bold, font);
-        label.transform.SetParent(lockRow, false);
-        label.characterSpacing = 5f;
-        RectTransform lr = label.rectTransform;
-        lr.anchorMin = lr.anchorMax = lr.pivot = new Vector2(0f, 1f);
-        lr.anchoredPosition = new Vector2(Icon + 18f, -5f);
-        lr.sizeDelta = new Vector2(200f, 18f);
-
-        // 남은 시간 막대
-        Image track = SettingsUIKit.Img("Track", lockRow, new Color(1f, 1f, 1f, 0.14f));
-        RectTransform tr = track.rectTransform;
-        tr.anchorMin = tr.anchorMax = tr.pivot = new Vector2(0f, 0f);
-        tr.anchoredPosition = new Vector2(Icon + 18f, 10f);
-        tr.sizeDelta = new Vector2(W - Icon - 18f - 64f, 5f);
-        lockFill = SettingsUIKit.Img("Fill", tr, info.Color);
-        lockFill.rectTransform.anchorMin = Vector2.zero;
-        lockFill.rectTransform.anchorMax = new Vector2(1f, 1f);
-        lockFill.rectTransform.offsetMin = lockFill.rectTransform.offsetMax = Vector2.zero;
-
-        lockTime = Text("", 18, TextAlignmentOptions.MidlineRight, Color.white, FontStyles.Bold, font);
-        lockTime.transform.SetParent(lockRow, false);
-        RectTransform tt = lockTime.rectTransform;
-        tt.anchorMin = tt.anchorMax = tt.pivot = new Vector2(1f, 0.5f);
-        tt.anchoredPosition = new Vector2(-10f, 0f);
-        tt.sizeDelta = new Vector2(58f, H);
-    }
-
-    private void UpdateScoreLockRow(float dt)
-    {
-        if (lockRow == null) return;
-        double left = gm.ScoreLockLeft;
-        bool on = left > 0.0;
-        lockVis = Mathf.MoveTowards(lockVis, on ? 1f : 0f, dt / (on ? 0.12f : 0.3f));
-        lockGroup.alpha = lockVis;
-        lockRow.localScale = Vector3.one * Mathf.Lerp(0.96f, 1f, lockVis);
-        if (on)
-        {
-            float k = Mathf.Clamp01((float)(left / GameModes.ComboBreakLockSeconds));
-            lockFill.rectTransform.anchorMax = new Vector2(k, 1f);
-            lockTime.text = left.ToString("0.0", CultureInfo.InvariantCulture) + "s";
-        }
-    }
-
-    // 이번 판의 게임 모드 상자: 어두운 둥근 상자 안에 아이콘 배지들 + 최종 점수 배율 숫자
-    //  모드가 없으면 표시 안 함.  corner · x · y 는 Place 와 같은 기준 (그 귀퉁이에서 안쪽으로)
-    private void BuildModeRow(Vector2 corner, float x, float y, TMP_FontAsset font)
-    {
-        GameMode[] modes = GameModes.Play.Modes;
-        if (modes == null || modes.Length == 0 || gm.IsTestMode) return;
-        const float S = 32f, G = 6f, Pad = 8f;
-
-        Image box = SettingsUIKit.Img("GameModes", hudRoot, new Color(0.02f, 0.025f, 0.04f, 0.78f));
-        box.sprite = GameModes.BadgeSprite; box.type = Image.Type.Sliced; box.pixelsPerUnitMultiplier = 16f / 9f;
-        RectTransform row = box.rectTransform;
-
-        float iconsW = modes.Length * (S + G) - G;
-        for (int i = 0; i < modes.Length; i++)
-        {
-            RectTransform b = GameModes.CreateBadge(row, modes[i], S);
-            b.anchorMin = b.anchorMax = b.pivot = new Vector2(0f, 0.5f);
-            b.anchoredPosition = new Vector2(Pad + i * (S + G), 0f);
-        }
-        string label = GameModes.Percent(GameModes.Play.ScoreMultiplier);   // 배율 숫자만 (예: 406%)
-        TextMeshProUGUI k = Text(label, 20, TextAlignmentOptions.MidlineLeft, Color.white, FontStyles.Bold, font);
-        k.transform.SetParent(row, false);
-        k.characterSpacing = 2f;
-        float textW = k.GetPreferredValues(label).x + 2f;
-        RectTransform kr = k.rectTransform;
-        kr.anchorMin = kr.anchorMax = kr.pivot = new Vector2(0f, 0.5f);
-        kr.anchoredPosition = new Vector2(Pad + iconsW + 10f, 0f);
-        kr.sizeDelta = new Vector2(textW, S);
-        Place(row, corner, x, y, Pad + iconsW + 10f + textW + Pad + 4f, S + Pad * 2f);
+        return DifficultyLabel(level, value);
     }
 
     void Update()
@@ -336,7 +253,7 @@ public class GameInfoHud : MonoBehaviour
 
         bool started = gm.LaneIntroStarted || gm.currentState == GameState.Playing;
         fadeIn = Mathf.MoveTowards(fadeIn, started ? 1f : 0f, dt / 0.35f);
-        group.alpha = shown && !gm.HideAllUi ? fadeIn * gm.EndUiAlpha : 0f;   // UNKNOWN UI: 곡 정보 · 점수 등 모두 숨김
+        group.alpha = shown && !gm.HideAllUi ? fadeIn * gm.EndUiAlpha * gm.LaneUiAlpha : 0f;   // 레인 테두리가 사라질 때 함께 사라짐   // UNKNOWN UI: 곡 정보 · 점수 등 모두 숨김
 
         // 일시정지 중에는 일시정지 UI 캔버스보다 아래, 플레이 중에는 게임 UI 위
         hostCanvas.sortingOrder = gm.currentState == GameState.Paused ? refSortingOrder - 1 : refSortingOrder + 1;
@@ -352,6 +269,13 @@ public class GameInfoHud : MonoBehaviour
         double total = Math.Max(0.001, end - start);
         double elapsed = Math.Max(0.0, Math.Min(total, gm.currentPlayTime - start));
         progressFill.rectTransform.anchorMax = new Vector2((float)(elapsed / total), 1f);
+        if (progressHead != null)
+        {
+            RectTransform hr = progressHead.rectTransform;
+            hr.anchorMin = hr.anchorMax = new Vector2((float)(elapsed / total), 0.5f);
+            hr.anchoredPosition = Vector2.zero;
+            progressHead.enabled = elapsed > 0.0;
+        }
         if (remainText != null) remainText.text = FormatTime(total - elapsed);
         if (timeText != null) timeText.text = (diverse ? "-" + FormatTime(total - elapsed) + "<color=#FFFFFF59>   /   " + FormatTime(total) + "</color>"
                                                        : FormatTime(elapsed) + " / " + FormatTime(total));
@@ -359,10 +283,9 @@ public class GameInfoHud : MonoBehaviour
         {
             scoreText.text = gm.DisplayScore.ToString("N0", CultureInfo.InvariantCulture);
             scoreText.alpha = gm.ScoreLocked ? 0.35f : 1f;                                       // COMBO BREAK: 점수를 못 얻는 동안 흐리게
-            accText.text = gm.LiveAccuracy.ToString("F2", CultureInfo.InvariantCulture) + "%";
+            if (accText != null) accText.text = gm.LiveAccuracy.ToString("F2", CultureInfo.InvariantCulture) + "%";
         }
 
-        UpdateScoreLockRow(dt);
         if (!diverse) LimitHeaderWidth();
     }
 
@@ -403,13 +326,11 @@ public class GameInfoHud : MonoBehaviour
         sp.transform.SetParent(lt.transform, false);
         Place(sp.rectTransform, new Vector2(0f, 1f), 250f, 0f, 120f, BandH);
 
-        // 왼쪽 탭 아래 (난이도 밑): 게임 모드 상자 또는 AUTO  (남은 시간 표시는 없음)
-        //  AUTO PLAY 면 모드가 적용되지 않으므로 둘이 함께 나오지 않음
+        // 왼쪽 탭 아래 (난이도 밑): AUTO  (남은 시간 표시는 없음)
         TextMeshProUGUI auto = Text("AUTO", 18, TextAlignmentOptions.TopLeft, new Color(1f, 0.85f, 0.4f), FontStyles.Bold, F.label);
         auto.characterSpacing = 8f;
         Place(auto.rectTransform, new Vector2(0f, 1f), 44f, BandH + 12f, 200f, 26f);
         auto.gameObject.SetActive(CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay);
-        BuildModeRow(new Vector2(0f, 1f), 36f, BandH + 10f, F.info);
 
         // ---- 가운데 탭: 곡 제목 + 진행 막대 ----
         Image ct = Tab(tabCenter, dark, new Vector2(0.5f, 1f), 0f, 760f, BandH + 10f);
@@ -428,7 +349,6 @@ public class GameInfoHud : MonoBehaviour
         Place(composerText.rectTransform, new Vector2(0.5f, 1f), 0f, BandH + 18f, 600f, 26f);
         AutoShrink(composerText, 0.75f);
         // 곡 정보(제목 · 작곡가) 바로 아래 가운데: COMBO BREAK 남은 시간
-        BuildScoreLockRow(new Vector2(0.5f, 1f), 0f, BandH + 50f, F.label);
 
         // ---- 오른쪽 탭: SCORE + 점수 ----
         Image rt = Tab(tabRight, dark, new Vector2(1f, 1f), 0f, 520f, BandH);
@@ -460,7 +380,7 @@ public class GameInfoHud : MonoBehaviour
         if (remainText != null) remainText.gameObject.SetActive(false);
         if (remainLabelText != null) remainLabelText.gameObject.SetActive(false);
         scoreText.gameObject.SetActive(false);
-        accText.gameObject.SetActive(false);
+        if (accText != null) accText.gameObject.SetActive(false);
         if (scoreLabelText != null) scoreLabelText.gameObject.SetActive(false);
         if (scoreTab != null) scoreTab.gameObject.SetActive(false);
     }
@@ -476,7 +396,7 @@ public class GameInfoHud : MonoBehaviour
 
         // 점수 · 정확도 숨기고 NOT SAVED
         scoreText.gameObject.SetActive(false);
-        accText.gameObject.SetActive(false);
+        if (accText != null) accText.gameObject.SetActive(false);
         if (diverse)
         {
             notSavedBadge = PracticeBadge.NotSaved(scoreTab, 32f, lf);
@@ -513,6 +433,7 @@ public class GameInfoHud : MonoBehaviour
         else
         {
             practiceBadge = PracticeBadge.Practice(hudRoot, 34f, lf);
+            // 곡명 줄 가운데 높이
             practiceBadge.anchorMin = practiceBadge.anchorMax = new Vector2(0f, 1f);
             practiceBadge.pivot = new Vector2(0f, 0.5f);
             practiceBadge.anchoredPosition = new Vector2(Margin, -(28f + 23f));
@@ -557,6 +478,22 @@ public class GameInfoHud : MonoBehaviour
         tex.SetPixels32(px); tex.Apply();
         int bl = slantL ? S + 2 : 2, br = slantR ? S + 2 : 2;
         return Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(bl, 0, br, 0));
+    }
+
+    // 진행 막대 채움: 왼쪽 옅음 → 오른쪽(현재 위치) 밝음 (가로 그라데이션, Simple 로 늘려 그림)
+    private static Sprite MakeProgressGradient()
+    {
+        const int W = 128;
+        Texture2D tex = new Texture2D(W, 1, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        Color32[] px = new Color32[W];
+        for (int x = 0; x < W; x++)
+        {
+            float t = x / (W - 1f);
+            px[x] = new Color32(255, 255, 255, (byte)(Mathf.Lerp(0.30f, 1f, t * t * (3f - 2f * t)) * 255));
+        }
+        tex.SetPixels32(px); tex.Apply();
+        return Sprite.Create(tex, new Rect(0, 0, W, 1), new Vector2(0.5f, 0.5f), 100f);
     }
 
     // 위가 진하고 아래로 사라지는 세로 그라데이션
@@ -611,7 +548,7 @@ public class GameInfoHud : MonoBehaviour
             {
                 leftW = w;
                 titleText.rectTransform.sizeDelta = new Vector2(Mathf.Max(80f, w - titleOffset), titleText.rectTransform.sizeDelta.y);
-                composerText.rectTransform.sizeDelta = new Vector2(w, composerText.rectTransform.sizeDelta.y);
+                if (composerText != null) composerText.rectTransform.sizeDelta = new Vector2(w, composerText.rectTransform.sizeDelta.y);
             }
         }
         bool life = SimpleGameSkin.Active != null;

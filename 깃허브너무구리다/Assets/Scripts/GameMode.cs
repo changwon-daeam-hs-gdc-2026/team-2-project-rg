@@ -1,60 +1,14 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
 // ============================================================
-// 게임 모드 (곡 선택창 MODE 바 / M 키 모드 설정창에서 고름, 한 판에 최대 3개)
-//  점수 배율: 고른 모드의 배율을 모두 곱함 (곱연산). 최대 400% (= 4,000,000 점)
-//  MODE RANDOM (MODE 바 옆 버튼): 게임을 시작할 때 모드 3개를 무작위로 고름
-//   → 게임 화면에서 레인이 펼쳐지기 전에 고르는 연출(GameModeRoulette)을 보여 주고 시작 (다시 하기는 같은 조합, 연출 없음)
-//   → 점수 보너스 최대 +30%p = 조합 배율 몫 최대 20%p + 특별 모드(MAX JUDGEMENT · ULTIMATE · PERFECTIONIST · COMBO BREAK · TEMPEST GAUGE) 몫 최대 10%p
-//      (배율에 더함. 예: 390% + 25%p = 415%, 최대 430% = 4,300,000 점)
-//
-//  [JUDGE] 판정
-//  EASY JUDGEMENT      75%   판정이 JUST 와 MISS 만 (BAD 범위 안이면 모두 JUST)
-//  HARD JUDGEMENT     135%   JUST 를 뺀 판정 범위 1/2
-//  MAX JUDGEMENT      180%   JUST 를 뺀 판정 범위 1/3
-//  ULTIMATE           210%   JUST 를 뺀 판정 범위 1/4 + JUST 범위 35% 감소 (±20ms → ±13ms)
-//  LAZY               120%   놓친 노트가 낮은 확률(15%)로 자동 JUST (롱노트는 끝까지 자동으로 눌림)
-//  MERCY              110%   BAD · MISS 가 50% 확률로 GREAT 이상으로 바뀜 (GREAT 50% · PERFECT 35% · JUST 15%)
-//  CLUTCH             110%   위험할수록 판정 범위가 넓어짐 (최대 2.5배)
-//
-//  [RULE] 규칙
-//  PERFECTIONIST      195%   PERFECT 미만이 나오면 즉시 TRACK CRASH
-//  ONE CHANCE         155%   MISS 가 한 번이라도 나오면 즉시 TRACK CRASH
-//  COMBO BREAK        180%   콤보가 끊기면 3초 동안 점수를 얻지 못함
-//  STRICT             140%   곡이 진행될수록 LIFE 최대 상한이 줄어듦 (100 → 60)
-//  STRICT+            190%   STRICT + LIFE 하한이 점점 올라감 (0 → 40). LIFE ≤ 하한이면 즉시 TRACK CRASH (회복으로 버티는 이득을 막음)
-//                             예) 곡 끝: 상한 60 · 하한 40 → LIFE 가 움직일 수 있는 범위는 41 ~ 60
-//                     STRICT · STRICT+ · ONE+ 는 HARD 이상 게이지(HARD · EXTREME · TEMPEST)에서만 고를 수 있음
-//
-//  [CHART] 채보 · 화면
-//  MIRROR             120%   좌우 반전          RANDOM   165%   레인 무작위
-//  SHADOW             150%   판정선에 가까워질수록 투명 (판정 시각 20ms 전까지는 완전히 사라지지 않음)
-//  UNKNOWN UI         115%   레인을 뺀 게임 화면 UI 를 모두 가림 (점수 · 콤보 · 판정 · LIFE · 곡 정보 …)
-//  REVERSE            150%   노트가 아래에서 위로 (판정선이 위쪽)       FAKE     135%   치면 안 되는 가짜 노트 (치면 지금 게이지의 50% 감소)
-//
-//  [GAUGE] 게이지 (하나만. 아무것도 안 고르면 NORMAL)
-//  EASY GAUGE          90%   0 에서 시작해 채움. 곡이 끝날 때 70 이상이면 TRACK COMPLETE, 미만이면 TRACK CRASH (잘 차고 덜 깎임)
-//  NORMAL GAUGE       100%   0 에서 시작해 채움. 곡이 끝날 때 70 이상이면 TRACK COMPLETE, 미만이면 TRACK CRASH
-//  HARD GAUGE         140%   100 에서 시작, 0 이 되면 즉시 TRACK CRASH
-//  EXTREME GAUGE      185%   (예전 이름 HARD+) 100 에서 시작, 0 이 되면 즉시 TRACK CRASH. 완벽하게 쳐도 차지 않고 깎이기만 함
-//  TEMPEST GAUGE      200%   100 에서 시작해 시간에 따라 계속 줄어듦 (모두 PERFECT 여도 조금씩). 판정은 몇 초에 걸쳐 반영, BAD · MISS 는 HARD 의 4배. 0 이면 TRACK CRASH
-//  IMMORTAL            65%   절대 죽지 않음 (게이지 항상 가득)
-//  ONE+               100%   TRACK CRASH 를 한 번 막아 줌 (LIFE 30 으로 부활, STRICT+ 면 하한보다 10 위)
-//                             + 부활 뒤 5초 동안 LIFE 가 깎이지 않음 (판정에 따라 오르기만, LIFE 바에 유리 덮개 + 자물쇠)
-//
-//  함께 쓸 수 없는 모드 (같은 묶음은 하나만, 새로 고르면 이전 것과 바뀜)
-//   · MIRROR / RANDOM
-//   · EASY · HARD · MAX JUDGEMENT / ULTIMATE
-//   · 게이지 5종 / IMMORTAL
-//   · STRICT 와 STRICT+
-//   · IMMORTAL 과 (PERFECTIONIST · ONE CHANCE · STRICT · STRICT+ · CLUTCH · ONE+)  ← 게이지가 줄지 않으면 의미가 없는 모드
-//  고를 조건이 있는 모드 (조건이 안 맞으면 자물쇠 · 선택 불가, 조건이 깨지면 자동으로 꺼짐)
-//   · STRICT · STRICT+ · ONE+ : HARD · EXTREME · TEMPEST 게이지 중 하나가 켜져 있어야 함
-//  AUTO PLAY 는 모드가 아님 — AUTO PLAY 를 켜면 모드 설정창이 열리지 않고, 고른 모드도 적용되지 않음 (선택은 남아 있음)
-//  GAME SETTING(5_Test) 에서는 모든 모드가 꺼진 채로 진행
+// 게임 모드 — 기능 삭제됨
+//  곡 선택창 MODE 바 · M 키 모드 설정창 · MODE RANDOM · 점수 배율이 모두 없어졌다.
+//  이제 모든 판은 기본 규칙(HARD 게이지 — 100 에서 0 으로 내려감 · 기본 판정)이고 최고 점수는 1,000,000 점 고정.
+//  아래 GameModes.Play 는 BeginPlay 에서 언제나 '모드 없음'으로 정해진다.
+//  (enum · 아이콘 그림은 TRACK CRASH 원인 표시 · 자물쇠 그림 등 남은 코드가 같이 써서 남겨 둠)
 // ============================================================
 public enum GameMode
 {
@@ -82,14 +36,6 @@ public class GameModeInfo
 
 public static class GameModes
 {
-    public const int MaxSelected = 3;
-    public const double MaxMultiplier = 4.0;          // 최대 400%
-    public const int MaxScoreWithModes = 4300000;     // 400% + MODE RANDOM 보너스 최대 30%p
-    public const double RandomBonusMax = 0.30;        // MODE RANDOM 보너스 최대 +30%p (= 조합 배율 몫 20%p + 특별 모드 몫 10%p)
-    public const double RandomBonusComboMax = 0.20;   //   조합 배율(A)로 받는 몫: 최대 +20%p
-    public const double RandomBonusSpecialMax = 0.10; //   특별 모드(B)로 받는 몫: 최대 +10%p
-    public static readonly string[] CategoryNames = { "JUDGE", "RULE", "CHART", "GAUGE" };
-
     // 판정 · 연출 수치
     public const double JustWindowBaseMs = 20.0;      // JUST 판정 범위 (±20ms)
     public const double UltimateJustScale = 0.65;     // ULTIMATE: JUST 범위 35% 감소 (±13ms)
@@ -189,321 +135,34 @@ public static class GameModes
 
     public static GameModeInfo Info(GameMode m) { return All[(int)m]; }
 
-    // 모드 설정창에 놓는 순서 (탭 안에서 이 순서대로)
-    public static readonly GameMode[] DisplayOrder =
-    {
-        GameMode.Easy, GameMode.Hard, GameMode.Maximum, GameMode.Ultimate, GameMode.Lazy, GameMode.Mercy, GameMode.Clutch,
-        GameMode.Perfectionist, GameMode.OneChance, GameMode.ComboBreak, GameMode.Strict, GameMode.StrictPlus,
-        GameMode.Mirror, GameMode.Random, GameMode.Shadow, GameMode.UnknownUi, GameMode.Reverse, GameMode.Fake,
-        GameMode.GaugeEasy, GameMode.GaugeNormal, GameMode.GaugeHard, GameMode.GaugeHardPlus, GameMode.GaugeTempest,
-        GameMode.Immortal, GameMode.OnePlus,
-    };
-
     // =====================================================================
-    //  선택 상태 (곡 선택창 ↔ 게임 ↔ 결과창 사이에 유지)
-    // =====================================================================
-    private static readonly List<GameMode> selected = new List<GameMode>();
-    public static int Version { get; private set; }     // 바뀔 때마다 +1 (화면 갱신용)
-
-    public static List<GameMode> Selected { get { return selected; } }
-    public static bool IsOn(GameMode m) { return selected.Contains(m); }
-
-    // AUTO PLAY 중에는 모드를 고를 수 없고, 고른 모드도 적용되지 않음
-    public static bool Locked { get { return CoreManager.Instance != null && CoreManager.Instance.IsAutoPlay; } }
-
-    public static bool Conflicts(GameMode a, GameMode b)
-    {
-        if (a == b) return false;
-        GameModeInfo ia = Info(a), ib = Info(b);
-        if (ia.Group != 0 && ia.Group == ib.Group) return true;
-        return (a == GameMode.Immortal && NeedsLife(b)) || (b == GameMode.Immortal && NeedsLife(a));
-    }
-    // 게이지가 줄어야 의미가 있는 모드 (IMMORTAL 과 같이 못 씀)
-    private static bool NeedsLife(GameMode m)
-    {
-        return m == GameMode.Perfectionist || m == GameMode.OneChance
-            || m == GameMode.Strict || m == GameMode.StrictPlus || m == GameMode.Clutch || m == GameMode.OnePlus;
-    }
-
-    public enum ToggleResult { Added, Removed, Replaced, Full, Locked, Requires }
-
-    // ----- 고를 조건 -----
-    public const string StrictRequireText = "해당 모드는 HARD 이상의 게이지를 필요로 합니다.";
-    public static bool IsHardGauge(GameMode m) { return m == GameMode.GaugeHard || m == GameMode.GaugeHardPlus || m == GameMode.GaugeTempest; }
-    // 이 모드를 고를 조건이 modes(함께 켜진 모드들)로 맞는가
-    public static bool NeedsHardGauge(GameMode m) { return m == GameMode.Strict || m == GameMode.StrictPlus || m == GameMode.OnePlus; }
-    public static bool RequirementMet(GameMode m, IList<GameMode> modes)
-    {
-        if (!NeedsHardGauge(m)) return true;
-        if (modes != null) foreach (var x in modes) if (IsHardGauge(x)) return true;
-        return false;
-    }
-    // 조건 안내 글자 (조건이 없으면 null)
-    public static string RequirementText(GameMode m) { return NeedsHardGauge(m) ? StrictRequireText : null; }
-    // 마지막 Toggle 에서 조건이 깨져 자동으로 꺼진 모드 이름 (없으면 null)
-    public static string LastDropped { get; private set; }
-
-    // 조건이 깨진 모드를 끔
-    private static void DropUnmet()
-    {
-        for (int i = selected.Count - 1; i >= 0; i--)
-            if (!RequirementMet(selected[i], selected))
-            {
-                LastDropped = LastDropped == null ? Info(selected[i]).Name : LastDropped + ", " + Info(selected[i]).Name;
-                selected.RemoveAt(i);
-            }
-    }
-
-    // 켜기 / 끄기. 같이 쓸 수 없는 모드가 켜져 있으면 그 모드와 바뀜. 3개가 차 있으면 Full (아무것도 안 바뀜)
-    public static ToggleResult Toggle(GameMode m, out string replacedName)
-    {
-        replacedName = null;
-        LastDropped = null;
-        if (Locked) return ToggleResult.Locked;
-        if (selected.Contains(m))
-        {
-            selected.Remove(m);
-            DropUnmet();                                   // 예: HARD 게이지를 끄면 STRICT 도 꺼짐
-            randomPick = false;                            // 직접 고르면 MODE RANDOM 은 꺼짐
-            Version++;
-            return ToggleResult.Removed;
-        }
-        var conflicts = selected.FindAll(x => Conflicts(x, m));
-        // 조건: 바뀐 뒤의 모드들로 판단 (예: STRICT 는 HARD 이상 게이지가 켜져 있어야)
-        var after = new List<GameMode>(selected);
-        after.RemoveAll(x => conflicts.Contains(x));
-        if (!RequirementMet(m, after)) return ToggleResult.Requires;
-        if (selected.Count - conflicts.Count >= MaxSelected) return ToggleResult.Full;
-        foreach (var c in conflicts)
-        {
-            selected.Remove(c);
-            replacedName = replacedName == null ? Info(c).Name : replacedName + ", " + Info(c).Name;
-        }
-        selected.Add(m);
-        DropUnmet();                                       // 예: HARD → NORMAL 게이지로 바꾸면 STRICT 가 꺼짐
-        randomPick = false;
-        Version++;
-        return conflicts.Count > 0 ? ToggleResult.Replaced : ToggleResult.Added;
-    }
-
-    public static void Clear()
-    {
-        if (Locked) return;
-        selected.Clear();
-        Version++;
-    }
-
-    // 이 모드를 지금 고를 수 있는가 (켜져 있지 않은 모드 기준: 조건 · 칸 수)
-    public static bool CanAdd(GameMode m)
-    {
-        if (selected.Contains(m)) return true;
-        var after = selected.FindAll(x => !Conflicts(x, m));
-        return RequirementMet(m, after) && after.Count < MaxSelected;
-    }
-
-    // =====================================================================
-    //  MODE RANDOM: 게임을 시작할 때 모드 3개를 무작위로 (함께 쓸 수 없는 · 조건이 안 맞는 조합은 나오지 않음)
-    //   보너스 = A 몫(조합 배율, 최대 20%p) + B 몫(특별 모드, 최대 10%p) — 아래 RandomBonus 참고 (합 최대 30%p)
-    //   A 몫 예) 390% → +19%p,  300% → +11%p,  200% → +4%p,  150% → +1%p
-    //   NORMAL GAUGE 는 기본 게이지라 (고르나 마나) 나오지 않음
-    //  밸런스
-    //   · 배율 100% 미만 모드는 나오지 않음 (EASY JUDGEMENT · IMMORTAL · EASY GAUGE)
-    //   · 배율 135% 미만 모드는 최대 1개. 나왔다면 나머지 2개 중 적어도 하나는 180% 이상
-    public const double RandomLowLine = 1.35, RandomHighLine = 1.80;
-    private static bool InRandomPool(GameModeInfo info) { return info.Mode != GameMode.GaugeNormal && info.Multiplier >= 1.0 - 1e-9; }
-    // 밸런스 규칙에 맞는 조합인가
-    public static bool RandomBalanced(IList<GameMode> pick)
-    {
-        int low = 0; bool high = false;
-        foreach (var m in pick)
-        {
-            double k = Info(m).Multiplier;
-            if (k < 1.0 - 1e-9) return false;
-            if (k < RandomLowLine - 1e-9) low++;
-            if (k >= RandomHighLine - 1e-9) high = true;
-        }
-        return low == 0 || (low == 1 && high);
-    }
-    // =====================================================================
-    private static bool randomPick;
-    public static bool RandomPick { get { return randomPick; } }
-    public static void SetRandomPick(bool on)
-    {
-        if (Locked || randomPick == on) return;
-        randomPick = on;
-        Version++;
-    }
-
-    private static List<GameMode> randomResult;          // 마지막으로 고른 결과 (다시 하기 때도 같은 조합)
-    private static double randomResultBonus;
-    public static IList<GameMode> RandomResult { get { return randomResult; } }
-    public static double RandomResultBonus { get { return randomResultBonus; } }
-
-    // 곡 선택창에서 시작할 때: 지난 조합을 버림 → 게임 화면(BeginPlay)에서 새로 고름
-    public static void ClearRandomResult() { randomResult = null; randomResultBonus = 0.0; }
-
-    // 새로 고르기
-    public static List<GameMode> RollRandom(System.Random rng = null)
-    {
-        if (rng == null) rng = new System.Random(Guid.NewGuid().GetHashCode());
-        var pool = new List<GameMode>();
-        foreach (var info in All) if (InRandomPool(info)) pool.Add(info.Mode);
-        List<GameMode> best = null;
-        for (int tries = 0; tries < 2000; tries++)
-        {
-            for (int i = pool.Count - 1; i > 0; i--) { int j = rng.Next(i + 1); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
-            var pick = new List<GameMode>();
-            foreach (var m in pool)
-            {
-                if (pick.Count >= MaxSelected) break;
-                if (pick.Exists(x => Conflicts(x, m))) continue;
-                pick.Add(m);
-            }
-            bool ok = pick.Count == MaxSelected;
-            foreach (var m in pick) if (!RequirementMet(m, pick)) ok = false;
-            if (ok && !RandomBalanced(pick)) ok = false;
-            if (ok) { best = pick; break; }
-        }
-        if (best == null) best = new List<GameMode> { GameMode.Mirror, GameMode.Shadow, GameMode.Perfectionist };   // (규칙에 맞는 기본 조합)
-        randomResult = best;
-        randomResultBonus = RandomBonus(best);
-        return best;
-    }
-
-    // 보너스 = A 몫 + B 몫
-    //  A (조합 배율 — 특별 모드 포함 세 모드 배율의 곱, 최대 400%) : 20%p × t^1.5,  t = (A - 100%) ÷ 300%  → 1%p 단위로 반올림
-    //  B (특별 모드가 뽑혔으면 하나마다 더함, 합은 최대 10%p)
-    //     MAX JUDGEMENT 6.5%p · ULTIMATE 8.5%p · PERFECTIONIST 7%p · COMBO BREAK 5.5%p · TEMPEST GAUGE 4%p
-    //  예) ULTIMATE · COMBO BREAK · SHADOW (567% → 400%) : A 20%p + B min(10, 8.5 + 5.5) = 10%p → +30%p
-    //      MIRROR · SHADOW · PERFECTIONIST (351%) : A 15%p + B 7%p → +22%p
-    public static double SpecialBonusOf(GameMode m)
-    {
-        switch (m)
-        {
-            case GameMode.Maximum: return 0.065;
-            case GameMode.Ultimate: return 0.085;
-            case GameMode.Perfectionist: return 0.07;
-            case GameMode.ComboBreak: return 0.055;
-            case GameMode.GaugeTempest: return 0.04;
-            default: return 0.0;
-        }
-    }
-
-    public static double RandomBonus(IList<GameMode> modes)
-    {
-        double a = RandomComboBonus(MultiplierOf(modes));
-        double b = RandomSpecialBonus(modes);
-        return Math.Round((a + b) * 1000.0) / 1000.0;   // 0.1%p 단위
-    }
-
-    // B 몫 (특별 모드 가산, 0 ~ 10%p)
-    public static double RandomSpecialBonus(IList<GameMode> modes)
-    {
-        double b = 0.0;
-        if (modes != null) foreach (var m in modes) b += SpecialBonusOf(m);
-        return Math.Round(Math.Min(RandomBonusSpecialMax, b) * 1000.0) / 1000.0;
-    }
-
-    // 보너스 표기: +22%p, +26.5%p
-    public static string BonusText(double bonus)
-    {
-        return "+" + (bonus * 100.0).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "%p";
-    }
-
-    // A 몫 (조합 배율로 받는 보너스, 최대 20%p)
-    public static double RandomComboBonus(double k)
-    {
-        double t = Math.Max(0.0, Math.Min(1.0, (k - 1.0) / (MaxMultiplier - 1.0)));
-        return Math.Round(RandomBonusComboMax * Math.Pow(t, 1.5) * 100.0) / 100.0;
-    }
-
-    // 무작위로 고를 수 있는 모드 (룰렛이 돌 때 보여 줄 후보)
-    public static GameMode[] RandomPool()
-    {
-        var pool = new List<GameMode>();
-        foreach (var info in All) if (InRandomPool(info)) pool.Add(info.Mode);
-        return pool.ToArray();
-    }
-
-    // 고른 모드들의 점수 배율 (곱, 최대 400%)
-    public static double MultiplierOf(IList<GameMode> modes)
-    {
-        double k = 1.0;
-        if (modes != null) foreach (var m in modes) k *= Info(m).Multiplier;
-        return Math.Min(MaxMultiplier, k);
-    }
-    public static double Multiplier { get { return MultiplierOf(Selected); } }
-    public static bool CapReached(IList<GameMode> modes)
-    {
-        double k = 1.0;
-        if (modes != null) foreach (var m in modes) k *= Info(m).Multiplier;
-        return k > MaxMultiplier + 1e-9;
-    }
-
-    public static string Percent(double k) { return Math.Round(k * 100.0).ToString("0") + "%"; }
-
-    // =====================================================================
-    //  이번 판에 적용되는 모드 (GameManager.Start 에서 한 번 정함 — 게임 중 선택을 바꿔도 이번 판은 그대로)
+    //  이번 판에 적용되는 모드 — 기능이 삭제되어 언제나 '모드 없음' (기본 규칙)
     // =====================================================================
     public static class Play
     {
         public static bool Mirror, Random, Shadow, Easy, Hard, Maximum, Ultimate, Immortal, UnknownUi,
                            Perfectionist, OneChance, ComboBreak, Strict, StrictPlus,
                            Lazy, Mercy, Clutch, Reverse, OnePlus, Fake;
-        public static GaugeKind Gauge = GaugeKind.Normal;
-        public static double JudgeScale = 1.0;          // JUST 를 뺀 판정 범위 배율 (HARD · MAX · ULTIMATE)
-        public static double JustScale = 1.0;           // JUST 범위 배율 (ULTIMATE 0.65)
-        public static double ScoreMultiplier = 1.0;     // 최종 배율 (MODE RANDOM 보너스 포함)
-        public static double RandomBonus = 0.0;         // MODE RANDOM 보너스 (0.25 = +25%p, 아니면 0)
-        public static bool RandomFresh;                 // MODE RANDOM 을 이번 판에 새로 골랐는가 (true 면 게임 화면에서 고르는 연출)
+        public static GaugeKind Gauge = GaugeKind.Hard;   // 모든 스킨 공통: 100 에서 시작해 0 으로 내려가는 게이지 (예전 MODE 의 HARD GAUGE)
+        public static double JudgeScale = 1.0;
+        public static double JustScale = 1.0;
         public static GameMode[] Modes = new GameMode[0];
     }
 
     // 채워 나가는 게이지(EASY · NORMAL)인가 — 곡이 끝날 때 70 이상이면 클리어
     public static bool IsFillGauge(GaugeKind g) { return g == GaugeKind.Easy || g == GaugeKind.Normal; }
 
-    // testMode(GAME SETTING) · AUTO PLAY 이면 모드 없음 (게이지는 NORMAL)
-    public static void BeginPlay(bool testMode)
+    // 판 시작: 모든 모드를 끈 기본 규칙으로 맞춤
+    public static void BeginPlay()
     {
-        List<GameMode> list = testMode || Locked ? new List<GameMode>() : new List<GameMode>(selected);
-        Play.RandomBonus = 0.0;
-        Play.RandomFresh = false;
-        if (!testMode && !Locked && randomPick)
-        {
-            // MODE RANDOM: 곡 선택창에서 시작했으면 새로 고름 (다시 하기는 지난 조합 그대로)
-            if (randomResult == null) { RollRandom(); Play.RandomFresh = true; }
-            list = new List<GameMode>(randomResult);
-            Play.RandomBonus = randomResultBonus;
-        }
-        Play.Modes = list.ToArray();
-        Play.Mirror = list.Contains(GameMode.Mirror);
-        Play.Random = list.Contains(GameMode.Random);
-        Play.Shadow = list.Contains(GameMode.Shadow);
-        Play.Easy = list.Contains(GameMode.Easy);
-        Play.Hard = list.Contains(GameMode.Hard);
-        Play.Maximum = list.Contains(GameMode.Maximum);
-        Play.Ultimate = list.Contains(GameMode.Ultimate);
-        Play.Immortal = list.Contains(GameMode.Immortal);
-        Play.UnknownUi = list.Contains(GameMode.UnknownUi);
-        Play.Perfectionist = list.Contains(GameMode.Perfectionist);
-        Play.OneChance = list.Contains(GameMode.OneChance);
-        Play.ComboBreak = list.Contains(GameMode.ComboBreak);
-        Play.Strict = list.Contains(GameMode.Strict);
-        Play.StrictPlus = list.Contains(GameMode.StrictPlus);
-        Play.Lazy = list.Contains(GameMode.Lazy);
-        Play.Mercy = list.Contains(GameMode.Mercy);
-        Play.Clutch = list.Contains(GameMode.Clutch);
-        Play.Reverse = list.Contains(GameMode.Reverse);
-        Play.OnePlus = list.Contains(GameMode.OnePlus);
-        Play.Fake = list.Contains(GameMode.Fake);
-        Play.Gauge = list.Contains(GameMode.GaugeEasy) ? GaugeKind.Easy
-                   : list.Contains(GameMode.GaugeHard) ? GaugeKind.Hard
-                   : list.Contains(GameMode.GaugeHardPlus) ? GaugeKind.HardPlus
-                   : list.Contains(GameMode.GaugeTempest) ? GaugeKind.Tempest
-                   : GaugeKind.Normal;
-        Play.JudgeScale = Play.Ultimate ? 0.25 : Play.Maximum ? 1.0 / 3.0 : Play.Hard ? 0.5 : 1.0;
-        Play.JustScale = Play.Ultimate ? UltimateJustScale : 1.0;
-        Play.ScoreMultiplier = MultiplierOf(list) + Play.RandomBonus;   // 400% 까지 곱한 뒤 보너스를 더함
+        Play.Modes = new GameMode[0];
+        Play.Mirror = Play.Random = Play.Shadow = Play.Easy = Play.Hard = Play.Maximum = Play.Ultimate = false;
+        Play.Immortal = Play.UnknownUi = Play.Perfectionist = Play.OneChance = Play.ComboBreak = false;
+        Play.Strict = Play.StrictPlus = Play.Lazy = Play.Mercy = Play.Clutch = false;
+        Play.Reverse = Play.OnePlus = Play.Fake = false;
+        Play.Gauge = GaugeKind.Hard;      // 게이지는 언제나 HARD (100 → 0, 0 이 되면 TRACK CRASH)
+        Play.JudgeScale = 1.0;
+        Play.JustScale = 1.0;
     }
 
     // CLUTCH: 위험도(0 ~ 1) → 판정 범위 배율 (0 이면 1배, 1 이면 2.5배, 그 사이는 직선)
@@ -1043,4 +702,4 @@ public class GameModePopup : MonoBehaviour
         text.rectTransform.anchoredPosition = new Vector2(0f, 230f + 30f * Mathf.Clamp01((k - 0.65f) / 0.35f));
         if (k >= 1f) Destroy(gameObject);
     }
-}
+}

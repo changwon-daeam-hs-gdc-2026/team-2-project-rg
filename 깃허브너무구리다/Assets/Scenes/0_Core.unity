@@ -289,25 +289,74 @@ MonoBehaviour:
     Id: 0
     Name: 
     SubName: 
+    Name_Original: 
+    SubName_Original: 
+    SPECIAL_Name_Original: 
+    SPECIAL_SubName_Original: 
+    Name_English: 
+    SubName_English: 
+    SPECIAL_Name_English: 
+    SPECIAL_SubName_English: 
     Difficulty_EASY: 
     Difficulty_HARD: 
     Difficulty_INSANE: 
+    Difficulty_SPECIAL: 
+    Difficulty_EASY_REALVALUE: 
+    Difficulty_HARD_REALVALUE: 
+    Difficulty_INSANE_REALVALUE: 
+    Difficulty_SPECIAL_REALVALUE: 
+    SPECIAL_Name: 
+    SPECIAL_SubName: 
+    SPECIAL_Vocal: 
     Composer: 
     illustration: 
     Vocal: 
     BPM: 0
     NoteCount: 0
+    NoteCount_EASY: 0
+    NoteCount_HARD: 0
+    NoteCount_INSANE: 0
+    NoteCount_SPECIAL: 0
     HasMV: 0
     ExistSongbar: 0
+    LockedValue: 
+    MvWarning: 
   IsMvOn: 0
   CurrentLevelId: 2
   CurrentSettings:
-    AudioOffset: 0
-    JudgeOffset: 0
     Mode: 2
     EditorSongid: 1
+    AudioOffset: 0
+    JudgeOffset: 0
+    OffsetConvention: 0
     SettingSpeed: 1
     judgeoverrange: 10
+    ShowFastSlow: 1
+    GameSkin: 0
+    LaneOpacity: 0.85
+    ShowInfoUI: 1
+    LaneLines: 1
+    ShowKeyMarkers: 1
+    ShowHitErrorBar: 1
+    EffectQuality: 1
+    ShowJustPerfect: 0
+    SongNameLanguage: 0
+    LaneKeys:
+    - D
+    - F
+    - J
+    - K
+    StartTime: 0
+    MasterVolume: 1
+    MusicVolume: 1
+    HitSoundVolume: 1
+    HitSoundOn: 1
+    FrameLimit: 0
+    VSync: 0
+    ShowFps: 0
+    ScreenMode: -1
+    ResolutionWidth: 0
+    ResolutionHeight: 0
   IsAutoPlay: 0
   LastResult:
     SongId: 0
@@ -325,9 +374,34 @@ MonoBehaviour:
     Bad: 0
     Miss: 0
     MaxCombo: 0
+    TotalNotes: 0
+    IsFullCombo: 0
+    IsAllPerfect: 0
+    IsAllJust: 0
+    JustPerfect: 0
+    IsFailed: 0
     AverageErrorMs: 0
     ErrorSampleCount: 0
     IsAutoPlay: 0
+    Fast: 0
+    Slow: 0
+    TimelineProgress: []
+    TimelineJudge: 
+    LifeHistory: []
+    ErrorsMs: []
+    HasLife: 0
+    FinalLife: 100
+    FailedAtProgress: -1
+    LengthSeconds: 0
+    IsMv: 0
+    IsMidStart: 0
+    MidStartSeconds: 0
+    Speed: 1
+    Modes: 
+    ScoreMultiplier: 1
+    RandomBonus: 0
+  backgroundDim: 0.2
+  backgroundBlurRadius: 2.31
 --- !u!4 &2119298766
 Transform:
   m_ObjectHideFlags: 0

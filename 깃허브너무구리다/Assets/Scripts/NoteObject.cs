@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 public class NoteObject : MonoBehaviour
@@ -65,6 +65,8 @@ public class NoteObject : MonoBehaviour
     {
         myData = data;
         owner = GameManager.Instance;
+        if (owner != null && owner.laneXPositions != null && owner.laneXPositions.Length > 0)
+            laneXPositions = owner.laneXPositions;   // CIRCLE 스킨은 레인을 넓힘 → 게임 화면의 레인 위치를 그대로 씀
         isMissed = false;
         spriteRenderer.color = Color.white;
         spriteRenderer.enabled = true;
@@ -152,7 +154,7 @@ public class NoteObject : MonoBehaviour
             // ✅ 노트(5)보다 아래에 깔리도록 렌더링 오더를 1로 지정
             spriteRenderer.sortingOrder = 1; 
             
-            float laneWidthGame = 0.8f;
+            float laneWidthGame = SimpleGameSkin.GameLaneWidth;
             float totalWidth = Mathf.Abs(laneXPositions[laneXPositions.Length - 1] - laneXPositions[0]) + laneWidthGame;
             
             transform.localScale = new Vector3(totalWidth, 0.015f, 1f);
@@ -281,7 +283,7 @@ public class NoteObject : MonoBehaviour
                 if (NoteTypes.IsSlideRelay(myData.Type)) spriteRenderer.enabled = false;
             }
 
-            float rawYPos = GameManager.Instance.hitLineY + (float)(myTargetDist - currentDist) * 0.01f;
+            float rawYPos = GameManager.Instance.NoteYFromDist(myTargetDist - currentDist);
             float yPos = rawYPos;
             
             if (myData.IsHit && !isMissed && isLongNote)
@@ -297,13 +299,14 @@ public class NoteObject : MonoBehaviour
                 float endX = laneXPositions[laneXPositions.Length - 1];
                 float centerX = (startX + endX) / 2f;
                 transform.position = new Vector3(centerX, rawYPos, 0f);
+                // 6키 확장 채보: 지금 보이는 레인 폭에 맞춤 (4키 구간은 가운데 4레인)
+                if (GameManager.Instance.SixLane)
+                    transform.localScale = new Vector3(GameManager.Instance.VisibleLanesWidth, transform.localScale.y, 1f);
             }
             else
             {
-                float startX = laneXPositions[myData.Lane];
-                int endLaneClamp = Mathf.Min(myData.Lane + myData.Width - 1, laneXPositions.Length - 1);
-                float endX = laneXPositions[endLaneClamp];
-                float centerX = (startX + endX) / 2f;
+                // 1/4 칸 노트는 그 칸들의 가운데, 넓은 노트는 덮는 레인들의 가운데
+                float centerX = SimpleGameSkin.CenterXOf(myData, laneXPositions);
 
                 transform.position = new Vector3(centerX, rawYPos, 0f);
 
@@ -323,7 +326,7 @@ public class NoteObject : MonoBehaviour
                 }
                 else if (myLongBody != null && myLongBody.activeSelf && isLongNote)
                 {
-                    float endYPos = GameManager.Instance.hitLineY + (float)(myNextTargetDist - currentDist) * 0.01f;
+                    float endYPos = GameManager.Instance.NoteYFromDist(myNextTargetDist - currentDist);
                     
                     if (endYPos <= GameManager.Instance.hitLineY)
                     {
@@ -334,10 +337,10 @@ public class NoteObject : MonoBehaviour
                         float distance = endYPos - yPos;
                         if (distance > 0 && bodyRenderer != null && bodyRenderer.sprite != null)
                         {
-                            float laneWidthGame = 0.8f;
-                            float targetW = (myData.Width - 1) * laneWidthGame + (laneWidthGame * 0.95f);
+                            float targetW = SimpleGameSkin.BodySpanOf(myData);   // CIRCLE: 1칸 몸통은 원보다 가늘게 · 1/4 칸은 그 폭
 
-                            if (bodyRenderer.drawMode == SpriteDrawMode.Tiled || bodyRenderer.sprite == NoteArt.LongBodySprite)
+                            if (bodyRenderer.drawMode == SpriteDrawMode.Tiled || bodyRenderer.sprite == NoteArt.LongBodySprite
+                                || (SimpleGameSkin.CircleActive && bodyRenderer.sprite == SimpleGameSkin.Active.CircleBodySprite))
                             {
                                 // SIMPLE 일반 롱노트 몸통(Sliced)도 같은 방식: 크기(size)를 머리 ~ 꼬리 구간에 맞춤
                                 // SIMPLE RED 몸통: 줄무늬 타일이 늘어나지 않고 반복되도록 크기(size)로 맞춘다
@@ -453,9 +456,9 @@ public class NoteObject : MonoBehaviour
     private void ApplySimpleStyle()
     {
         SimpleGameSkin skin = SimpleGameSkin.Active;
-        float laneWidthGame = 0.8f;
-        // 폭: RED · 넓은 일반 노트(영역 채보) 모두 Width 칸 (일반 1칸 노트는 그대로)
-        float w = (Mathf.Max(1, myData.Width) - 1) * laneWidthGame + laneWidthGame * 0.95f;
+        if (skin.IsCircle && !myData.IsQuarter) { ApplyCircleStyle(skin); return; }   // CIRCLE 의 1/4 칸 노트는 둥근 막대 (원으로는 너무 작음)
+        // 폭: RED · 넓은 일반 노트(영역 채보) 모두 Width 칸 (일반 1칸 노트는 그대로) · 1/4 칸 노트는 그 폭
+        float w = SimpleGameSkin.SpanOf(myData);
         bool isRelay = NoteTypes.IsSlideRelay(myData.Type);
         bool isTail = myData.Type == 3 || myData.Type == 13 || isRelay;          // 슬라이드 중계점도 끝처럼 얇은 막대
         Color c = SimpleGameSkin.NoteColor(myData.SlideHead != null ? myData.SlideHead : myData);   // 슬라이드의 중계점 · 끝은 머리(몸통)와 같은 색
@@ -466,10 +469,14 @@ public class NoteObject : MonoBehaviour
         //  'Sprite Tiling might not appear correctly…' 경고가 찍혔다(한 판에 수백 번). 에디터에서는 경고를 찍는 순간마다
         //  프레임이 끊기고, 그동안 밀린 시간만큼 노트가 진행 방향으로 순간이동한 것처럼 보였다.
         spriteRenderer.drawMode = SpriteDrawMode.Simple;
+        bool thick = skin.IsThick;                                                // SIMPLE(평면): 두툼한 노트
+        bool isDrag = NoteTypes.IsDrag(myData.Type);
         float h = myData.IsRedNote
-            ? (isTail ? SimpleGameSkin.RedTailHeight : SimpleGameSkin.RedNoteHeight)  // 빨간 노트는 조금 더 두껍게
-            : (isTail ? SimpleGameSkin.TailHeight : SimpleGameSkin.NoteHeight);
-        if (NoteTypes.IsDrag(myData.Type)) h *= NoteArt.DragHeightRatio;            // 드래그 노트: 얇은 레일 모양
+            ? (isTail ? (thick ? SimpleGameSkin.ThickRedTailHeight : SimpleGameSkin.RedTailHeight)
+                      : (thick ? SimpleGameSkin.ThickRedNoteHeight : SimpleGameSkin.RedNoteHeight))  // 빨간 노트는 조금 더 두껍게
+            : (isTail ? (thick ? SimpleGameSkin.ThickTailHeight : SimpleGameSkin.TailHeight)
+                      : (thick && !isDrag ? SimpleGameSkin.ThickNoteHeight : SimpleGameSkin.NoteHeight));
+        if (isDrag) h *= NoteArt.DragHeightRatio;                                 // 드래그 노트: 얇은 레일 모양 (두툼한 노트에서도 그대로)
         if (myData.IsRedNote && skin.RedNoteSprite != null)
         {
             // 고급 RED 노트: 색이 스프라이트에 들어 있으므로 흰색으로, 바깥 빛 여백만큼 크게 그림
@@ -483,7 +490,7 @@ public class NoteObject : MonoBehaviour
         {
             // 일반 · 화살표 노트: 입체 앞면(밝은 테두리 · 세로 그라데이션 · 광택 띠) + 바깥 은은한 빛 (빛 여백만큼 크게)
             float pad = NoteArt.NoteGlowPad * 2f;
-            spriteRenderer.sprite = NoteArt.NoteFaceSprite;
+            spriteRenderer.sprite = thick && !isDrag ? NoteArt.ThickNoteFaceSprite : NoteArt.NoteFaceSprite;
             spriteRenderer.drawMode = SpriteDrawMode.Sliced;
             spriteRenderer.size = new Vector2(w + pad, h + pad);
             spriteRenderer.color = c;
@@ -500,7 +507,92 @@ public class NoteObject : MonoBehaviour
         spriteRenderer.flipY = false;
         transform.localScale = new Vector3(1f, skin.NoteScaleY, 1f); // DIVERSE 는 세로로 조금 두껍게 (몸통은 부모 배율을 되돌려 계산)
         transform.rotation = Quaternion.identity;
+        ApplySimpleBody(skin, c);
+    }
 
+    // CIRCLE 스킨 노트
+    //  · 1칸 = 입체 원 (흰색 · 청록), 여러 칸(영역) = 양 끝이 반원인 알약
+    //  · RED = 전용 진홍 알약 (세로가 얇음, 색이 그림에 들어 있음)
+    //  · 롱노트 끝 = 몸통 위쪽을 닫는 반원 (매끄러운 마감), 슬라이드 중계점 = 작은 원
+    //  · 드래그 = 연노랑 빛 고리 + 보석 · 꼬리빛
+    private void ApplyCircleStyle(SimpleGameSkin skin)
+    {
+        bool isRelay = NoteTypes.IsSlideRelay(myData.Type);
+        bool isTail = myData.Type == 3 || myData.Type == 13 || isRelay;
+        bool isEnd = isTail && !isRelay;                                         // 롱노트 끝 (슬라이드 끝 포함)
+        bool isDrag = NoteTypes.IsDrag(myData.Type);
+        NoteData headData = myData.SlideHead != null ? myData.SlideHead : myData;
+        bool red = myData.IsRedNote || headData.IsRedNote;
+        Color c = SimpleGameSkin.NoteColor(headData);
+        if (isRelay) c = Color.Lerp(c, Color.white, 0.35f);
+
+        spriteRenderer.drawMode = SpriteDrawMode.Simple;   // 그림을 먼저 바꾸고 Sliced 로 (경고 방지)
+        if (isEnd)
+        {
+            // 롱노트 끝: 노트 모양 대신 몸통 위쪽을 둥글게 닫는 반원 (몸통과 같은 무늬 · 색 → 매끄럽게 마감)
+            //  1칸 = 반원 / 여러 칸 = 위 모서리만 둥근 판 / RED = RED 몸통 무늬 (색이 그림에 들어 있음)
+            spriteRenderer.sprite = skin.CapSprite(myData.Width, red);
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+            spriteRenderer.size = new Vector2(SimpleGameSkin.CircleNoteWidth(myData.Width), SimpleGameSkin.CapHeight(myData.Width, red));
+            Color bc = red ? Color.white : (NoteTypes.IsDrag(headData.Type) ? SimpleGameSkin.LaneColor(headData.Lane) : c);   // 몸통 색과 같은 규칙
+            spriteRenderer.color = new Color(bc.r, bc.g, bc.b, 1f);
+        }
+        else if (isDrag && !red && myData.Width <= 1)
+        {
+            // 드래그 (CIRCLE 전용 디자인): 연노랑 빛 고리 + 가운데 맥박 보석 + 위쪽 꼬리빛 (UpdateDrag)
+            float d = SimpleGameSkin.CircleSize * SimpleGameSkin.CircleDragRatio * SimpleGameSkin.CirclePad;
+            spriteRenderer.sprite = skin.CircleDragSprite;
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+            spriteRenderer.size = new Vector2(d, d);
+            spriteRenderer.color = c;
+        }
+        else if (isDrag && !red)
+        {
+            // 여러 칸 드래그: 얇은 막대 (SIMPLE 드래그 모양)
+            float pad = NoteArt.NoteGlowPad * 2f;
+            spriteRenderer.sprite = NoteArt.NoteFaceSprite;
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+            spriteRenderer.size = new Vector2(SimpleGameSkin.NoteSpan(myData.Width) + pad, SimpleGameSkin.NoteHeight * NoteArt.DragHeightRatio + pad);
+            spriteRenderer.color = c;
+        }
+        else if (red && !isRelay)
+        {
+            // RED: 납작한 알약 (1칸도 원보다 세로가 얇은 알약)
+            float h = skin.CircleRedPillDrawHeight;
+            float pad = h - SimpleGameSkin.CircleSize * SimpleGameSkin.CircleRedRatio;   // 바깥 빛 여백 (위아래 합)
+            spriteRenderer.sprite = skin.CircleRedPillSprite;
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+            spriteRenderer.size = new Vector2(SimpleGameSkin.CircleNoteWidth(myData.Width) + pad, h);
+            spriteRenderer.color = Color.white;
+        }
+        else if (myData.Width > 1)
+        {
+            float h = skin.CirclePillDrawHeight;
+            float pad = h - SimpleGameSkin.CircleSize * SimpleGameSkin.CirclePillRatio;   // 바깥 빛 여백 (위아래 합)
+            spriteRenderer.sprite = skin.CirclePillSprite;
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+            spriteRenderer.size = new Vector2(SimpleGameSkin.NoteSpan(myData.Width) + pad, h);
+            spriteRenderer.color = c;
+        }
+        else
+        {
+            float d = SimpleGameSkin.CircleSize * (isRelay ? SimpleGameSkin.CircleRelayRatio : 1f) * SimpleGameSkin.CirclePad;
+            spriteRenderer.sprite = red ? skin.CircleRedSprite : skin.CircleNoteSprite;
+            spriteRenderer.drawMode = SpriteDrawMode.Sliced;
+            spriteRenderer.size = new Vector2(d, d);
+            spriteRenderer.color = red ? Color.white : c;
+        }
+        spriteRenderer.flipY = false;
+        transform.localScale = Vector3.one;
+        transform.rotation = Quaternion.identity;
+
+        // 롱노트 몸통: SIMPLE · SIMPLE-DIVERSE 와 같은 디자인 (양옆이 빛나는 띠 / RED 는 줄무늬), 폭 = 노트 폭 (BodySpan)
+        ApplySimpleBody(skin, c);
+    }
+
+    // SIMPLE 롱노트 몸통 그림 · 색 (크기는 매 프레임 Update 에서 맞춤)
+    private void ApplySimpleBody(SimpleGameSkin skin, Color c)
+    {
         if (myLongBody != null && myLongBody.activeSelf && bodyRenderer != null)
         {
             bodyRenderer.drawMode = SpriteDrawMode.Simple;
@@ -566,7 +658,7 @@ public class NoteObject : MonoBehaviour
     private void UpdateHeldBody()
     {
         if (bodyRenderer == null || SimpleGameSkin.Active == null || isMissed) return;
-        if (bodyRenderer.sprite != NoteArt.LongBodySprite) return;
+        if (bodyRenderer.sprite != NoteArt.LongBodySprite && bodyRenderer.sprite != SimpleGameSkin.Active.CircleBodySprite) return;
         if (!myData.IsHit || !NoteTypes.IsLongHead(myData.Type)) return;
         float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 14f);
         Color lit = Color.Lerp(bodyBaseColor, Color.white, 0.30f + 0.20f * pulse);
@@ -644,16 +736,22 @@ public class NoteObject : MonoBehaviour
 
         // 보석: 맥박처럼 커졌다 작아지고, 반짝일 때 흰빛이 강해짐
         Vector2 gsz = dragGemRenderer.sprite.bounds.size;
-        float gs = DragGemSize * (0.88f + 0.18f * pulse);
+        // CIRCLE 1칸 드래그: 빛 고리 가운데에 맞게 보석이 더 크고 천천히 돎
+        bool circleRing = SimpleGameSkin.CircleActive && myData.Width <= 1 && !myData.IsRedNote && !myData.IsQuarter;
+        float gs = DragGemSize * (circleRing ? SimpleGameSkin.CircleDragGemScale : 1f) * (0.88f + 0.18f * pulse);
+        if (myData.IsQuarter) gs *= Mathf.Clamp(SimpleGameSkin.QuarterSpan(myData.SubW) / (SimpleGameSkin.GameLaneWidth * 0.6f), 0.45f, 1f);   // 1/4 칸: 보석도 작게
         dragGemRenderer.transform.position = transform.position;
         dragGemRenderer.transform.localScale = new Vector3(gs / gsz.x / sx, gs * yScale / gsz.y / sy, 1f);
-        dragGemRenderer.transform.rotation = Quaternion.identity;
+        dragGemRenderer.transform.rotation = circleRing ? Quaternion.Euler(0f, 0f, Mathf.Sin(t * 2.2f + phase) * 12f) : Quaternion.identity;
 
         // 꼬리빛: 노트 위쪽으로 길게 (노트 폭의 70%), 보석과 같은 박자로 살짝 길어짐
-        float laneW = 0.8f;
-        float w = ((Mathf.Max(1, myData.Width) - 1) * laneW + laneW * 0.95f) * 0.7f;
+        //  CIRCLE 1칸: 고리 폭에 맞추고 조금 더 길게 (빠르게 훑고 지나가는 느낌)
+        float w = (circleRing ? SimpleGameSkin.CircleSize * SimpleGameSkin.CircleDragRatio * 0.62f
+                              : (myData.IsQuarter ? SimpleGameSkin.QuarterSpan(myData.SubW)
+                              : SimpleGameSkin.CircleActive ? SimpleGameSkin.CircleNoteWidth(myData.Width)
+                                                             : SimpleGameSkin.NoteSpan(myData.Width)) * 0.7f);
         Vector2 tsz = dragTrailRenderer.sprite.bounds.size;
-        float len = DragTrailLength * (0.9f + 0.15f * pulse) * yScale;
+        float len = DragTrailLength * (circleRing ? 1.5f : 1f) * (0.9f + 0.15f * pulse) * yScale;
         dragTrailRenderer.transform.position = transform.position;
         dragTrailRenderer.transform.localScale = new Vector3(w / tsz.x / sx, len / tsz.y / sy, 1f);
 
